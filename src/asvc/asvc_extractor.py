@@ -311,7 +311,7 @@ def classify_document_asvc(text, model_path="models/skopes_models/skopes_asvc.pk
         irrelevant_idx,
     )
 
-if __name__ == "__main__":
+"""if __name__ == "__main__":
     try:
         data = load_dataset()
         tvc_data = sort_data_for_tvc(data)
@@ -344,4 +344,4 @@ if __name__ == "__main__":
         print(f"Error: Missing definition or import for: {e}")
         print("Please ensure 'load_dataset' and '_binary_train' are defined or imported correctly.")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred: {e}")"""

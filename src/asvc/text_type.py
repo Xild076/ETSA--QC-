@@ -162,7 +162,7 @@ def classify(text, model_path="models/skopes_models/skopes_text_type.pkl"):
     return best_label, scores
 
 
-if __name__ == "__main__":
+"""if __name__ == "__main__":
     try:
         data = load_dataset()
         if not data:
@@ -192,3 +192,4 @@ if __name__ == "__main__":
          print("Error: 'data/dataset.csv' not found. Please ensure the dataset exists.")
     except Exception as e:
          print(f"An unexpected error occurred: {e}")
+"""
