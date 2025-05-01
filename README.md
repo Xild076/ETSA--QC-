@@ -1,5 +1,5 @@
 # Entity Targeted Sentiment Analysis (Quantum Criticism)
-![Pipeline Image](images/pipeline.png)
+![Pipeline Image](images/etas_pipeline.png)
 
 ## Purpose
 The tool aims to use a more efficient and explainable rule-based system to analyze entity-targeted sentiment. It uses a heuristic approach to determine the general sentiment aimed at a certain entity, for instance: 
@@ -16,3 +16,4 @@ How sentiment of a named entity progresses within a single article and the consi
 
 Offer a greater understanding the agenda of all news (no matter the source) based purely on intra-article case.
 
+![Full Pipeline Image](images/full_pipeline_etas_outlined.png)
