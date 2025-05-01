@@ -6,7 +6,7 @@ import os
 from skrules import SkopeRules
 from sklearn.ensemble import BaggingClassifier, BaggingRegressor
 from sklearn.model_selection import train_test_split
-from utility import _binary_train, load_dataset # Assuming these are available
+from utility import _binary_train, load_dataset
 
 
 nlp = spacy.load("en_core_web_sm")
