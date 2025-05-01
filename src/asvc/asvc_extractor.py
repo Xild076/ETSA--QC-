@@ -216,7 +216,6 @@ def train_skopes_rules_for_asvc(features, y, path_out="models/skopes_models/skop
     except Exception as e:
         print(f"Error saving models to {path_out}: {e}")
 
-
 def classify_document_asvc(text, model_path="models/skopes_models/skopes_asvc.pkl"):
     """
     Predicts actor/action/victim tokens and the coreferent actor-subject token.

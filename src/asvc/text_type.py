@@ -64,7 +64,7 @@ def prepare_data_for_type(data):
 
 def train_skopes_rules_for_type(x_df, y, path_out):
     """
-    Train SkopeRules models for each class in a multiclass classification problem.
+    Train SkopeRules models for each class in a multi-class classification problem.
     Args:
         x_df (pd.DataFrame): A DataFrame containing the extracted features.
         y (list): A list of labels.
@@ -160,7 +160,6 @@ def classify(text, model_path="models/skopes_models/skopes_text_type.pkl"):
         best_label = max(positive_scores, key=positive_scores.get)
 
     return best_label, scores
-
 
 """if __name__ == "__main__":
     try:
