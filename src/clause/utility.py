@@ -8,7 +8,14 @@ import spacy
 from spacy.tokens.doc import Doc
 from spacy.tokens import Token
 from sklearn.metrics import classification_report
+import ast
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+logger.info("Loading spaCy model...")
 nlp = spacy.load("en_core_web_sm")
 
 def create_model(n_estimators:int=25, tree_size:int=3) -> OneVsRestClassifier:
@@ -19,6 +26,7 @@ def create_model(n_estimators:int=25, tree_size:int=3) -> OneVsRestClassifier:
     Returns:
         OneVsRestClassifier: A OneVsRestClassifier model with RuleFitClassifier as the base estimator.
     """
+    logger.info(f"Creating OneVsRestClassifier model with RuleFitClassifier architecture (n_estimators={n_estimators}, tree_size={tree_size})")
 
     model = OneVsRestClassifier(RuleFitClassifier(
         n_estimators=n_estimators,
@@ -26,14 +34,15 @@ def create_model(n_estimators:int=25, tree_size:int=3) -> OneVsRestClassifier:
     ))
     return model
 
-def prepare_data(X:dict, y:list) -> tuple:
+def prepare_data(X:list, y:list) -> tuple:
     """Preprocesses input data for training.
     Args:
-        X (dict): A dictionary containing the input features.
+        X (list): A list containing dicts of input features.
         y (list): A list of labels.
     Returns:
         tuple: A tuple containing the preprocessed features (X) and labels (y).
     """
+    logger.info("Preparing data for training...")
 
     X = pd.DataFrame(X)
 
@@ -50,6 +59,7 @@ def train_model(X:pd.DataFrame, y:list) -> OneVsRestClassifier:
     Returns:
         OneVsRestClassifier: A trained OneVsRestClassifier model.
     """
+    logger.info("Training model...")
 
     model = create_model()
     model.fit(X, y)
@@ -64,6 +74,8 @@ def evaluate_model(model:OneVsRestClassifier, X:pd.DataFrame, y:list):
     Returns:
         str | dict: A classification report.
     """
+    logger.info("Evaluating model...")
+
     y_pred = model.predict(X)
     return classification_report(y, y_pred)
 
@@ -75,6 +87,7 @@ def predict(model:OneVsRestClassifier, X:Union[pd.DataFrame, dict], single_input
     Returns:
         list: A list of predicted labels.
     """
+    logger.info(f"Predicting labels (single_input={single_input})...")
     
     if isinstance(X, dict):
         X = pd.DataFrame(X)
@@ -88,6 +101,23 @@ def predict(model:OneVsRestClassifier, X:Union[pd.DataFrame, dict], single_input
         return y_pred[0]
     return y_pred
 
+def load_dataset(file_path='data/dataset.csv'):
+    """
+    Load the dataset from a CSV file and convert it to a dictionary.
+    Args:
+        file_path (str): The path to the CSV file.
+    Returns:
+        dict: A dictionary containing the dataset.
+    """
+    logger.info(f"Loading dataset from {file_path}...") 
+
+    df = pd.read_csv(file_path)
+    df["actor"] = df["actor"].apply(ast.literal_eval)
+    df["action"] = df["action"].apply(ast.literal_eval)
+    df["victim"] = df["victim"].apply(ast.literal_eval)
+    df["actor_subject"] = df["actor_subject"].fillna(-1).astype(int)
+    return list(df.to_dict(orient="index").values())
+
 class DocFeatureType(Enum):
     """Enum for document-wide feature types."""
     NUM_TOKENS = "num_tokens"
@@ -96,6 +126,7 @@ class DocFeatureType(Enum):
     AVERAGE_TOKEN_LENGTH = "average_token_length"
     AVERAGE_WORD_LENGTH = "average_word_length"
     AVERAGE_SENTENCE_LENGTH = "average_sentence_length"
+    NUM_ALPHA = "num_alpha"
     NUM_NSUBJ = "num_nsubj"
     NUM_NSUBJPASS = "num_nsubjpass"
     NUM_DOBJ = "num_dobj"
@@ -133,6 +164,8 @@ def extract_features_from_doc(text:Union[str, Doc], features:list) -> Dict[str, 
     Returns:
         dict: A dictionary containing the extracted features.
     """
+    logger.info(f"Extracting features: {features} from document...")
+
     if isinstance(text, str):
         doc = nlp(text)
     extracted_features = {}
@@ -149,6 +182,8 @@ def extract_features_from_doc(text:Union[str, Doc], features:list) -> Dict[str, 
             extracted_features[feature.value] = sum(len(token) for token in doc if not token.is_punct) / len([token for token in doc if not token.is_punct])
         elif feature == DocFeatureType.AVERAGE_SENTENCE_LENGTH:
             extracted_features[feature.value] = sum(len(sentence) for sentence in doc.sents) / len(list(doc.sents))
+        elif feature == DocFeatureType.NUM_ALPHA:
+            extracted_features[feature.value] = len([token for token in doc if token.is_alpha])
         elif feature == DocFeatureType.NUM_NSUBJ:
             extracted_features[feature.value] = len([token for token in doc if token.dep_ == "nsubj"])
         elif feature == DocFeatureType.NUM_NSUBJPASS:
@@ -185,6 +220,8 @@ def extract_features_from_token(token:Token, features:list, acd=[], acp=[], ccd=
     Returns:
         dict: A dictionary containing the extracted features.
     """
+    logger.info(f"Extracting features: {features} from sentence...")
+
     extracted_features = {}
     for feature in features:
         if feature == TokenFeatureType.DEP:

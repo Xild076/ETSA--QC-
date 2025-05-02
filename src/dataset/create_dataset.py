@@ -18,12 +18,12 @@ def create_dataset_file(file_name='data/dataset.csv'):
         None
     """
     if os.path.exists(file_name):
-        logging.info("Dataset file already exists. Skipping dataset creation.")
+        logger.info("Dataset file already exists. Skipping dataset creation.")
         return
     else:
         with open(file_name, "w") as f:
             f.write("text,text_type,actor,actor_subject,action,victim,extra\n")
-            logging.info("Dataset file created.")
+            logger.info("Dataset file created.")
 
 def split_text(text:str):
     """
