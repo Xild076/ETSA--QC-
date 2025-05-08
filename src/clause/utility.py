@@ -225,9 +225,9 @@ def extract_features_from_token(token:Token, features:list, acd=[], acp=[], ccd=
     extracted_features = {}
     for feature in features:
         if feature == TokenFeatureType.DEP:
-            extracted_features[feature.value] = token.dep_
+            extracted_features[feature.value] = token.dep
         elif feature == TokenFeatureType.POS:
-            extracted_features[feature.value] = token.pos_
+            extracted_features[feature.value] = token.pos
         elif feature == TokenFeatureType.INDEX:
             extracted_features[feature.value] = token.i
         elif feature == TokenFeatureType.NUM_ANCESTORS:
@@ -235,17 +235,17 @@ def extract_features_from_token(token:Token, features:list, acd=[], acp=[], ccd=
         elif feature == TokenFeatureType.NUM_DESCENDANTS:
             extracted_features[feature.value] = len(list(token.children))
         elif feature == TokenFeatureType.HEAD_DEP:
-            extracted_features[feature.value] = token.head.dep_
+            extracted_features[feature.value] = token.head.dep
         elif feature == TokenFeatureType.HEAD_POS:
-            extracted_features[feature.value] = token.head.pos_
+            extracted_features[feature.value] = token.head.pos
         elif feature == TokenFeatureType.HEAD_INDEX:
             extracted_features[feature.value] = token.head.i
         elif feature == TokenFeatureType.IS_FIRST:
-            extracted_features[feature.value] = token.i == 0
+            extracted_features[feature.value] = int(token.i == 0)
         elif feature == TokenFeatureType.IS_LAST:
-            extracted_features[feature.value] = token.i == len(token.doc) - 1
+            extracted_features[feature.value] = int(token.i == len(token.doc) - 1)
         elif feature == TokenFeatureType.IS_ALPHA:
-            extracted_features[feature.value] = token.is_alpha
+            extracted_features[feature.value] = int(token.is_alpha)
         elif feature == TokenFeatureType.ANCESTOR_CONTAINS_DEP:
             extracted_features[feature.value] = 0
             for ancestor in token.ancestors:
@@ -272,4 +272,4 @@ def extract_features_from_token(token:Token, features:list, acd=[], acp=[], ccd=
                     break
         else:
             print(f"Token Feature {feature} not recognized.")
-    return
+    return extracted_features
