@@ -90,93 +90,50 @@ create_dataset_file_if_needed(DATASET_FILE)
 @st.cache_resource
 def get_gspread_client():
     logger.info("Attempting to get gspread client.")
-    st.session_state.gspread_client_available = False
-    creds = None
-    
-    gcp_sa_keys = [
-        "type", "project_id", "private_key_id", "private_key",
-        "client_email", "client_id", "auth_uri", "token_uri",
-        "auth_provider_x509_cert_url", "client_x509_cert_url"
-    ]
-    optional_gcp_sa_keys = ["universe_domain"]
-
-    creds_dict_from_toml = {}
-    all_required_toml_found = True
+    st.session_state.gspread_client_available = False # Default to False
     try:
-        for key in gcp_sa_keys:
-            value = st.secrets.get(key)
-            if value is None:
-                all_required_toml_found = False
-                logger.info(f"Individual Streamlit secret (TOML) '{key}' not found.")
-                break
-            creds_dict_from_toml[key] = value
-        
-        if all_required_toml_found:
-            for key in optional_gcp_sa_keys:
-                value = st.secrets.get(key)
-                if value is not None:
-                    creds_dict_from_toml[key] = value
-            logger.info("All required Google credentials found as individual Streamlit secrets (TOML style).")
-            scopes = ["https.www.googleapis.com/auth/spreadsheets"]
-            creds = Credentials.from_service_account_info(creds_dict_from_toml, scopes=scopes)
-            logger.info("Credentials successfully created from individual TOML Streamlit secrets.")
-        else:
-            logger.info("Not all required individual TOML secrets found.")
-    except Exception as e:
-        logger.warning(f"Error processing individual TOML Streamlit secrets for Google credentials: {e}. Will try other methods.")
+        scopes = ["https.www.googleapis.com/auth/spreadsheets"]
+        creds_json_str_or_dict = st.secrets.get("google_service_account_credentials")
         creds = None
-
-    if not creds:
-        combined_json_secret_str = st.secrets.get("google_service_account_credentials")
-        if combined_json_secret_str:
-            logger.info("Found 'google_service_account_credentials' (combined JSON string) in Streamlit secrets.")
-            if isinstance(combined_json_secret_str, str):
+        if creds_json_str_or_dict:
+            logger.info("Found Google credentials in Streamlit secrets.")
+            if isinstance(creds_json_str_or_dict, str):
                 try:
-                    parsed_creds_dict = json.loads(combined_json_secret_str)
-                    scopes = ["https.www.googleapis.com/auth/spreadsheets"]
-                    creds = Credentials.from_service_account_info(parsed_creds_dict, scopes=scopes)
-                    logger.info("Credentials successfully created from combined JSON string in Streamlit secrets.")
+                    creds_dict = json.loads(creds_json_str_or_dict) # Removed strict=False
+                    logger.info("Successfully parsed JSON string from secrets.")
                 except json.JSONDecodeError as e:
-                    st.error(f"Failed to parse combined Google service account credentials JSON from Streamlit secrets: {e}.")
-                    logger.error(f"JSONDecodeError parsing combined Google credentials from st.secrets: {e}")
-                except Exception as e:
-                    st.error(f"Failed to create credentials from combined JSON secret: {e}")
-                    logger.error(f"Error creating credentials from combined JSON secret dict: {e}", exc_info=True)
+                    st.error(f"Failed to parse Google service account credentials from Streamlit secrets (JSON error): {e}.")
+                    logger.error(f"JSONDecodeError parsing Google credentials from st.secrets: {e}")
+                    return None # gspread_client_available remains False
+            elif isinstance(creds_json_str_or_dict, dict):
+                creds_dict = creds_json_str_or_dict
+                logger.info("Credentials in secrets are already a dict.")
             else:
-                logger.warning("'google_service_account_credentials' secret is not a string. Skipping this method.")
+                st.error("Google service account credentials in Streamlit secrets are not in a valid format (should be JSON string or dict).")
+                logger.error("Invalid format for Google credentials in st.secrets.")
+                return None # gspread_client_available remains False
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            logger.info("Credentials loaded from service account info (secrets).")
+        elif os.path.exists(SERVICE_ACCOUNT_FILE_PATH):
+            logger.info(f"Found Google credentials at local file path: {SERVICE_ACCOUNT_FILE_PATH}.")
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE_PATH, scopes=scopes)
+            logger.warning("Loaded Google credentials from local file. For security, consider using Streamlit secrets for production deployments.")
         else:
-            logger.info("'google_service_account_credentials' (combined JSON string) not found in Streamlit secrets.")
+            st.warning("Google Sheets credentials not found in Streamlit secrets or local file. Collaborative features disabled.", icon="⚠️")
+            logger.warning("Critical: Neither Streamlit secrets nor local credentials file found.")
+            return None # gspread_client_available remains False
 
-    if not creds:
-        if os.path.exists(SERVICE_ACCOUNT_FILE_PATH):
-            logger.info(f"Attempting to load Google credentials from local file: {SERVICE_ACCOUNT_FILE_PATH}.")
-            try:
-                scopes = ["https.www.googleapis.com/auth/spreadsheets"]
-                creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE_PATH, scopes=scopes)
-                logger.warning("Loaded Google credentials from local file. For security in production, prefer Streamlit secrets.")
-            except Exception as e:
-                st.error(f"Failed to load credentials from local file '{SERVICE_ACCOUNT_FILE_PATH}': {e}")
-                logger.error(f"Error creating credentials from local file: {e}", exc_info=True)
-        else:
-            logger.info(f"Local credentials file '{SERVICE_ACCOUNT_FILE_PATH}' not found.")
-
-    if creds:
-        try:
-            client = gspread.authorize(creds)
-            logger.info("gspread.authorize successful.")
-            st.session_state.gspread_client_available = True
-            logger.info("Successfully connected to Google Sheets API and set gspread_client_available to True.")
-            return client
-        except Exception as e:
-            st.session_state.gspread_client_available = False
-            error_detail = str(e.args[0]) if e.args else str(e)
-            st.warning(f"Could not connect to Google Sheets (gspread.authorize failed): {error_detail}. Collaborative features may be limited or unavailable.", icon="📡")
-            logger.error(f"Google Sheets connection failed in gspread.authorize: {e}", exc_info=True)
-            return None
-
-    st.warning("Google Sheets credentials could not be loaded or were invalid (from any source: individual TOML secrets, combined JSON secret, or local file). Collaborative features disabled.", icon="⚠️")
-    logger.warning("Critical: No valid Google credentials source found or client authorization failed.")
-    return None
+        client = gspread.authorize(creds)
+        logger.info("gspread.authorize successful.")
+        st.session_state.gspread_client_available = True # Set to True only on full success
+        logger.info("Successfully connected to Google Sheets API and set gspread_client_available to True.")
+        return client
+    except Exception as e:
+        # gspread_client_available remains False (or is set again)
+        st.session_state.gspread_client_available = False 
+        st.warning(f"Could not connect to Google Sheets: {e}. Collaborative features may be limited or unavailable.", icon="📡")
+        logger.error(f"Google Sheets connection failed in get_gspread_client: {e}", exc_info=True)
+        return None
 gs_client = get_gspread_client()
 
 @st.cache_resource
@@ -435,7 +392,7 @@ def initialize_state():
         'all_files': load_text_file_names_cached(TEXTS_DIR),
         'current_file_path': None,
         'displacy_distance': DEFAULT_DISPLACY_DISTANCE,
-        'gspread_client_available': st.session_state.get('gspread_client_available', False), 
+        'gspread_client_available': st.session_state.get('gspread_client_available', False), # Persist this
         'current_sentence_lock_details': None,
         'sentence_load_status': "NONE",
         'sentence_lock_info_message': "",
@@ -445,9 +402,10 @@ def initialize_state():
         if k not in st.session_state:
             st.session_state[k] = v
     
+    # Ensure gs_client is initialized if not already, this might re-trigger logs if it failed silently before
     global gs_client 
-    if 'gs_client_initialized_run' not in st.session_state: 
-        gs_client = get_gspread_client() 
+    if 'gs_client_initialized_run' not in st.session_state: # Run gs_client init once per session effectively
+        gs_client = get_gspread_client() # This will log if it fails
         st.session_state.gs_client_initialized_run = True
 
 
@@ -545,7 +503,7 @@ def load_sentence(target_idx):
             st.session_state.current_doc = nlp(sentence_text)
             st.session_state.token_roles = {token.i: '-' for token in st.session_state.current_doc}
             st.session_state.sentence_load_status = "SUCCESS"
-            st.session_state.sentence_lock_info_message = f"Sentence {clamped_idx + 1} of '{os.path.basename(current_fpath)}' loaded and locked by you. {lock_msg}" 
+            st.session_state.sentence_lock_info_message = f"Sentence {clamped_idx + 1} of '{os.path.basename(current_fpath)}' loaded and locked by you. {lock_msg}" # lock_msg might indicate GSheet issue
             st.toast(st.session_state.sentence_lock_info_message, icon="✅" if "unavailable" not in lock_msg else "⚠️" )
             logger.info(f"Successfully loaded and locked sentence {clamped_idx} of {current_fpath} by {st.session_state.annotator_name}. Lock message: {lock_msg}")
         except Exception as e:
@@ -553,7 +511,7 @@ def load_sentence(target_idx):
             logger.error(f"SpaCy or processing error for sentence '{sentence_text[:50]}...' in {current_fpath}: {e}", exc_info=True)
             st.session_state.current_doc = None
             st.session_state.token_roles = {}
-            if "unavailable" not in lock_msg : 
+            if "unavailable" not in lock_msg : # Only release if we think we got a real lock
                 release_lock(lock_id, st.session_state.annotator_name) 
             st.session_state.current_sentence_lock_details = None
             st.session_state.sentence_load_status = "PROCESSING_ERROR"
@@ -578,7 +536,7 @@ def handle_token_role_update(token_index, new_role):
         st.session_state.actor_subject_index = -1
     logger.debug(f"Token {token_index} role updated to {new_role} by {st.session_state.annotator_name}. Actor subject index is now {st.session_state.actor_subject_index}.")
 
-initialize_state() 
+initialize_state() # gs_client gets initialized here if not already
 
 with st.sidebar:
     st.header(f"Annotator: {st.session_state.annotator_name}")
@@ -807,9 +765,11 @@ if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.curre
 
 
             if st.session_state.current_sentence_lock_details:
+                # Only release if it wasn't a "proceeding without lock" situation
                 if "unavailable" not in st.session_state.current_sentence_lock_details.get('lock_message', ''):
                     release_lock(st.session_state.current_sentence_lock_details['id'], st.session_state.annotator_name)
-                st.session_state.current_sentence_lock_details = None 
+                st.session_state.current_sentence_lock_details = None # Clear it regardless
+                # logger.info(f"Lock released for sentence {st.session_state.sentence_index} of {st.session_state.current_file_path} after saving.") # Redundant due to release_lock logging
 
             if st.session_state.sentences and st.session_state.sentence_index < len(st.session_state.sentences) - 1:
                 load_sentence(st.session_state.sentence_index + 1)
