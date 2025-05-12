@@ -98,10 +98,12 @@ def get_gspread_client():
         creds_json_str_or_dict = st.secrets.get("google_service_account_credentials")
         creds = None
         if creds_json_str_or_dict:
+            st.success("Google credentials found in Streamlit secrets.")
             logger.info("Found Google credentials in Streamlit secrets.")
             if isinstance(creds_json_str_or_dict, str):
                 try:
                     creds_dict = json.loads(creds_json_str_or_dict) # Removed strict=False
+                    st.success("Successfully parsed JSON string from secrets.")
                     logger.info("Successfully parsed JSON string from secrets.")
                 except json.JSONDecodeError as e:
                     st.error(f"Failed to parse Google service account credentials from Streamlit secrets (JSON error): {e}.")
