@@ -96,10 +96,10 @@ def get_gspread_client():
         if creds_json_str_or_dict:
             if isinstance(creds_json_str_or_dict, str):
                 try:
-                    creds_dict = json.loads(creds_json_str_or_dict, strict=False)
+                    creds_dict = json.loads(creds_json_str_or_dict)
                 except json.JSONDecodeError as e:
                     st.error(f"Failed to parse Google service account credentials from Streamlit secrets (JSON error): {e}.")
-                    logger.error("JSONDecodeError parsing Google credentials from st.secrets.")
+                    logger.error(f"JSONDecodeError parsing Google credentials from st.secrets: {e}")
                     st.session_state.gspread_client_available = False
                     return None
             elif isinstance(creds_json_str_or_dict, dict):
@@ -112,6 +112,7 @@ def get_gspread_client():
             creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         elif os.path.exists(SERVICE_ACCOUNT_FILE_PATH):
             creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE_PATH, scopes=scopes)
+            logger.warning("Loaded Google credentials from local file. For security, consider using Streamlit secrets for production deployments.")
         else:
             st.session_state.gspread_client_available = False
             st.warning("Google Sheets credentials not found in Streamlit secrets or local file. Collaborative features disabled.", icon="⚠️")
@@ -201,8 +202,8 @@ def acquire_lock(lock_id, annotator_name, file_path, sentence_index):
             logger.info(f"Lock acquired for {lock_id} by {annotator_name}.")
             return True, "Lock acquired."
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets APIError during acquire_lock for {lock_id} by {annotator_name}: {e.response.text}")
-        st.error(f"Google Sheets API Error (acquiring lock): {e.response.json().get('error', {}).get('message', 'Details in logs.')}")
+        logger.error(f"Google Sheets APIError during acquire_lock for {lock_id} by {annotator_name}: {e.response.text if e.response else str(e)}")
+        st.error(f"Google Sheets API Error (acquiring lock): {e.response.json().get('error', {}).get('message', 'Details in logs.') if e.response else str(e)}")
         return False, "Google Sheets API error prevented lock acquisition. Please try again."
     except Exception as e:
         logger.error(f"Unexpected error in acquire_lock for {lock_id} by {annotator_name}: {e}")
@@ -231,8 +232,8 @@ def release_lock(lock_id, annotator_name):
             return True 
         return True 
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets APIError during release_lock for {lock_id} by {annotator_name}: {e.response.text}")
-        st.error(f"Google Sheets API Error (releasing lock): {e.response.json().get('error', {}).get('message', 'Details in logs.')}")
+        logger.error(f"Google Sheets APIError during release_lock for {lock_id} by {annotator_name}: {e.response.text if e.response else str(e)}")
+        st.error(f"Google Sheets API Error (releasing lock): {e.response.json().get('error', {}).get('message', 'Details in logs.') if e.response else str(e)}")
         return False
     except Exception as e:
         logger.error(f"Unexpected error in release_lock for {lock_id} by {annotator_name}: {e}")
@@ -292,9 +293,9 @@ def write_to_google_sheet(df_to_append):
         logger.info(f"Appended {len(df_to_append)} rows to Google Sheet.")
         return True
     except gspread.exceptions.APIError as e:
-        error_details = e.response.json().get('error', {}).get('message', 'Details in logs.')
+        error_details = e.response.json().get('error', {}).get('message', 'Details in logs.') if e.response else str(e)
         st.error(f"Google Sheets API Error (writing data): {error_details}")
-        logger.error(f"Google Sheets API Error (writing data): {e.response.text}")
+        logger.error(f"Google Sheets API Error (writing data): {e.response.text if e.response else str(e)}")
         return False
     except Exception as e:
         st.error(f"Failed to write annotation to Google Sheet: {e}")
@@ -556,12 +557,13 @@ with st.sidebar:
                                                        help="Adjust vertical spacing for dependency parse. For overall size, use your browser's zoom (Ctrl/Cmd +/-).")
     else:
         st.info(f"No .txt files found in '{TEXTS_DIR}'. Please add text files to this directory and refresh the application.")
-        if st.button("Refresh File List", key="refresh_files_empty"):
-            st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
-            if st.session_state.all_files:
-                st.session_state.current_file_path = st.session_state.all_files[0]
-                load_file(st.session_state.current_file_path)
-            st.rerun()
+        if os.path.isdir(TEXTS_DIR):
+            if st.button("Refresh File List", key="refresh_files_empty"):
+                st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
+                if st.session_state.all_files:
+                    st.session_state.current_file_path = st.session_state.all_files[0]
+                    load_file(st.session_state.current_file_path)
+                st.rerun()
 
 st.title("📝 Annotation Interface")
 
@@ -575,7 +577,7 @@ if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.curre
     if len(st.session_state.current_doc) > 0:
         dep_html = displacy.render(st.session_state.current_doc, style="dep", jupyter=False,
             options={'compact': False, 'bg': '#fafafa', 'color': '#1E1E1E', 'distance': st.session_state.displacy_distance, 'word_spacing': 30, 'arrow_spacing': 10})
-        st.components.v1.html(dep_html, height=100 + len(st.session_state.current_doc) * 12, scrolling=True)
+        st.components.v1.html(dep_html, height=20 + len(st.session_state.current_doc) * 12, scrolling=True)
     else:
         st.info("Sentence is empty or has no tokens that can be parsed.")
     
