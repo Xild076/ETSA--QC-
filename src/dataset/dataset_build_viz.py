@@ -39,9 +39,15 @@ logging.basicConfig(filename=os.path.join(LOG_DIR, "AnnotationLog.log"), level=l
 logger = logging.getLogger(__name__)
 
 if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
-if not os.path.exists(TEXTS_DIR): 
-    st.warning(f"Directory '{TEXTS_DIR}' does not exist. Please create it and add text files for annotation.")
-    os.makedirs(TEXTS_DIR)
+
+if not os.path.isdir(TEXTS_DIR):
+    st.error(
+        f"Error: The required directory for text files ('{TEXTS_DIR}') was not found. "
+        f"If you are hosting this application (e.g., on Streamlit Cloud from GitHub), "
+        f"please ensure that the '{TEXTS_DIR}' directory exists in your repository, "
+        f"is correctly spelled, and contains your .txt files. "
+        f"The application expects these files to be present in that location within the deployed environment."
+    )
 
 if 'annotator_name' not in st.session_state or not st.session_state.annotator_name:
     st.session_state.annotator_name = ""
@@ -49,8 +55,8 @@ if 'annotator_name' not in st.session_state or not st.session_state.annotator_na
     with placeholder.container():
         st.title("Welcome to the Collaborative Annotation Tool")
         st.markdown("Please enter a unique annotator name/ID to begin.")
-        name_input = st.text_input("Your Annotator Name/ID:", key="annotator_name_input_field_v7", placeholder="E.g., user_gamma")
-        if st.button("Confirm Name and Start Annotation", key="confirm_annotator_name_v7", type="primary"):
+        name_input = st.text_input("Your Annotator Name/ID:", key="annotator_name_input_field", placeholder="E.g., user_gamma")
+        if st.button("Confirm Name and Start Annotation", key="confirm_annotator_name", type="primary"):
             if name_input.strip():
                 st.session_state.annotator_name = name_input.strip()
                 logger.info(f"Annotator '{st.session_state.annotator_name}' started session.")
@@ -90,7 +96,7 @@ def get_gspread_client():
         if creds_json_str_or_dict:
             if isinstance(creds_json_str_or_dict, str):
                 try:
-                    creds_dict = json.loads(creds_json_str_or_dict)
+                    creds_dict = json.loads(creds_json_str_or_dict, strict=False)
                 except json.JSONDecodeError as e:
                     st.error(f"Failed to parse Google service account credentials from Streamlit secrets (JSON error): {e}.")
                     logger.error("JSONDecodeError parsing Google credentials from st.secrets.")
@@ -236,7 +242,7 @@ def release_lock(lock_id, annotator_name):
 @st.cache_data
 def load_text_file_names_cached(directory:str):
     if not os.path.isdir(directory):
-        logger.warning(f"Texts directory '{directory}' not found.")
+        logger.warning(f"Texts directory '{directory}' not found when trying to load file names.")
         return []
     try:
         return sorted([os.path.join(directory, fn) for fn in os.listdir(directory) if fn.lower().endswith(".txt")])
@@ -345,7 +351,7 @@ def initialize_state():
         if k not in st.session_state:
             st.session_state[k] = v
 
-    if not st.session_state.all_files and os.path.exists(TEXTS_DIR):
+    if not st.session_state.all_files and os.path.isdir(TEXTS_DIR): 
         st.warning(f"No .txt files found in the '{TEXTS_DIR}' directory. Please add text files and refresh the page.")
     elif st.session_state.current_file_path is None and st.session_state.all_files:
         st.session_state.current_file_path = st.session_state.all_files[st.session_state.file_index]
@@ -488,7 +494,7 @@ with st.sidebar:
 
         selected_fpath = st.selectbox("Select Text File", options=st.session_state.all_files,
             index=current_file_idx_in_options,
-            format_func=lambda x: os.path.basename(x) if x else "None", key="file_selector_v7")
+            format_func=lambda x: os.path.basename(x) if x else "None", key="file_selector")
 
         if selected_fpath and selected_fpath != st.session_state.current_file_path:
             load_file(selected_fpath, target_sentence_idx=0)
@@ -500,12 +506,12 @@ with st.sidebar:
         prev_disabled = st.session_state.sentence_index <= 0 or not st.session_state.sentences or st.session_state.sentence_load_status != "SUCCESS"
         next_disabled = not st.session_state.sentences or st.session_state.sentence_index >= len(st.session_state.sentences) - 1 or st.session_state.sentence_load_status != "SUCCESS"
 
-        if nav_cols[0].button("⬅️ Prev", use_container_width=True, key="prev_sent_v7", disabled=prev_disabled):
+        if nav_cols[0].button("⬅️ Prev", use_container_width=True, key="prev_sent", disabled=prev_disabled):
             if st.session_state.sentence_index > 0:
                 load_sentence(st.session_state.sentence_index - 1)
                 st.rerun()
 
-        if nav_cols[1].button("Next ➡️", use_container_width=True, key="next_sent_v7", disabled=next_disabled):
+        if nav_cols[1].button("Next ➡️", use_container_width=True, key="next_sent", disabled=next_disabled):
             if st.session_state.sentences and st.session_state.sentence_index < len(st.session_state.sentences) - 1:
                 load_sentence(st.session_state.sentence_index + 1)
                 st.rerun()
@@ -546,11 +552,11 @@ with st.sidebar:
 
         st.divider()
         st.subheader("⚙️ Display Options")
-        st.session_state.displacy_distance = st.slider("Dependency Spacing", 60, 200, st.session_state.displacy_distance, 10, key="dist_slider_v7",
+        st.session_state.displacy_distance = st.slider("Dependency Spacing", 60, 200, st.session_state.displacy_distance, 10, key="dist_slider",
                                                        help="Adjust vertical spacing for dependency parse. For overall size, use your browser's zoom (Ctrl/Cmd +/-).")
     else:
         st.info(f"No .txt files found in '{TEXTS_DIR}'. Please add text files to this directory and refresh the application.")
-        if st.button("Refresh File List", key="refresh_files_empty_v7"):
+        if st.button("Refresh File List", key="refresh_files_empty"):
             st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
             if st.session_state.all_files:
                 st.session_state.current_file_path = st.session_state.all_files[0]
@@ -569,7 +575,7 @@ if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.curre
     if len(st.session_state.current_doc) > 0:
         dep_html = displacy.render(st.session_state.current_doc, style="dep", jupyter=False,
             options={'compact': False, 'bg': '#fafafa', 'color': '#1E1E1E', 'distance': st.session_state.displacy_distance, 'word_spacing': 30, 'arrow_spacing': 10})
-        st.components.v1.html(dep_html, height=0 + len(st.session_state.current_doc) * 12, scrolling=True)
+        st.components.v1.html(dep_html, height=100 + len(st.session_state.current_doc) * 12, scrolling=True)
     else:
         st.info("Sentence is empty or has no tokens that can be parsed.")
     
@@ -658,7 +664,7 @@ if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.curre
     st.divider()
     save_cols = st.columns([1,3,1]) 
     with save_cols[0]: 
-        if st.button("💾 Save & Next ➡️", type="primary", use_container_width=True, key="save_next_v7",
+        if st.button("💾 Save & Next ➡️", type="primary", use_container_width=True, key="save_next",
                         help="Save current annotation and move to the next sentence. Releases lock on this sentence."):
             actor_to_save, action_to_save, victim_to_save, extra_to_save = [], [], [], []
             subj_to_save = -1
@@ -714,7 +720,7 @@ elif st.session_state.sentence_load_status == "LOCKED_BY_OTHER":
     st.warning(f"**This sentence cannot be loaded at the moment:**")
     st.markdown(f"> {st.session_state.sentence_lock_info_message}")
     st.info("Please select a different sentence from the sidebar, or try loading this one again in a few minutes. The lock might have expired or been released by then.")
-    if st.button("Try to Reload This Sentence", key="reload_locked_sentence_v7"):
+    if st.button("Try to Reload This Sentence", key="reload_locked_sentence"):
         load_sentence(st.session_state.sentence_index if st.session_state.sentence_index != -1 else 0) 
         st.rerun()
 
@@ -731,17 +737,17 @@ elif st.session_state.sentence_load_status != "NONE":
     st.info("Use the sidebar navigation to select a file and sentence. If issues persist, check the application logs or contact support.")
 
 elif not st.session_state.all_files :
-    if not os.path.exists(TEXTS_DIR):
-        os.makedirs(TEXTS_DIR) 
-        st.error(f"The designated texts directory ('{TEXTS_DIR}') was not found. It has been created now. Please add your .txt files for annotation into this directory and refresh the page.")
-        logger.error(f"TEXTS_DIR {TEXTS_DIR} not found, created it.")
+    if not os.path.isdir(TEXTS_DIR): 
+        pass 
     elif not load_text_file_names_cached(TEXTS_DIR): 
         st.info(f"Welcome, {st.session_state.annotator_name}! No .txt files were found in the '{TEXTS_DIR}' directory. Please add your text files there and click 'Refresh File List' or reload the page.")
-    if st.button("Refresh File List", key="refresh_files_initial_v7"):
-        st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
-        if st.session_state.all_files: 
-            st.session_state.current_file_path = st.session_state.all_files[0]
-            load_file(st.session_state.current_file_path) 
-        st.rerun()
+    
+    if os.path.isdir(TEXTS_DIR): 
+        if st.button("Refresh File List", key="refresh_files_initial"):
+            st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
+            if st.session_state.all_files: 
+                st.session_state.current_file_path = st.session_state.all_files[0]
+                load_file(st.session_state.current_file_path) 
+            st.rerun()
 else: 
     st.info("Please select a file from the sidebar to begin the annotation process.")
