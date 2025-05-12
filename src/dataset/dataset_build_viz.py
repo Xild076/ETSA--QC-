@@ -5,8 +5,12 @@ import pandas as pd
 import os
 import logging
 from collections import defaultdict
+import gspread
+from google.oauth2.service_account import Credentials
+import time
+import json
 
-st.set_page_config(layout="wide", page_title="Annotation Tool v2")
+st.set_page_config(layout="wide", page_title="Annotation Tool v7 - Optimized")
 
 LOG_DIR = "logs"
 DATA_DIR = "data"
@@ -15,299 +19,727 @@ DATASET_FILE = os.path.join(DATA_DIR, 'dataset.csv')
 DEFAULT_SPACY_MODEL = "en_core_web_sm"
 DEFAULT_DISPLACY_DISTANCE = 100
 ROLES = ['-', 'Actor', 'Action', 'Victim']
-ROLE_COLORS = {'Actor': 'blue', 'Action': 'green', 'Victim': 'red', '-': 'grey'}
+ROLE_COLORS = {'Actor': '#007bff', 'Action': '#28a745', 'Victim': '#dc3545', '-': 'inherit'}
 ROLE_SHORT = {'Actor': 'A', 'Action': 'Act', 'Victim': 'V', '-': '-'}
 
-if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
-logging.basicConfig(filename=os.path.join(LOG_DIR, "QCLog.log"), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+GOOGLE_SHEET_ID = "1PG9W38Ygn1l1hW23vAYJauzSfT7jk7YtrGo_m7Ar4Qs"
+SERVICE_ACCOUNT_FILE_PATH = "google_credentials.json"
+
+LOCK_SHEET_NAME = "AnnotationLocks"
+LOCK_TIMEOUT_SECONDS = 300
+LOCK_COL_ID = "LockID"
+LOCK_COL_ANNOTATOR = "Annotator"
+LOCK_COL_TIMESTAMP = "TimestampEpoch"
+LOCK_COL_FILEPATH = "FilePath"
+LOCK_COL_SENTENCE_IDX = "SentenceIndex"
+LOCK_HEADER = [LOCK_COL_ID, LOCK_COL_ANNOTATOR, LOCK_COL_TIMESTAMP, LOCK_COL_FILEPATH, LOCK_COL_SENTENCE_IDX]
+
+if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
+logging.basicConfig(filename=os.path.join(LOG_DIR, "AnnotationLog.log"), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-if not os.path.exists(TEXTS_DIR):
-    os.makedirs(TEXTS_DIR)
-    st.warning(f"Created texts directory at '{TEXTS_DIR}'. Please add your .txt files there.")
+if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
+if not os.path.exists(TEXTS_DIR): os.makedirs(TEXTS_DIR)
+
+if 'annotator_name' not in st.session_state or not st.session_state.annotator_name:
+    st.session_state.annotator_name = ""
+    placeholder = st.empty()
+    with placeholder.container():
+        st.title("Welcome to the Collaborative Annotation Tool")
+        st.markdown("Please enter a unique annotator name/ID to begin.")
+        name_input = st.text_input("Your Annotator Name/ID:", key="annotator_name_input_field_v7", placeholder="E.g., user_gamma")
+        if st.button("Confirm Name and Start Annotation", key="confirm_annotator_name_v7", type="primary"):
+            if name_input.strip():
+                st.session_state.annotator_name = name_input.strip()
+                logger.info(f"Annotator '{st.session_state.annotator_name}' started session.")
+                placeholder.empty()
+                st.rerun()
+            else:
+                st.warning("Annotator name cannot be empty. Please enter a valid name.")
+    st.stop()
 
 @st.cache_resource
 def load_spacy_model(model_name=DEFAULT_SPACY_MODEL):
     try:
         return spacy.load(model_name)
     except OSError:
-        st.error(f"SpaCy model '{model_name}' not found. Download: python -m spacy download {model_name}")
+        st.error(f"SpaCy model '{model_name}' not found. Please download it by running: `python -m spacy download {model_name}` in your terminal.")
         st.stop()
-
 nlp = load_spacy_model()
 
 def create_dataset_file_if_needed(file_name):
     if not os.path.exists(file_name) or os.path.getsize(file_name) == 0:
         try:
             with open(file_name, "w", encoding='utf-8') as f:
-                f.write("text,text_type,actor,actor_subject,action,victim,extra\n")
-            logging.info(f"Dataset file created/header written: {file_name}")
+                f.write("text,text_type,actor,actor_subject,action,victim,extra,annotator\n")
+            logger.info(f"Created local dataset file: {file_name}")
         except IOError as e:
-            st.error(f"Failed to create/write header for dataset file: {e}")
-            logging.error(f"Failed to create/write header for dataset file: {e}")
+            st.error(f"Failed to create or access local dataset file: {e}")
+            logger.error(f"IOError creating/accessing local dataset file {file_name}: {e}")
             st.stop()
-
 create_dataset_file_if_needed(DATASET_FILE)
+
+@st.cache_resource
+def get_gspread_client():
+    try:
+        scopes = ["https.www.googleapis.com/auth/spreadsheets"]
+        creds_json_str_or_dict = st.secrets.get("google_service_account_credentials")
+        creds = None
+        if creds_json_str_or_dict:
+            if isinstance(creds_json_str_or_dict, str):
+                try:
+                    creds_dict = json.loads(creds_json_str_or_dict)
+                except json.JSONDecodeError:
+                    st.error("Failed to parse Google service account credentials from Streamlit secrets (JSON error).")
+                    logger.error("JSONDecodeError parsing Google credentials from st.secrets.")
+                    st.session_state.gspread_client_available = False
+                    return None
+            elif isinstance(creds_json_str_or_dict, dict):
+                creds_dict = creds_json_str_or_dict
+            else:
+                st.error("Google service account credentials in Streamlit secrets are not in a valid format (should be JSON string or dict).")
+                logger.error("Invalid format for Google credentials in st.secrets.")
+                st.session_state.gspread_client_available = False
+                return None
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        elif os.path.exists(SERVICE_ACCOUNT_FILE_PATH):
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE_PATH, scopes=scopes)
+        else:
+            st.session_state.gspread_client_available = False
+            st.warning("Google Sheets credentials not found in Streamlit secrets or local file. Collaborative features disabled.", icon="⚠️")
+            logger.warning("Google Sheets credentials not configured.")
+            return None
+
+        client = gspread.authorize(creds)
+        st.session_state.gspread_client_available = True
+        logger.info("Successfully connected to Google Sheets API.")
+        return client
+    except Exception as e:
+        st.session_state.gspread_client_available = False
+        st.warning(f"Could not connect to Google Sheets: {e}. Collaborative features may be limited or unavailable.", icon="📡")
+        logger.error(f"Google Sheets connection failed: {e}")
+        return None
+gs_client = get_gspread_client()
+
+@st.cache_resource
+def get_locks_worksheet():
+    if not st.session_state.get('gspread_client_available', False) or gs_client is None:
+        return None
+    if not GOOGLE_SHEET_ID or GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
+        st.warning("Google Sheet ID for locking is not configured. Real-time lock management will be disabled.", icon="⚙️")
+        logger.warning("Google Sheet ID for locking not configured.")
+        return None
+    try:
+        spreadsheet = gs_client.open_by_key(GOOGLE_SHEET_ID)
+        try:
+            worksheet = spreadsheet.worksheet(LOCK_SHEET_NAME)
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=LOCK_SHEET_NAME, rows="1", cols=str(len(LOCK_HEADER)))
+            worksheet.append_row(LOCK_HEADER, value_input_option='USER_ENTERED')
+            logger.info(f"Created missing '{LOCK_SHEET_NAME}' sheet in Google Sheet ID: {GOOGLE_SHEET_ID}.")
+        return worksheet
+    except Exception as e:
+        st.error(f"Error accessing or creating the locks sheet ('{LOCK_SHEET_NAME}') in Google Sheets: {e}")
+        logger.error(f"Error with locks sheet '{LOCK_SHEET_NAME}': {e}")
+        return None
+locks_ws = get_locks_worksheet()
+
+def make_lock_id(file_path, sentence_index):
+    return f"{os.path.basename(file_path)}_{sentence_index}"
+
+def acquire_lock(lock_id, annotator_name, file_path, sentence_index):
+    if locks_ws is None:
+        return True, "Lock system unavailable (Google Sheets not connected or sheet misconfigured), proceeding without lock."
+    try:
+        current_time_epoch = int(time.time())
+        cells = locks_ws.findall(lock_id, in_column=LOCK_HEADER.index(LOCK_COL_ID) + 1)
+        
+        if cells:
+            cell = cells[0] 
+            if len(cells) > 1:
+                 logger.warning(f"Multiple lock entries found for {lock_id}. Using the first one at row {cell.row}.")
+
+            row_values = locks_ws.row_values(cell.row)
+            locked_by_idx = LOCK_HEADER.index(LOCK_COL_ANNOTATOR)
+            timestamp_idx = LOCK_HEADER.index(LOCK_COL_TIMESTAMP)
+
+            if len(row_values) <= max(locked_by_idx, timestamp_idx):
+                logger.error(f"Lock row {cell.row} for {lock_id} is malformed: {row_values}. Releasing potentially corrupt lock.")
+                locks_ws.delete_rows(cell.row) 
+                new_row = [lock_id, annotator_name, current_time_epoch, os.path.basename(file_path), sentence_index]
+                locks_ws.append_row(new_row, value_input_option='USER_ENTERED')
+                return True, "Acquired lock after removing malformed entry."
+
+            locked_by = row_values[locked_by_idx]
+            lock_time = int(row_values[timestamp_idx])
+
+            if locked_by == annotator_name:
+                locks_ws.update_cell(cell.row, timestamp_idx + 1, current_time_epoch)
+                logger.info(f"Lock refreshed for {lock_id} by {annotator_name}.")
+                return True, "Lock refreshed."
+            elif (current_time_epoch - lock_time) < LOCK_TIMEOUT_SECONDS:
+                time_remaining = LOCK_TIMEOUT_SECONDS - (current_time_epoch - lock_time)
+                locked_until_str = time.strftime('%H:%M:%S', time.localtime(lock_time + LOCK_TIMEOUT_SECONDS))
+                logger.info(f"Lock attempt failed for {lock_id}. Locked by {locked_by} for another {time_remaining}s.")
+                return False, f"Sentence locked by **{locked_by}**. Try again in {time_remaining//60}m {time_remaining%60}s (until ~{locked_until_str})."
+            else: 
+                locks_ws.update_cell(cell.row, locked_by_idx + 1, annotator_name)
+                locks_ws.update_cell(cell.row, timestamp_idx + 1, current_time_epoch)
+                logger.info(f"Acquired stale lock for {lock_id} from {locked_by} by {annotator_name}.")
+                return True, f"Acquired stale lock from {locked_by}."
+        else: 
+            new_row = [lock_id, annotator_name, current_time_epoch, os.path.basename(file_path), sentence_index]
+            locks_ws.append_row(new_row, value_input_option='USER_ENTERED')
+            logger.info(f"Lock acquired for {lock_id} by {annotator_name}.")
+            return True, "Lock acquired."
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets APIError during acquire_lock for {lock_id} by {annotator_name}: {e.response.text}")
+        st.error(f"Google Sheets API Error (acquiring lock): {e.response.json().get('error', {}).get('message', 'Details in logs.')}")
+        return False, "Google Sheets API error prevented lock acquisition. Please try again."
+    except Exception as e:
+        logger.error(f"Unexpected error in acquire_lock for {lock_id} by {annotator_name}: {e}")
+        st.error(f"An unexpected error occurred with the locking system: {e}")
+        return False, "Locking system error."
+
+def release_lock(lock_id, annotator_name):
+    if locks_ws is None:
+        return True
+    try:
+        cells = locks_ws.findall(lock_id, in_column=LOCK_HEADER.index(LOCK_COL_ID) + 1)
+        if cells:
+            for cell in cells: 
+                try:
+                    annotator_col_val = locks_ws.cell(cell.row, LOCK_HEADER.index(LOCK_COL_ANNOTATOR) + 1).value
+                    if annotator_col_val == annotator_name:
+                        locks_ws.delete_rows(cell.row)
+                        logger.info(f"Lock {lock_id} released by {annotator_name} from row {cell.row}.")
+                    else:
+                        logger.warning(f"Attempt to release lock {lock_id} by {annotator_name}, but it's held by {annotator_col_val} or cell is empty.")
+                        return False 
+                except gspread.exceptions.CellNotFound: 
+                    logger.warning(f"Cell not found when trying to release lock {lock_id} at row {cell.row}. Already released or deleted.")
+                except Exception as e_inner: 
+                    logger.error(f"Error processing cell {cell.row} for lock {lock_id} release by {annotator_name}: {e_inner}")
+            return True 
+        return True 
+    except gspread.exceptions.APIError as e:
+        logger.error(f"Google Sheets APIError during release_lock for {lock_id} by {annotator_name}: {e.response.text}")
+        st.error(f"Google Sheets API Error (releasing lock): {e.response.json().get('error', {}).get('message', 'Details in logs.')}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in release_lock for {lock_id} by {annotator_name}: {e}")
+        st.error(f"An unexpected error occurred while releasing the lock: {e}")
+        return False
 
 @st.cache_data
 def load_text_file_names_cached(directory:str):
-    text_files = []
     if not os.path.isdir(directory):
+        logger.warning(f"Texts directory '{directory}' not found.")
         return []
     try:
-        for filename in os.listdir(directory):
-            if filename.lower().endswith(".txt"):
-                text_files.append(os.path.join(directory, filename))
+        return sorted([os.path.join(directory, fn) for fn in os.listdir(directory) if fn.lower().endswith(".txt")])
     except Exception as e:
-        logging.error(f"Error loading file names from {directory}: {e}")
+        logger.error(f"Error loading file list from {directory}: {e}")
+        st.error(f"Could not load file list from '{directory}'. Check permissions and path.")
         return []
-    return sorted(text_files)
 
 @st.cache_data
 def load_text_file_cached(file_path:str):
     try:
         with open(file_path, "r", encoding='utf-8') as f:
-            text = f.read()
-        return text
+            return f.read()
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        st.error(f"File not found: {os.path.basename(file_path)}")
+        return None
     except Exception as e:
-        logging.error(f"Error reading file {file_path}: {e}")
+        logger.error(f"Error reading file {file_path}: {e}")
+        st.error(f"Could not read file: {os.path.basename(file_path)}. Error: {e}")
         return None
 
 @st.cache_data
-def split_text_cached(_text_hash: int, text:str):
-    if not text: return []
+def split_text_cached(_text_hash: int, text:str): 
+    if not text:
+        return []
     doc = nlp(text)
     return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
 
-def write_data_to_csv(text:str, text_type:str, actor:list, actor_subject:int, action:list, victim:list, extra:list):
-    data = {'text': [text], 'text_type': [text_type], 'actor': [str(sorted(actor))], 'actor_subject': [actor_subject], 'action': [str(sorted(action))], 'victim': [str(sorted(victim))], 'extra': [str(sorted(extra))]}
-    df = pd.DataFrame(data)
+def write_to_google_sheet(df_to_append):
+    if not st.session_state.get('gspread_client_available', False) or gs_client is None:
+        return False
+    if not GOOGLE_SHEET_ID or GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
+        logger.warning("Google Sheet ID for data not configured. Skipping Google Sheet write.")
+        return False
     try:
-        header = not os.path.exists(DATASET_FILE) or os.path.getsize(DATASET_FILE) == 0
-        df.to_csv(DATASET_FILE, mode='a', header=header, index=False, encoding='utf-8')
-        logging.info(f"Data written: {text[:50]}...")
+        spreadsheet = gs_client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = spreadsheet.sheet1
+        
+        header = worksheet.row_values(1) if worksheet.row_count > 0 else []
+        if not header or set(header) != set(df_to_append.columns):
+            worksheet.clear() 
+            worksheet.append_row(list(df_to_append.columns), value_input_option='USER_ENTERED')
+            logger.info("Initialized Google Sheet header for annotations.")
+
+        worksheet.append_rows(df_to_append.values.tolist(), value_input_option='USER_ENTERED')
+        logger.info(f"Appended {len(df_to_append)} rows to Google Sheet.")
+        return True
+    except gspread.exceptions.APIError as e:
+        error_details = e.response.json().get('error', {}).get('message', 'Details in logs.')
+        st.error(f"Google Sheets API Error (writing data): {error_details}")
+        logger.error(f"Google Sheets API Error (writing data): {e.response.text}")
+        return False
+    except Exception as e:
+        st.error(f"Failed to write annotation to Google Sheet: {e}")
+        logger.error(f"Failed to write to Google Sheet: {e}")
+        return False
+
+def write_data_to_local_csv(df_to_append):
+    try:
+        file_exists_and_not_empty = os.path.exists(DATASET_FILE) and os.path.getsize(DATASET_FILE) > 0
+        df_to_append.to_csv(DATASET_FILE, mode='a', header=not file_exists_and_not_empty, index=False, encoding='utf-8')
+        logger.info(f"Appended {len(df_to_append)} rows to local CSV: {DATASET_FILE}")
     except IOError as e:
-        st.error(f"Error writing to dataset file: {e}")
-        logging.error(f"Error writing to dataset file: {e}")
+        st.error(f"Failed to write annotation to local CSV file: {e}")
+        logging.error(f"IOError writing to local CSV {DATASET_FILE}: {e}")
+
+def save_annotation_data(text:str, text_type:str, actor:list, actor_subject:int, action:list, victim:list, extra:list, annotator:str):
+    data = {
+        'text': [text],
+        'text_type': [text_type],
+        'actor': [str(sorted(list(set(actor))))],
+        'actor_subject': [actor_subject],
+        'action': [str(sorted(list(set(action))))],
+        'victim': [str(sorted(list(set(victim))))],
+        'extra': [str(sorted(list(set(extra))))],
+        'annotator': [annotator]
+    }
+    df = pd.DataFrame(data)
+    write_data_to_local_csv(df.copy())
+    if write_to_google_sheet(df.copy()):
+        st.toast("Annotation also saved to Google Sheet.", icon="☁️")
+    else:
+        st.toast("Annotation saved locally. Failed to save to Google Sheet.", icon="💾")
+    logging.info(f"Annotation by {annotator} for text starting with: '{text[:50]}...' saved.")
 
 def initialize_state():
     defaults = {
-        'file_index': 0, 'sentence_index': 0, 'sentences': [], 'current_doc': None,
-        'text_type': 'ic', 'token_roles': {}, 'actor_subject_index': -1,
-        'all_files': load_text_file_names_cached(TEXTS_DIR), 'current_file_path': None,
-        'displacy_distance': DEFAULT_DISPLACY_DISTANCE
+        'file_index': 0,
+        'sentence_index': 0,
+        'sentences': [],
+        'current_doc': None,
+        'text_type': 'ic',
+        'token_roles': {},
+        'actor_subject_index': -1,
+        'all_files': load_text_file_names_cached(TEXTS_DIR),
+        'current_file_path': None,
+        'displacy_distance': DEFAULT_DISPLACY_DISTANCE,
+        'gspread_client_available': st.session_state.get('gspread_client_available', False),
+        'current_sentence_lock_details': None,
+        'sentence_load_status': "NONE",
+        'sentence_lock_info_message': "",
+        'last_known_good_sentence_index': -1,
     }
-    for key, value in defaults.items():
-        if key not in st.session_state: st.session_state[key] = value
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-    if not st.session_state.all_files: st.sidebar.warning(f"No .txt files found in '{TEXTS_DIR}'.")
-    elif st.session_state.current_file_path is None:
-         st.session_state.current_file_path = st.session_state.all_files[st.session_state.file_index]
-         load_file(st.session_state.current_file_path)
+    if not st.session_state.all_files and os.path.exists(TEXTS_DIR):
+        st.warning(f"No .txt files found in the '{TEXTS_DIR}' directory. Please add text files and refresh the page.")
+    elif st.session_state.current_file_path is None and st.session_state.all_files:
+        st.session_state.current_file_path = st.session_state.all_files[st.session_state.file_index]
+        load_file(st.session_state.current_file_path)
 
-def load_file(file_path):
-    try: index = st.session_state.all_files.index(file_path)
-    except ValueError: st.error(f"File '{os.path.basename(file_path)}' not found."); return
+def load_file(file_path, target_sentence_idx=0):
+    if st.session_state.get('current_sentence_lock_details'):
+        release_lock(st.session_state.current_sentence_lock_details['id'], st.session_state.annotator_name)
+        st.session_state.current_sentence_lock_details = None
+        logger.info(f"Released previous sentence lock while loading new file: {file_path}")
 
-    text = load_text_file_cached(file_path)
-    if text is not None:
-        text_hash = hash(text)
-        st.session_state.sentences = split_text_cached(text_hash, text)
-        st.session_state.sentence_index = 0
-        st.session_state.file_index = index
-        st.session_state.current_file_path = file_path
-        load_sentence(0)
-    else:
-        st.session_state.sentences = []; st.session_state.current_doc = None
-        st.session_state.token_roles = {}; st.session_state.current_file_path = file_path
-
-def load_sentence(index):
-    st.session_state.actor_subject_index = -1
-    st.session_state.token_roles = {}
-
-    if st.session_state.sentences and 0 <= index < len(st.session_state.sentences):
-        st.session_state.sentence_index = index
-        sentence_text = st.session_state.sentences[index]
-        st.session_state.current_doc = nlp(sentence_text)
-        st.session_state.token_roles = {token.i: '-' for token in st.session_state.current_doc}
-        st.session_state.text_type = 'ic'
-    elif st.session_state.sentences:
-        current_index = st.session_state.sentence_index
-        if index >= len(st.session_state.sentences):
-            st.toast("End of sentences."); st.session_state.sentence_index = len(st.session_state.sentences) - 1
+    try:
+        st.session_state.file_index = st.session_state.all_files.index(file_path)
+    except ValueError:
+        st.error(f"File '{os.path.basename(file_path)}' is not in the current list of files. Refreshing file list.")
+        logger.error(f"File {file_path} not found in all_files list. Forcing reload of file list.")
+        st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
+        if file_path in st.session_state.all_files:
+            st.session_state.file_index = st.session_state.all_files.index(file_path)
         else:
-            st.toast("First sentence."); st.session_state.sentence_index = 0
-        if st.session_state.sentence_index != current_index:
-             sentence_text = st.session_state.sentences[st.session_state.sentence_index]
-             st.session_state.current_doc = nlp(sentence_text)
-             st.session_state.token_roles = {token.i: '-' for token in st.session_state.current_doc}
-    else:
-        st.session_state.current_doc = None; st.session_state.token_roles = {}
+            st.session_state.current_file_path = None
+            st.session_state.sentences = []
+            st.session_state.current_doc = None
+            st.session_state.sentence_load_status = "FILE_NOT_FOUND_POST_REFRESH"
+            st.session_state.sentence_lock_info_message = f"File '{os.path.basename(file_path)}' could not be found even after refreshing the list."
+            return
 
-def update_token_role(token_index, new_role):
+    st.session_state.current_file_path = file_path
+    st.session_state.last_known_good_sentence_index = -1
+    text_content = load_text_file_cached(file_path)
+
+    if text_content is not None:
+        st.session_state.sentences = split_text_cached(hash(text_content), text_content)
+        if not st.session_state.sentences:
+            st.warning(f"The file '{os.path.basename(file_path)}' is empty or contains no parsable sentences.")
+            logger.warning(f"File {file_path} resulted in no sentences.")
+            st.session_state.current_doc = None
+            st.session_state.token_roles = {}
+            st.session_state.sentence_load_status = "EMPTY_FILE"
+            st.session_state.sentence_lock_info_message = f"File '{os.path.basename(file_path)}' is empty or has no sentences."
+        else:
+            load_sentence(target_sentence_idx) 
+    else:
+        st.session_state.sentences = []
+        st.session_state.current_doc = None
+        st.session_state.token_roles = {}
+        st.session_state.sentence_load_status = "FILE_LOAD_ERROR"
+        st.session_state.sentence_lock_info_message = f"Error loading content from '{os.path.basename(file_path)}'."
+        logger.error(f"Failed to load text content for {file_path}")
+
+def load_sentence(target_idx):
+    if not st.session_state.annotator_name:
+        st.warning("Annotator name is not set. Please confirm your annotator name first.")
+        logger.warning("load_sentence called without annotator_name set.")
+        st.session_state.sentence_load_status = "ERROR_NO_ANNOTATOR"
+        return
+
+    if not st.session_state.sentences:
+        st.session_state.current_doc = None
+        st.session_state.token_roles = {}
+        st.session_state.actor_subject_index = -1
+        st.session_state.sentence_load_status = "NO_SENTENCES_IN_FILE"
+        st.session_state.sentence_lock_info_message = "No sentences available in the current file."
+        logger.info("load_sentence called but no sentences are loaded for the current file.")
+        return
+
+    clamped_idx = max(0, min(target_idx, len(st.session_state.sentences) - 1))
+    current_fpath = st.session_state.current_file_path
+    lock_id = make_lock_id(current_fpath, clamped_idx)
+
+    old_lock_details = st.session_state.get('current_sentence_lock_details')
+    if old_lock_details and old_lock_details['id'] != lock_id:
+        release_lock(old_lock_details['id'], st.session_state.annotator_name)
+        st.session_state.current_sentence_lock_details = None
+        logger.info(f"Released lock for {old_lock_details['id']} before acquiring new lock for {lock_id}.")
+
+    with st.spinner(f"Attempting to load and lock sentence {clamped_idx + 1}..."):
+        can_lock, lock_msg = acquire_lock(lock_id, st.session_state.annotator_name, current_fpath, clamped_idx)
+
+    if can_lock:
+        st.session_state.current_sentence_lock_details = {'id': lock_id, 'file': current_fpath, 'idx': clamped_idx}
+        st.session_state.sentence_index = clamped_idx
+        st.session_state.last_known_good_sentence_index = clamped_idx
+        sentence_text = st.session_state.sentences[clamped_idx]
+
+        st.session_state.actor_subject_index = -1
+        st.session_state.token_roles = {}
+        st.session_state.text_type = 'ic' 
+
+        try:
+            st.session_state.current_doc = nlp(sentence_text)
+            st.session_state.token_roles = {token.i: '-' for token in st.session_state.current_doc}
+            st.session_state.sentence_load_status = "SUCCESS"
+            st.session_state.sentence_lock_info_message = f"Sentence {clamped_idx + 1} of '{os.path.basename(current_fpath)}' loaded and locked by you. {lock_msg}"
+            st.toast(st.session_state.sentence_lock_info_message, icon="✅")
+            logger.info(f"Successfully loaded and locked sentence {clamped_idx} of {current_fpath} by {st.session_state.annotator_name}.")
+        except Exception as e:
+            st.error(f"Error processing sentence '{sentence_text[:50]}...': {e}")
+            logger.error(f"SpaCy or processing error for sentence '{sentence_text[:50]}...' in {current_fpath}: {e}")
+            st.session_state.current_doc = None
+            st.session_state.token_roles = {}
+            release_lock(lock_id, st.session_state.annotator_name) 
+            st.session_state.current_sentence_lock_details = None
+            st.session_state.sentence_load_status = "PROCESSING_ERROR"
+            st.session_state.sentence_lock_info_message = f"Error processing sentence {clamped_idx+1}. Lock released."
+    else: 
+        st.session_state.sentence_lock_info_message = lock_msg 
+        st.error(lock_msg)
+        logger.warning(f"Failed to acquire lock for sentence {clamped_idx} of {current_fpath}. Message: {lock_msg}")
+
+        if st.session_state.last_known_good_sentence_index != -1 and st.session_state.last_known_good_sentence_index != clamped_idx:
+            st.toast(f"Failed to lock sentence {clamped_idx+1}. Reverting to previously loaded sentence {st.session_state.last_known_good_sentence_index+1}.", icon="↩️")
+            logger.info(f"Reverting to sentence {st.session_state.last_known_good_sentence_index} due to lock failure on {clamped_idx}.")
+            load_sentence(st.session_state.last_known_good_sentence_index) 
+            return 
+
+        st.session_state.current_doc = None 
+        st.session_state.sentence_load_status = "LOCKED_BY_OTHER"
+
+def handle_token_role_update(token_index, new_role):
     st.session_state.token_roles[token_index] = new_role
     if new_role != 'Actor' and st.session_state.actor_subject_index == token_index:
         st.session_state.actor_subject_index = -1
+    logger.debug(f"Token {token_index} role updated to {new_role} by {st.session_state.annotator_name}. Actor subject index is now {st.session_state.actor_subject_index}.")
 
 initialize_state()
 
 with st.sidebar:
+    st.header(f"Annotator: {st.session_state.annotator_name}")
+    st.divider()
     st.header("📄 File Navigation")
     if st.session_state.all_files:
-        selected_file = st.selectbox(
-            "Select Text File", options=st.session_state.all_files, index=st.session_state.file_index,
-            format_func=lambda x: os.path.basename(x) if x else "None", key="file_selector", help="Select file"
-        )
-        if selected_file != st.session_state.current_file_path:
-            load_file(selected_file); st.rerun()
+        current_file_idx_in_options = 0
+        if st.session_state.current_file_path and st.session_state.current_file_path in st.session_state.all_files:
+            try:
+                current_file_idx_in_options = st.session_state.all_files.index(st.session_state.current_file_path)
+            except ValueError: 
+                 logger.warning(f"current_file_path {st.session_state.current_file_path} not in all_files. Resetting index.")
+                 current_file_idx_in_options = 0
+
+        selected_fpath = st.selectbox("Select Text File", options=st.session_state.all_files,
+            index=current_file_idx_in_options,
+            format_func=lambda x: os.path.basename(x) if x else "None", key="file_selector_v7")
+
+        if selected_fpath and selected_fpath != st.session_state.current_file_path:
+            load_file(selected_fpath, target_sentence_idx=0)
+            st.rerun()
 
         st.divider()
         st.subheader("🧭 Sentence Navigation")
         nav_cols = st.columns(2)
-        if nav_cols[0].button("⬅️ Prev", use_container_width=True, key="prev_sent"):
-            if st.session_state.sentence_index > 0: load_sentence(st.session_state.sentence_index - 1); st.rerun()
-            else: st.toast("First sentence.")
-        if nav_cols[1].button("Next ➡️", use_container_width=True, key="next_sent"):
+        prev_disabled = st.session_state.sentence_index <= 0 or not st.session_state.sentences or st.session_state.sentence_load_status != "SUCCESS"
+        next_disabled = not st.session_state.sentences or st.session_state.sentence_index >= len(st.session_state.sentences) - 1 or st.session_state.sentence_load_status != "SUCCESS"
+
+        if nav_cols[0].button("⬅️ Prev", use_container_width=True, key="prev_sent_v7", disabled=prev_disabled):
+            if st.session_state.sentence_index > 0:
+                load_sentence(st.session_state.sentence_index - 1)
+                st.rerun()
+
+        if nav_cols[1].button("Next ➡️", use_container_width=True, key="next_sent_v7", disabled=next_disabled):
             if st.session_state.sentences and st.session_state.sentence_index < len(st.session_state.sentences) - 1:
-                load_sentence(st.session_state.sentence_index + 1); st.rerun()
-            elif st.session_state.sentences: st.toast("Last sentence.")
+                load_sentence(st.session_state.sentence_index + 1)
+                st.rerun()
 
-        if st.session_state.sentences:
-             slider_key = f"slider_{st.session_state.current_file_path}"
-             current_slider_val = st.session_state.sentence_index + 1
-             new_slider_val = st.slider(
-                  "Go to Sentence", 1, len(st.session_state.sentences), current_slider_val, key=slider_key
-             )
-             if new_slider_val != current_slider_val: load_sentence(new_slider_val - 1); st.rerun()
+        if st.session_state.sentences and st.session_state.sentence_load_status == "SUCCESS":
+            current_slider_val = st.session_state.sentence_index + 1
+            slider_key = f"sentence_slider_{st.session_state.current_file_path}_{len(st.session_state.sentences)}"
+            new_slider_val = st.slider("Go to Sentence", 1, max(1, len(st.session_state.sentences)),
+                                        current_slider_val, key=slider_key,
+                                        disabled=(st.session_state.sentence_load_status != "SUCCESS"))
+            if new_slider_val != current_slider_val:
+                 load_sentence(new_slider_val - 1)
+                 st.rerun()
+
+            progress_val = (st.session_state.sentence_index + 1) / len(st.session_state.sentences) if len(st.session_state.sentences) > 0 else 0
+            st.progress(progress_val, text=f"File Progress: Sentence {st.session_state.sentence_index + 1} of {len(st.session_state.sentences)}")
+        elif st.session_state.sentences: 
+             st.slider("Go to Sentence", 1, max(1, len(st.session_state.sentences)),
+                                        st.session_state.sentence_index + 1 if st.session_state.sentence_index >=0 else 1,
+                                        key=f"sentence_slider_disabled_{st.session_state.current_file_path}",
+                                        disabled=True)
+             st.progress(0, text="Sentence not loaded")
 
         st.divider()
-        st.metric("Current File", f"{st.session_state.file_index + 1}/{len(st.session_state.all_files)}")
-        st.metric("Current Sentence", f"{st.session_state.sentence_index + 1}/{len(st.session_state.sentences) if st.session_state.sentences else '0'}")
-        st.divider()
+        num_files = len(st.session_state.all_files)
+        st.metric("Current File", f"{st.session_state.file_index + 1}/{num_files}" if num_files > 0 else "0/0",
+                  delta=os.path.basename(st.session_state.current_file_path) if st.session_state.current_file_path else "N/A")
 
+        num_sents_in_file = len(st.session_state.sentences)
+        current_sent_display = f"{st.session_state.sentence_index + 1}/{num_sents_in_file}" if num_sents_in_file > 0 and st.session_state.current_doc else "0/0"
+        st.metric("Current Sentence in File", current_sent_display)
+
+        if st.session_state.current_sentence_lock_details and st.session_state.sentence_load_status == "SUCCESS":
+            lock = st.session_state.current_sentence_lock_details
+            st.success(f"🔒 Sentence {lock['idx']+1} ('{os.path.basename(lock['file'])}') locked by you.")
+        elif st.session_state.sentence_load_status == "LOCKED_BY_OTHER":
+            st.error(f"🔒 {st.session_state.sentence_lock_info_message}")
+
+        st.divider()
         st.subheader("⚙️ Display Options")
-        st.session_state.displacy_distance = st.slider(
-            "Dependency Spacing", 60, 200, st.session_state.displacy_distance, 10, key="dist_slider",
-             help="Adjust vertical spacing in the dependency parse. Use browser zoom (Ctrl +/-) for overall scaling."
-        )
-    else: st.info(f"Add .txt files to '{TEXTS_DIR}' to begin.")
+        st.session_state.displacy_distance = st.slider("Dependency Spacing", 60, 200, st.session_state.displacy_distance, 10, key="dist_slider_v7",
+                                                       help="Adjust vertical spacing for dependency parse. For overall size, use your browser's zoom (Ctrl/Cmd +/-).")
+    else:
+        st.info(f"No .txt files found in '{TEXTS_DIR}'. Please add text files to this directory and refresh the application.")
+        if st.button("Refresh File List", key="refresh_files_empty_v7"):
+            st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
+            if st.session_state.all_files:
+                st.session_state.current_file_path = st.session_state.all_files[0]
+                load_file(st.session_state.current_file_path)
+            st.rerun()
 
 st.title("📝 Annotation Interface")
 
-if st.session_state.current_doc:
+if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.current_doc:
     current_sentence_text = st.session_state.sentences[st.session_state.sentence_index]
-
-    st.markdown(f"**Sentence:**")
+    st.markdown(f"**Current Sentence ({st.session_state.sentence_index + 1}/{len(st.session_state.sentences)} from '{os.path.basename(st.session_state.current_file_path)}'):**")
     st.markdown(f"> `{current_sentence_text}`")
     st.divider()
 
-    main_cols = st.columns([6, 4])
+    st.subheader("🔍 Dependency Parse")
+    if len(st.session_state.current_doc) > 0:
+        dep_html = displacy.render(st.session_state.current_doc, style="dep", jupyter=False,
+            options={'compact': False, 'bg': '#fafafa', 'color': '#1E1E1E', 'distance': st.session_state.displacy_distance, 'word_spacing': 30, 'arrow_spacing': 10})
+        st.components.v1.html(dep_html, height=0 + len(st.session_state.current_doc) * 12, scrolling=True)
+    else:
+        st.info("Sentence is empty or has no tokens that can be parsed.")
+    
+    st.divider() 
+    st.subheader("🏷️ Annotation Controls")
+    radio_key_base = f"type_{st.session_state.current_file_path}_{st.session_state.sentence_index}"
 
-    with main_cols[0]:
-        st.subheader("🔍 Dependency Parse")
-        dep_html = displacy.render(
-            st.session_state.current_doc, style="dep", jupyter=False,
-            options={'compact': True, 'bg': '#fafafa', 'color': '#1E1E1E', 'distance': st.session_state.displacy_distance}
-        )
-        st.components.v1.html(dep_html, height=400, scrolling=True)
+    current_type_idx = ['tvc', 'ntvc', 'ic'].index(st.session_state.text_type) if st.session_state.text_type in ['tvc', 'ntvc', 'ic'] else 2
 
-
-    with main_cols[1]:
-        st.subheader("🏷️ Annotation Controls")
-        type_key = f"type_{st.session_state.current_file_path}_{st.session_state.sentence_index}"
-        st.session_state.text_type = st.radio(
-            "**Sentence Type:**", ('tvc', 'ntvc', 'ic'), index=['tvc', 'ntvc', 'ic'].index(st.session_state.text_type),
-            horizontal=True, key=type_key, help="Transitive Verb (tvc), Non-Transitive (ntvc), Irrelevant (ic)."
-        )
-
-        if st.session_state.text_type == 'tvc':
-            st.markdown("**Assign Token Roles (Click Button):**")
-            annotation_grid = st.container(height=350)
-            with annotation_grid:
-                cols_per_row = 7
-                token_cols = st.columns(cols_per_row)
-                col_idx = 0
-                for token in st.session_state.current_doc:
-                    current_role = st.session_state.token_roles.get(token.i, '-')
-                    with token_cols[col_idx % cols_per_row].container(border=True):
-                         st.markdown(f"**{token.text}** `({token.i})`")
-                         button_cols = st.columns(len(ROLES))
-                         for i, role in enumerate(ROLES):
-                             button_key = f"role_{token.i}_{role}_{st.session_state.sentence_index}"
-                             is_selected = (current_role == role)
-                             button_type = "primary" if is_selected else "secondary"
-                             if button_cols[i].button(ROLE_SHORT[role], key=button_key, type=button_type, use_container_width=True, help=f"Set role to {role}"):
-                                 update_token_role(token.i, role)
-                                 st.rerun()
-                    col_idx += 1
-
-
-            st.markdown("**Assign Actor Subject:**")
-            actor_indices = [idx for idx, role in st.session_state.token_roles.items() if role == 'Actor']
-            actor_token_options = {
-                f"{st.session_state.current_doc[idx].text} ({idx})": idx for idx in sorted(actor_indices)
-            }
-
-            if actor_token_options:
-                actor_options_list = ["- (None)"] + list(actor_token_options.keys())
-                current_subject_display = "- (None)"
-                current_select_index = 0
-                for i, display_str in enumerate(actor_options_list):
-                    if display_str != "- (None)" and actor_token_options[display_str] == st.session_state.actor_subject_index:
-                        current_subject_display = display_str; current_select_index = i; break
-
-                subject_key = f"subject_{st.session_state.current_file_path}_{st.session_state.sentence_index}"
-                selected_subject_display = st.selectbox(
-                    "Select the *single* subject token from 'Actor' tokens:", options=actor_options_list,
-                    index=current_select_index, key=subject_key, help="Main subject word among Actors."
-                )
-                st.session_state.actor_subject_index = actor_token_options.get(selected_subject_display, -1)
-            else:
-                st.info("Assign 'Actor' roles above to select a subject.")
+    new_text_type = st.radio("**Sentence Type:**", ('tvc', 'ntvc', 'ic'),
+                                index=current_type_idx, horizontal=True, key=radio_key_base,
+                                help="TVC: Token-level Violence Corpus (requires role assignment). NTVC: Not TVC. IC: Irrelevant/Ignore.")
+    if new_text_type != st.session_state.text_type:
+        st.session_state.text_type = new_text_type
+        logger.info(f"Sentence type changed to {new_text_type} for sentence {st.session_state.sentence_index} in {st.session_state.current_file_path} by {st.session_state.annotator_name}.")
+        if new_text_type != 'tvc': 
+                st.session_state.token_roles = {token.i: '-' for token in st.session_state.current_doc} if st.session_state.current_doc else {}
                 st.session_state.actor_subject_index = -1
+        st.rerun()
+
+    if st.session_state.text_type == 'tvc':
+        st.markdown("**Assign Token Roles:** (Actor, Action, Victim)")
+        num_tokens = len(st.session_state.current_doc)
+        grid_h = min(700, 100 + ((num_tokens + 2) // 3 * 70))
+
+        with st.container(height=grid_h, border=False):
+            token_cols_layout = st.columns(3) 
+            for token_idx_in_doc, token_obj in enumerate(st.session_state.current_doc):
+                current_role_for_token = st.session_state.token_roles.get(token_obj.i, '-')
+                text_color_for_token = ROLE_COLORS.get(current_role_for_token, 'inherit')
+                
+                col_for_token = token_cols_layout[token_idx_in_doc % 3]
+                with col_for_token:
+                    with st.container(border=(current_role_for_token != '-')):
+                        st.markdown(f"<div style='margin-bottom: 3px; text-align: center;'><strong style='color:{text_color_for_token}; font-size: 1.05em;'>{token_obj.text}</strong><br><code style='font-size:0.8em;'>id:{token_obj.i}</code></div>", unsafe_allow_html=True)
+                        
+                        current_role_idx = ROLES.index(current_role_for_token) if current_role_for_token in ROLES else 0
+                        radio_button_key = f"role_radio_tok{token_obj.i}_{radio_key_base}"
+
+                        selected_role = st.radio(
+                            label=f"Role for token {token_obj.i}", 
+                            options=ROLES,
+                            index=current_role_idx,
+                            key=radio_button_key,
+                            format_func=lambda x: ROLE_SHORT[x],
+                            horizontal=True,
+                            label_visibility="collapsed"
+                        )
+                        if selected_role != current_role_for_token:
+                            handle_token_role_update(token_obj.i, selected_role)
+
+        st.markdown("**Assign Actor Subject (if applicable):**")
+        actor_idxs = [idx for idx, r_val in st.session_state.token_roles.items() if r_val == 'Actor']
+        actor_opts = { f"{st.session_state.current_doc[idx].text} (id:{idx})": idx for idx in sorted(actor_idxs) if idx < len(st.session_state.current_doc) }
+
+        if actor_opts:
+            opts_list = ["- (None Selected)"] + list(actor_opts.keys())
+            curr_sel_idx_for_selectbox = 0 
+            if st.session_state.actor_subject_index != -1:
+                subj_disp_str = next((txt_disp for txt_disp, tok_idx_val in actor_opts.items() if tok_idx_val == st.session_state.actor_subject_index), None)
+                if subj_disp_str and subj_disp_str in opts_list:
+                    curr_sel_idx_for_selectbox = opts_list.index(subj_disp_str)
+                else: 
+                    st.session_state.actor_subject_index = -1
+                    logger.info(f"Actor subject index {st.session_state.actor_subject_index} was invalid, reset to -1.")
+
+            sel_subj_disp = st.selectbox("Select one token (from 'Actor' list) as the primary subject:",
+                                            options=opts_list, index=curr_sel_idx_for_selectbox,
+                                            key=f"subject_selector_{radio_key_base}",
+                                            help="Choose the main actor performing the action.")
+            new_subj_idx = -1
+            if sel_subj_disp != "- (None Selected)" and sel_subj_disp in actor_opts:
+                new_subj_idx = actor_opts[sel_subj_disp]
+
+            if st.session_state.actor_subject_index != new_subj_idx:
+                st.session_state.actor_subject_index = new_subj_idx
+                logger.info(f"Actor subject index updated to {new_subj_idx} by {st.session_state.annotator_name}.")
+                st.rerun() 
         else:
-            st.info("Assign roles and subject only for 'tvc' sentences.")
-            st.session_state.actor_subject_index = -1
+            st.info("To select an Actor Subject, first assign the 'Actor' role to one or more tokens.")
+            if st.session_state.actor_subject_index != -1: 
+                st.session_state.actor_subject_index = -1
+                logger.info("Actor subject index reset to -1 as no tokens are marked 'Actor'.")
+                st.rerun() 
 
     st.divider()
-    save_cols = st.columns([1, 3])
-    with save_cols[0]:
-        if st.button("💾 Save & Next ➡️", type="primary", use_container_width=True, key="save_next"):
-            actor_indices_to_save, action_indices_to_save, victim_indices_to_save, extra_indices_to_save = [], [], [], []
-            actor_subject_index_to_save = -1
-            all_indices = list(range(len(st.session_state.current_doc)))
-            assigned_indices = set()
+    save_cols = st.columns([1,3,1]) 
+    with save_cols[0]: 
+        if st.button("💾 Save & Next ➡️", type="primary", use_container_width=True, key="save_next_v7",
+                        help="Save current annotation and move to the next sentence. Releases lock on this sentence."):
+            actor_to_save, action_to_save, victim_to_save, extra_to_save = [], [], [], []
+            subj_to_save = -1
+            all_token_indices = set(range(len(st.session_state.current_doc)))
+            assigned_indices_in_tvc = set()
 
             if st.session_state.text_type == 'tvc':
-                roles_dict = st.session_state.token_roles
-                actor_indices_to_save = sorted([idx for idx, role in roles_dict.items() if role == 'Actor'])
-                action_indices_to_save = sorted([idx for idx, role in roles_dict.items() if role == 'Action'])
-                victim_indices_to_save = sorted([idx for idx, role in roles_dict.items() if role == 'Victim'])
-                actor_subject_index_to_save = st.session_state.actor_subject_index
-                assigned_indices = set(roles_dict.keys()) - set(idx for idx, role in roles_dict.items() if role == '-')
+                roles = st.session_state.token_roles
+                actor_to_save = sorted([i for i, r in roles.items() if r == 'Actor'])
+                action_to_save = sorted([i for i, r in roles.items() if r == 'Action'])
+                victim_to_save = sorted([i for i, r in roles.items() if r == 'Victim'])
+                subj_to_save = st.session_state.actor_subject_index
 
-                if actor_subject_index_to_save == -1 and actor_indices_to_save:
-                     st.toast("Warning: Saving TVC without Actor Subject.", icon="⚠️")
-                elif actor_subject_index_to_save != -1 and actor_subject_index_to_save not in actor_indices_to_save:
-                     st.toast("Warning: Actor Subject is not marked as 'Actor'.", icon="⚠️")
+                assigned_indices_in_tvc.update(actor_to_save)
+                assigned_indices_in_tvc.update(action_to_save)
+                assigned_indices_in_tvc.update(victim_to_save)
 
-            extra_indices_to_save = sorted([idx for idx in all_indices if idx not in assigned_indices])
+                if not actor_to_save and (action_to_save or victim_to_save):
+                    st.toast("Warning: Saving 'TVC' with Action/Victim roles but no 'Actor' token.", icon="⚠️")
+                    logger.warning(f"TVC saved by {st.session_state.annotator_name} with Action/Victim but no Actor for: {current_sentence_text[:30]}")
+                if actor_to_save and subj_to_save == -1 :
+                    st.toast("Warning: Saving 'TVC' with 'Actor' token(s) but no Actor Subject selected.", icon="⚠️")
+                    logger.warning(f"TVC saved by {st.session_state.annotator_name} with Actors but no subject for: {current_sentence_text[:30]}")
+                elif subj_to_save != -1 and subj_to_save not in actor_to_save:
+                        st.toast("Error: The selected Actor Subject is no longer marked as 'Actor'. Subject will not be saved.", icon="🚨")
+                        logger.error(f"Actor Subject {subj_to_save} not in Actor list {actor_to_save} for {st.session_state.annotator_name} on: {current_sentence_text[:30]}. Subject reset.")
+                        subj_to_save = -1 
 
-            write_data_to_csv(
-                text=current_sentence_text, text_type=st.session_state.text_type,
-                actor=actor_indices_to_save, actor_subject=actor_subject_index_to_save,
-                action=action_indices_to_save, victim=victim_indices_to_save, extra=extra_indices_to_save
-            )
-            st.toast(f"Annotation saved!", icon="✅")
+            extra_to_save = sorted(list(all_token_indices - assigned_indices_in_tvc))
+
+            save_annotation_data(current_sentence_text, st.session_state.text_type,
+                                    actor_to_save, subj_to_save, action_to_save, victim_to_save,
+                                    extra_to_save, st.session_state.annotator_name)
+
+            st.toast(f"Annotation saved for: \"{current_sentence_text[:40]}...\"", icon="💾")
+
+            if st.session_state.current_sentence_lock_details:
+                release_lock(st.session_state.current_sentence_lock_details['id'], st.session_state.annotator_name)
+                st.session_state.current_sentence_lock_details = None
+                logger.info(f"Lock released for sentence {st.session_state.sentence_index} of {st.session_state.current_file_path} after saving.")
 
             if st.session_state.sentences and st.session_state.sentence_index < len(st.session_state.sentences) - 1:
-                load_sentence(st.session_state.sentence_index + 1); st.rerun()
-            elif st.session_state.sentences: st.toast("Last sentence annotated for this file.")
+                load_sentence(st.session_state.sentence_index + 1)
+            else: 
+                st.toast("Last sentence of this file annotated and saved! Select a new file or sentence.", icon="🏁")
+                logger.info(f"End of file {st.session_state.current_file_path} reached by {st.session_state.annotator_name}.")
+                st.session_state.current_doc = None
+                st.session_state.sentence_load_status = "END_OF_FILE"
+                st.session_state.sentence_lock_info_message = "End of file reached. Please select another file."
+            st.rerun()
 
-elif not st.session_state.all_files:
-    st.info(f"Please add text files (.txt) to the '{TEXTS_DIR}' directory and refresh.")
-else:
-    st.info("Select a file from the sidebar to start.")
+elif st.session_state.sentence_load_status == "LOCKED_BY_OTHER":
+    st.warning(f"**This sentence cannot be loaded at the moment:**")
+    st.markdown(f"> {st.session_state.sentence_lock_info_message}")
+    st.info("Please select a different sentence from the sidebar, or try loading this one again in a few minutes. The lock might have expired or been released by then.")
+    if st.button("Try to Reload This Sentence", key="reload_locked_sentence_v7"):
+        load_sentence(st.session_state.sentence_index if st.session_state.sentence_index != -1 else 0) 
+        st.rerun()
+
+elif st.session_state.sentence_load_status != "NONE": 
+    display_message = st.session_state.sentence_lock_info_message or "Please select a file and sentence to start annotating."
+    if st.session_state.sentence_load_status in ["EMPTY_FILE", "FILE_LOAD_ERROR", "NO_SENTENCES_IN_FILE", "PROCESSING_ERROR", "END_OF_FILE", "ERROR_NO_ANNOTATOR", "FILE_NOT_FOUND_POST_REFRESH"]:
+        if st.session_state.sentence_load_status.startswith("ERROR"):
+             st.error(f"Error: {display_message}")
+        else:
+             st.warning(f"Info: {display_message}")
+    else: 
+        st.info(display_message)
+    st.markdown("---")
+    st.info("Use the sidebar navigation to select a file and sentence. If issues persist, check the application logs or contact support.")
+
+elif not st.session_state.all_files :
+    if not os.path.exists(TEXTS_DIR):
+        os.makedirs(TEXTS_DIR) 
+        st.error(f"The designated texts directory ('{TEXTS_DIR}') was not found. It has been created now. Please add your .txt files for annotation into this directory and refresh the page.")
+        logger.error(f"TEXTS_DIR {TEXTS_DIR} not found, created it.")
+    elif not load_text_file_names_cached(TEXTS_DIR): 
+        st.info(f"Welcome, {st.session_state.annotator_name}! No .txt files were found in the '{TEXTS_DIR}' directory. Please add your text files there and click 'Refresh File List' or reload the page.")
+    if st.button("Refresh File List", key="refresh_files_initial_v7"):
+        st.session_state.all_files = load_text_file_names_cached(TEXTS_DIR)
+        if st.session_state.all_files: 
+            st.session_state.current_file_path = st.session_state.all_files[0]
+            load_file(st.session_state.current_file_path) 
+        st.rerun()
+else: 
+    st.info("Please select a file from the sidebar to begin the annotation process.")
