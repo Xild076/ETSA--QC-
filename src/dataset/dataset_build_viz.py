@@ -39,7 +39,9 @@ logging.basicConfig(filename=os.path.join(LOG_DIR, "AnnotationLog.log"), level=l
 logger = logging.getLogger(__name__)
 
 if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
-if not os.path.exists(TEXTS_DIR): os.makedirs(TEXTS_DIR)
+if not os.path.exists(TEXTS_DIR): 
+    st.warning(f"Directory '{TEXTS_DIR}' does not exist. Please create it and add text files for annotation.")
+    os.makedirs(TEXTS_DIR)
 
 if 'annotator_name' not in st.session_state or not st.session_state.annotator_name:
     st.session_state.annotator_name = ""
