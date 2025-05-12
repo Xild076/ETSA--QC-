@@ -23,7 +23,7 @@ ROLE_COLORS = {'Actor': '#007bff', 'Action': '#28a745', 'Victim': '#dc3545', '-'
 ROLE_SHORT = {'Actor': 'A', 'Action': 'Act', 'Victim': 'V', '-': '-'}
 
 GOOGLE_SHEET_ID = "1PG9W38Ygn1l1hW23vAYJauzSfT7jk7YtrGo_m7Ar4Qs"
-SERVICE_ACCOUNT_FILE_PATH = "google_credentials.json"
+SERVICE_ACCOUNT_FILE_PATH = "google_credentials.json" 
 
 LOCK_SHEET_NAME = "AnnotationLocks"
 LOCK_TIMEOUT_SECONDS = 300
@@ -89,67 +89,79 @@ create_dataset_file_if_needed(DATASET_FILE)
 
 @st.cache_resource
 def get_gspread_client():
+    logger.info("Attempting to get gspread client.")
+    st.session_state.gspread_client_available = False # Default to False
     try:
         scopes = ["https.www.googleapis.com/auth/spreadsheets"]
         creds_json_str_or_dict = st.secrets.get("google_service_account_credentials")
         creds = None
         if creds_json_str_or_dict:
+            logger.info("Found Google credentials in Streamlit secrets.")
             if isinstance(creds_json_str_or_dict, str):
                 try:
-                    creds_dict = json.loads(creds_json_str_or_dict)
+                    creds_dict = json.loads(creds_json_str_or_dict) # Removed strict=False
+                    logger.info("Successfully parsed JSON string from secrets.")
                 except json.JSONDecodeError as e:
                     st.error(f"Failed to parse Google service account credentials from Streamlit secrets (JSON error): {e}.")
                     logger.error(f"JSONDecodeError parsing Google credentials from st.secrets: {e}")
-                    st.session_state.gspread_client_available = False
-                    return None
+                    return None # gspread_client_available remains False
             elif isinstance(creds_json_str_or_dict, dict):
                 creds_dict = creds_json_str_or_dict
+                logger.info("Credentials in secrets are already a dict.")
             else:
                 st.error("Google service account credentials in Streamlit secrets are not in a valid format (should be JSON string or dict).")
                 logger.error("Invalid format for Google credentials in st.secrets.")
-                st.session_state.gspread_client_available = False
-                return None
+                return None # gspread_client_available remains False
             creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+            logger.info("Credentials loaded from service account info (secrets).")
         elif os.path.exists(SERVICE_ACCOUNT_FILE_PATH):
+            logger.info(f"Found Google credentials at local file path: {SERVICE_ACCOUNT_FILE_PATH}.")
             creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE_PATH, scopes=scopes)
             logger.warning("Loaded Google credentials from local file. For security, consider using Streamlit secrets for production deployments.")
         else:
-            st.session_state.gspread_client_available = False
             st.warning("Google Sheets credentials not found in Streamlit secrets or local file. Collaborative features disabled.", icon="⚠️")
-            logger.warning("Google Sheets credentials not configured.")
-            return None
+            logger.warning("Critical: Neither Streamlit secrets nor local credentials file found.")
+            return None # gspread_client_available remains False
 
         client = gspread.authorize(creds)
-        st.session_state.gspread_client_available = True
-        logger.info("Successfully connected to Google Sheets API.")
+        logger.info("gspread.authorize successful.")
+        st.session_state.gspread_client_available = True # Set to True only on full success
+        logger.info("Successfully connected to Google Sheets API and set gspread_client_available to True.")
         return client
     except Exception as e:
-        st.session_state.gspread_client_available = False
+        # gspread_client_available remains False (or is set again)
+        st.session_state.gspread_client_available = False 
         st.warning(f"Could not connect to Google Sheets: {e}. Collaborative features may be limited or unavailable.", icon="📡")
-        logger.error(f"Google Sheets connection failed: {e}")
+        logger.error(f"Google Sheets connection failed in get_gspread_client: {e}", exc_info=True)
         return None
 gs_client = get_gspread_client()
 
 @st.cache_resource
 def get_locks_worksheet():
+    logger.info("Attempting to get locks worksheet.")
     if not st.session_state.get('gspread_client_available', False) or gs_client is None:
+        logger.warning("Cannot get locks worksheet: gspread client not available or gs_client is None.")
         return None
     if not GOOGLE_SHEET_ID or GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
         st.warning("Google Sheet ID for locking is not configured. Real-time lock management will be disabled.", icon="⚙️")
         logger.warning("Google Sheet ID for locking not configured.")
         return None
     try:
+        logger.info(f"Opening spreadsheet by key: {GOOGLE_SHEET_ID}")
         spreadsheet = gs_client.open_by_key(GOOGLE_SHEET_ID)
+        logger.info(f"Successfully opened spreadsheet: {spreadsheet.title}")
         try:
             worksheet = spreadsheet.worksheet(LOCK_SHEET_NAME)
+            logger.info(f"Found existing locks worksheet: {LOCK_SHEET_NAME}")
         except gspread.exceptions.WorksheetNotFound:
+            logger.info(f"Locks worksheet '{LOCK_SHEET_NAME}' not found, creating it.")
             worksheet = spreadsheet.add_worksheet(title=LOCK_SHEET_NAME, rows="1", cols=str(len(LOCK_HEADER)))
             worksheet.append_row(LOCK_HEADER, value_input_option='USER_ENTERED')
             logger.info(f"Created missing '{LOCK_SHEET_NAME}' sheet in Google Sheet ID: {GOOGLE_SHEET_ID}.")
         return worksheet
-    except Exception as e:
+    except Exception as e: 
         st.error(f"Error accessing or creating the locks sheet ('{LOCK_SHEET_NAME}') in Google Sheets: {e}")
-        logger.error(f"Error with locks sheet '{LOCK_SHEET_NAME}': {e}")
+        logger.error(f"Error with locks sheet '{LOCK_SHEET_NAME}': {e}", exc_info=True)
         return None
 locks_ws = get_locks_worksheet()
 
@@ -158,7 +170,9 @@ def make_lock_id(file_path, sentence_index):
 
 def acquire_lock(lock_id, annotator_name, file_path, sentence_index):
     if locks_ws is None:
+        logger.warning(f"Acquire lock for {lock_id} skipped: locks_ws is None.")
         return True, "Lock system unavailable (Google Sheets not connected or sheet misconfigured), proceeding without lock."
+    logger.info(f"Attempting to acquire lock: {lock_id} for {annotator_name}")
     try:
         current_time_epoch = int(time.time())
         cells = locks_ws.findall(lock_id, in_column=LOCK_HEADER.index(LOCK_COL_ID) + 1)
@@ -202,17 +216,26 @@ def acquire_lock(lock_id, annotator_name, file_path, sentence_index):
             logger.info(f"Lock acquired for {lock_id} by {annotator_name}.")
             return True, "Lock acquired."
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets APIError during acquire_lock for {lock_id} by {annotator_name}: {e.response.text if e.response else str(e)}")
-        st.error(f"Google Sheets API Error (acquiring lock): {e.response.json().get('error', {}).get('message', 'Details in logs.') if e.response else str(e)}")
+        err_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                err_details = e.response.json().get('error', {}).get('message', e.response.text)
+                err_msg = f"{err_details} (Raw response: {e.response.text})"
+            except json.JSONDecodeError:
+                err_msg = e.response.text
+        logger.error(f"Google Sheets APIError during acquire_lock for {lock_id} by {annotator_name}: {err_msg}", exc_info=True)
+        st.error(f"Google Sheets API Error (acquiring lock): {err_msg}")
         return False, "Google Sheets API error prevented lock acquisition. Please try again."
     except Exception as e:
-        logger.error(f"Unexpected error in acquire_lock for {lock_id} by {annotator_name}: {e}")
+        logger.error(f"Unexpected error in acquire_lock for {lock_id} by {annotator_name}: {e}", exc_info=True)
         st.error(f"An unexpected error occurred with the locking system: {e}")
         return False, "Locking system error."
 
 def release_lock(lock_id, annotator_name):
     if locks_ws is None:
+        logger.warning(f"Release lock for {lock_id} skipped: locks_ws is None.")
         return True
+    logger.info(f"Attempting to release lock: {lock_id} for {annotator_name}")
     try:
         cells = locks_ws.findall(lock_id, in_column=LOCK_HEADER.index(LOCK_COL_ID) + 1)
         if cells:
@@ -228,15 +251,23 @@ def release_lock(lock_id, annotator_name):
                 except gspread.exceptions.CellNotFound: 
                     logger.warning(f"Cell not found when trying to release lock {lock_id} at row {cell.row}. Already released or deleted.")
                 except Exception as e_inner: 
-                    logger.error(f"Error processing cell {cell.row} for lock {lock_id} release by {annotator_name}: {e_inner}")
+                    logger.error(f"Error processing cell {cell.row} for lock {lock_id} release by {annotator_name}: {e_inner}", exc_info=True)
             return True 
+        logger.info(f"No lock found for {lock_id} to release.")
         return True 
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets APIError during release_lock for {lock_id} by {annotator_name}: {e.response.text if e.response else str(e)}")
-        st.error(f"Google Sheets API Error (releasing lock): {e.response.json().get('error', {}).get('message', 'Details in logs.') if e.response else str(e)}")
+        err_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                err_details = e.response.json().get('error', {}).get('message', e.response.text)
+                err_msg = f"{err_details} (Raw response: {e.response.text})"
+            except json.JSONDecodeError:
+                err_msg = e.response.text
+        logger.error(f"Google Sheets APIError during release_lock for {lock_id} by {annotator_name}: {err_msg}", exc_info=True)
+        st.error(f"Google Sheets API Error (releasing lock): {err_msg}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error in release_lock for {lock_id} by {annotator_name}: {e}")
+        logger.error(f"Unexpected error in release_lock for {lock_id} by {annotator_name}: {e}", exc_info=True)
         st.error(f"An unexpected error occurred while releasing the lock: {e}")
         return False
 
@@ -248,7 +279,7 @@ def load_text_file_names_cached(directory:str):
     try:
         return sorted([os.path.join(directory, fn) for fn in os.listdir(directory) if fn.lower().endswith(".txt")])
     except Exception as e:
-        logger.error(f"Error loading file list from {directory}: {e}")
+        logger.error(f"Error loading file list from {directory}: {e}", exc_info=True)
         st.error(f"Could not load file list from '{directory}'. Check permissions and path.")
         return []
 
@@ -262,7 +293,7 @@ def load_text_file_cached(file_path:str):
         st.error(f"File not found: {os.path.basename(file_path)}")
         return None
     except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
+        logger.error(f"Error reading file {file_path}: {e}", exc_info=True)
         st.error(f"Could not read file: {os.path.basename(file_path)}. Error: {e}")
         return None
 
@@ -274,32 +305,49 @@ def split_text_cached(_text_hash: int, text:str):
     return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
 
 def write_to_google_sheet(df_to_append):
+    logger.info("Attempting to write to Google Sheet.")
     if not st.session_state.get('gspread_client_available', False) or gs_client is None:
+        logger.warning("Cannot write to Google Sheet: gspread client not available or gs_client is None.")
+        st.toast("Google Sheets client not available. Data not saved to cloud.", icon="⚠️")
         return False
     if not GOOGLE_SHEET_ID or GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
         logger.warning("Google Sheet ID for data not configured. Skipping Google Sheet write.")
+        st.toast("Google Sheet ID not configured. Data not saved to cloud.", icon="⚙️")
         return False
+    
+    logger.info(f"Target Google Sheet ID for data: {GOOGLE_SHEET_ID}")
     try:
+        logger.info(f"Opening spreadsheet by key: {GOOGLE_SHEET_ID}")
         spreadsheet = gs_client.open_by_key(GOOGLE_SHEET_ID)
-        worksheet = spreadsheet.sheet1
+        logger.info(f"Successfully opened spreadsheet for data: {spreadsheet.title}")
+        worksheet = spreadsheet.sheet1 
+        logger.info(f"Successfully accessed data worksheet: {worksheet.title}")
         
         header = worksheet.row_values(1) if worksheet.row_count > 0 else []
         if not header or set(header) != set(df_to_append.columns):
+            logger.info("Data sheet header mismatch or sheet empty. Clearing and writing new header.")
             worksheet.clear() 
             worksheet.append_row(list(df_to_append.columns), value_input_option='USER_ENTERED')
-            logger.info("Initialized Google Sheet header for annotations.")
+            logger.info("Initialized Google Sheet header for annotations (data sheet).")
 
+        logger.info(f"Attempting to append {len(df_to_append)} rows to data worksheet '{worksheet.title}'.")
         worksheet.append_rows(df_to_append.values.tolist(), value_input_option='USER_ENTERED')
-        logger.info(f"Appended {len(df_to_append)} rows to Google Sheet.")
+        logger.info(f"Successfully appended {len(df_to_append)} rows to Google Sheet (data sheet).")
         return True
     except gspread.exceptions.APIError as e:
-        error_details = e.response.json().get('error', {}).get('message', 'Details in logs.') if e.response else str(e)
-        st.error(f"Google Sheets API Error (writing data): {error_details}")
-        logger.error(f"Google Sheets API Error (writing data): {e.response.text if e.response else str(e)}")
+        err_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                err_details = e.response.json().get('error', {}).get('message', e.response.text)
+                err_msg = f"{err_details} (Raw response: {e.response.text})"
+            except json.JSONDecodeError:
+                 err_msg = e.response.text
+        st.error(f"Google Sheets API Error (writing data): {err_msg}")
+        logger.error(f"Google Sheets APIError during write_to_google_sheet (data): {err_msg}", exc_info=True)
         return False
     except Exception as e:
-        st.error(f"Failed to write annotation to Google Sheet: {e}")
-        logger.error(f"Failed to write to Google Sheet: {e}")
+        st.error(f"Failed to write annotation to Google Sheet (data): {e}")
+        logger.error(f"Failed to write to Google Sheet (data): {e}", exc_info=True)
         return False
 
 def write_data_to_local_csv(df_to_append):
@@ -309,7 +357,7 @@ def write_data_to_local_csv(df_to_append):
         logger.info(f"Appended {len(df_to_append)} rows to local CSV: {DATASET_FILE}")
     except IOError as e:
         st.error(f"Failed to write annotation to local CSV file: {e}")
-        logging.error(f"IOError writing to local CSV {DATASET_FILE}: {e}")
+        logging.error(f"IOError writing to local CSV {DATASET_FILE}: {e}", exc_info=True)
 
 def save_annotation_data(text:str, text_type:str, actor:list, actor_subject:int, action:list, victim:list, extra:list, annotator:str):
     data = {
@@ -323,12 +371,14 @@ def save_annotation_data(text:str, text_type:str, actor:list, actor_subject:int,
         'annotator': [annotator]
     }
     df = pd.DataFrame(data)
-    write_data_to_local_csv(df.copy())
+    write_data_to_local_csv(df.copy()) 
+
     if write_to_google_sheet(df.copy()):
         st.toast("Annotation also saved to Google Sheet.", icon="☁️")
     else:
-        st.toast("Annotation saved locally. Failed to save to Google Sheet.", icon="💾")
-    logging.info(f"Annotation by {annotator} for text starting with: '{text[:50]}...' saved.")
+        st.toast("Annotation saved locally. Failed to save to Google Sheet.", icon="💾") 
+    
+    logging.info(f"Annotation by {annotator} for text starting with: '{text[:50]}...' processed. Check toasts for GSheet status.")
 
 def initialize_state():
     defaults = {
@@ -342,7 +392,7 @@ def initialize_state():
         'all_files': load_text_file_names_cached(TEXTS_DIR),
         'current_file_path': None,
         'displacy_distance': DEFAULT_DISPLACY_DISTANCE,
-        'gspread_client_available': st.session_state.get('gspread_client_available', False),
+        'gspread_client_available': st.session_state.get('gspread_client_available', False), # Persist this
         'current_sentence_lock_details': None,
         'sentence_load_status': "NONE",
         'sentence_lock_info_message': "",
@@ -351,6 +401,13 @@ def initialize_state():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    
+    # Ensure gs_client is initialized if not already, this might re-trigger logs if it failed silently before
+    global gs_client 
+    if 'gs_client_initialized_run' not in st.session_state: # Run gs_client init once per session effectively
+        gs_client = get_gspread_client() # This will log if it fails
+        st.session_state.gs_client_initialized_run = True
+
 
     if not st.session_state.all_files and os.path.isdir(TEXTS_DIR): 
         st.warning(f"No .txt files found in the '{TEXTS_DIR}' directory. Please add text files and refresh the page.")
@@ -446,15 +503,16 @@ def load_sentence(target_idx):
             st.session_state.current_doc = nlp(sentence_text)
             st.session_state.token_roles = {token.i: '-' for token in st.session_state.current_doc}
             st.session_state.sentence_load_status = "SUCCESS"
-            st.session_state.sentence_lock_info_message = f"Sentence {clamped_idx + 1} of '{os.path.basename(current_fpath)}' loaded and locked by you. {lock_msg}"
-            st.toast(st.session_state.sentence_lock_info_message, icon="✅")
-            logger.info(f"Successfully loaded and locked sentence {clamped_idx} of {current_fpath} by {st.session_state.annotator_name}.")
+            st.session_state.sentence_lock_info_message = f"Sentence {clamped_idx + 1} of '{os.path.basename(current_fpath)}' loaded and locked by you. {lock_msg}" # lock_msg might indicate GSheet issue
+            st.toast(st.session_state.sentence_lock_info_message, icon="✅" if "unavailable" not in lock_msg else "⚠️" )
+            logger.info(f"Successfully loaded and locked sentence {clamped_idx} of {current_fpath} by {st.session_state.annotator_name}. Lock message: {lock_msg}")
         except Exception as e:
             st.error(f"Error processing sentence '{sentence_text[:50]}...': {e}")
-            logger.error(f"SpaCy or processing error for sentence '{sentence_text[:50]}...' in {current_fpath}: {e}")
+            logger.error(f"SpaCy or processing error for sentence '{sentence_text[:50]}...' in {current_fpath}: {e}", exc_info=True)
             st.session_state.current_doc = None
             st.session_state.token_roles = {}
-            release_lock(lock_id, st.session_state.annotator_name) 
+            if "unavailable" not in lock_msg : # Only release if we think we got a real lock
+                release_lock(lock_id, st.session_state.annotator_name) 
             st.session_state.current_sentence_lock_details = None
             st.session_state.sentence_load_status = "PROCESSING_ERROR"
             st.session_state.sentence_lock_info_message = f"Error processing sentence {clamped_idx+1}. Lock released."
@@ -478,7 +536,7 @@ def handle_token_role_update(token_index, new_role):
         st.session_state.actor_subject_index = -1
     logger.debug(f"Token {token_index} role updated to {new_role} by {st.session_state.annotator_name}. Actor subject index is now {st.session_state.actor_subject_index}.")
 
-initialize_state()
+initialize_state() # gs_client gets initialized here if not already
 
 with st.sidebar:
     st.header(f"Annotator: {st.session_state.annotator_name}")
@@ -547,7 +605,11 @@ with st.sidebar:
 
         if st.session_state.current_sentence_lock_details and st.session_state.sentence_load_status == "SUCCESS":
             lock = st.session_state.current_sentence_lock_details
-            st.success(f"🔒 Sentence {lock['idx']+1} ('{os.path.basename(lock['file'])}') locked by you.")
+            lock_msg_sidebar = st.session_state.sentence_lock_info_message
+            if "unavailable" in lock_msg_sidebar:
+                 st.warning(f"⚠️ Sentence {lock['idx']+1} loaded. {lock_msg_sidebar}")
+            else:
+                 st.success(f"🔒 Sentence {lock['idx']+1} ('{os.path.basename(lock['file'])}') locked by you.")
         elif st.session_state.sentence_load_status == "LOCKED_BY_OTHER":
             st.error(f"🔒 {st.session_state.sentence_lock_info_message}")
 
@@ -577,7 +639,7 @@ if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.curre
     if len(st.session_state.current_doc) > 0:
         dep_html = displacy.render(st.session_state.current_doc, style="dep", jupyter=False,
             options={'compact': False, 'bg': '#fafafa', 'color': '#1E1E1E', 'distance': st.session_state.displacy_distance, 'word_spacing': 30, 'arrow_spacing': 10})
-        st.components.v1.html(dep_html, height=20 + len(st.session_state.current_doc) * 12, scrolling=True)
+        st.components.v1.html(dep_html, height=60 + len(st.session_state.current_doc) * 15, scrolling=True)
     else:
         st.info("Sentence is empty or has no tokens that can be parsed.")
     
@@ -701,12 +763,13 @@ if st.session_state.sentence_load_status == "SUCCESS" and st.session_state.curre
                                     actor_to_save, subj_to_save, action_to_save, victim_to_save,
                                     extra_to_save, st.session_state.annotator_name)
 
-            st.toast(f"Annotation saved for: \"{current_sentence_text[:40]}...\"", icon="💾")
 
             if st.session_state.current_sentence_lock_details:
-                release_lock(st.session_state.current_sentence_lock_details['id'], st.session_state.annotator_name)
-                st.session_state.current_sentence_lock_details = None
-                logger.info(f"Lock released for sentence {st.session_state.sentence_index} of {st.session_state.current_file_path} after saving.")
+                # Only release if it wasn't a "proceeding without lock" situation
+                if "unavailable" not in st.session_state.current_sentence_lock_details.get('lock_message', ''):
+                    release_lock(st.session_state.current_sentence_lock_details['id'], st.session_state.annotator_name)
+                st.session_state.current_sentence_lock_details = None # Clear it regardless
+                # logger.info(f"Lock released for sentence {st.session_state.sentence_index} of {st.session_state.current_file_path} after saving.") # Redundant due to release_lock logging
 
             if st.session_state.sentences and st.session_state.sentence_index < len(st.session_state.sentences) - 1:
                 load_sentence(st.session_state.sentence_index + 1)
