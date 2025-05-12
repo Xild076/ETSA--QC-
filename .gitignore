@@ -1,5 +1,6 @@
 /logs
 src/clause/playground.py
 google_credentials.json
+google_credentials_new.json
 data/dataset.csv
 /.streamlit
