@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 import time
 import json
 
-st.set_page_config(layout="wide", page_title="Annotation Tool v7 - Optimized")
+st.set_page_config(layout="wide", page_title="Annotation Tool")
 
 LOG_DIR = "logs"
 DATA_DIR = "data"
@@ -89,8 +89,8 @@ def get_gspread_client():
             if isinstance(creds_json_str_or_dict, str):
                 try:
                     creds_dict = json.loads(creds_json_str_or_dict)
-                except json.JSONDecodeError:
-                    st.error("Failed to parse Google service account credentials from Streamlit secrets (JSON error).")
+                except json.JSONDecodeError as e:
+                    st.error(f"Failed to parse Google service account credentials from Streamlit secrets (JSON error): {e}.")
                     logger.error("JSONDecodeError parsing Google credentials from st.secrets.")
                     st.session_state.gspread_client_available = False
                     return None
