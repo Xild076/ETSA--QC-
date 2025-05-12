@@ -92,7 +92,9 @@ def get_gspread_client():
     logger.info("Attempting to get gspread client.")
     st.session_state.gspread_client_available = False # Default to False
     try:
-        scopes = ["https.www.googleapis.com/auth/spreadsheets"]
+        scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                  "https://www.googleapis.com/auth/drive"
+        ]         
         creds_json_str_or_dict = st.secrets.get("google_service_account_credentials")
         creds = None
         if creds_json_str_or_dict:
