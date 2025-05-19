@@ -394,6 +394,16 @@ def export_to_google_sheets(data_df):
 def display_finish_screen():
     st.title("🎉 Survey Completed! 🎉")
     st.balloons(); st.success("Thank you for your participation! Your responses are greatly appreciated.")
+    st.subheader("Contact Information:")
+    st.markdown("If you have any questions or concerns, please feel free to reach out to us at: harry.d.yin.gpc@gmail.com")
+    st.markdown("---")
+    st.subheader("Looking at the data:")
+    st.markdown("You can take a look at all the data we've collected so far at this Google Sheet link: [Google Sheet Link](https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/edit?usp=sharing)")
+    st.markdown("---")
+    st.subheader("Project:")
+    st.markdown("This survey is part of a research project on sentence sentiment analysis. The goal is to understand how people perceive sentiment in complex sentences. Your input will help us improve our models and understanding of language.")
+    st.markdown("You can take a look at the project page here: [Project Page](https://github.com/Xild076/ETSA--QC-)")
+
 
     if st.session_state.user_responses:
         df = pd.DataFrame(st.session_state.user_responses)
