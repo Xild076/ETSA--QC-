@@ -1,10 +1,14 @@
+numpy==1.26.4
+spacy==3.5.3
+coreferee==1.4.1
+https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.5.0/en_core_web_lg-3.5.0-py3-none-any.whl
 streamlit
-spacy==3.7.2
-thinc
-blis
 pandas
 gspread
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
-en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+torch
+transformers
+tokenizers==0.19.1
+fastcoref
