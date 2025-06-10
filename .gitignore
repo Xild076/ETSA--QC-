@@ -4,3 +4,5 @@ src/clause/playground.py
 data/dataset.csv
 /.streamlit
 /research
+/src/tests
+/data/dataset

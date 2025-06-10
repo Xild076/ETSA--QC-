@@ -182,7 +182,6 @@ def print_entity_summary(result, doc_text):
 
 text = "Barack Obama was the 44th President of the United States. He was born in Hawaii. Obama served two terms."
 result = extract_entities_with_coref(text)
-print(result)
 print_entity_summary(result, text)
 
 text2 = "The European Union announced new regulations. These regulations will affect tech companies. The EU hopes this fosters innovation."
