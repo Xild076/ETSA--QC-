@@ -615,8 +615,7 @@ def export_to_google_sheets(data_df):
         st.info(f"Please check your Google Sheet ID, sharing settings (share with {creds_dict.get('client_email', 'your service account email')}), and API permissions.")
 
 def display_finish_screen():
-    st.title("🎉 Survey Completed! 🎉")
-    st.balloons()
+    st.title("Survey Completed!")
     st.success("Thank you for your participation! Your responses are greatly appreciated.")
     
     st.markdown("""
@@ -624,8 +623,11 @@ def display_finish_screen():
     
     **Contact Information:**
     
-    If you have any questions or concerns, please feel free to reach out to us at: harry.d.yin.gpc@gmail.com
-    
+    If you have any questions or concerns, please feel free to reach out to us at: 
+    - harry.d.yin.gpc@gmail.com
+    - USFCA MAGICS Lab
+    - dgbrizan@usfca.edu
+
     ---
     
     **Looking at the data:**
@@ -645,7 +647,7 @@ def display_finish_screen():
         df = pd.DataFrame(st.session_state.user_responses)
         df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         
-        current_user_login = "Xild076" 
+        current_user_login = "anonymous" 
         df['submitted_by_user_login'] = current_user_login
 
         cols = ['submitted_by_user_login', 'submission_timestamp_utc'] + [c for c in df.columns if c not in ['submitted_by_user_login', 'submission_timestamp_utc']]
