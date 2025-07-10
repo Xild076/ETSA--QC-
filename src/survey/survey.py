@@ -443,9 +443,15 @@ def display_packet_question(sentence_item, actual_sentence_index):
                         'item_id': item_id,
                         'item_type': sentence_item.get('type', ''),
                         'description': sentence_item.get('description', ''),
+                        'sentences': json.dumps(sentences),
+                        'combined_text': " ".join(sentences),
                         'code_key': sentence_item.get('code_key', ''),
                         'entity': entity,
                         'seed': st.session_state.seed,
+
+                        'descriptor': json.dumps(sentence_item.get('descriptor', [])),
+                        'intensity': json.dumps(sentence_item.get('intensity', [])),
+                        'all_entities': json.dumps(sentence_item.get('entities', [])),
                         
                         'packet_step': i + 1,
                         'user_sentiment_score': score,
