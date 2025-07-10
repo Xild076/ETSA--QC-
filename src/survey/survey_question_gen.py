@@ -350,12 +350,12 @@ def generate_aggregate_sentiment_sentences(used_objects):
     
     x, y = _rand.sample(["positive", "negative"], 2)
     seq = [x, y, y]
-    best_3_item_marker_sets = [
+    temporal_marker_sets_3 = [
         ["First", "Next", "Finally"],
         ["Once", "Later", "Now"],
         ["At first", "However", "In the end"]
     ]
-    marks3 = _rand.choice(best_3_item_marker_sets)
+    marks3 = _rand.choice(temporal_marker_sets_3)
     sents, descs, ints = [], [], []
 
     for i, p in enumerate(seq):
@@ -388,13 +388,13 @@ def generate_aggregate_sentiment_sentences(used_objects):
     
     y2, x2 = _rand.sample(["positive", "negative"], 2)
     seq2 = [y2, x2, x2, y2, y2]
-    best_temporal_marker_sets = [
+    temporal_marker_sets_5 = [
         ["First", "Second", "Third", "Fourth", "Finally"],
         ["Once", "Soon after", "For a while", "Recently", "Now"],
         ["Initially", "Subsequently", "After some time", "More recently", "Currently"]
     ]
 
-    marks5 = _rand.choice(best_temporal_marker_sets)
+    marks5 = _rand.choice(temporal_marker_sets_5)
     sents2, descs2, ints2 = [], [], []
     
     for i, p in enumerate(seq2):
