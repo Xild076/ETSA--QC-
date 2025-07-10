@@ -1,0 +1,222 @@
+{
+  "seed": 42,
+  "items": [
+    {
+      "sentences": [
+        "Winter, a great person, kindly saved Remy, an unpleasant person."
+      ],
+      "description": "Compound-action pattern ['positive', 'positive', 'negative']",
+      "descriptor": [
+        "positive",
+        "positive",
+        "negative"
+      ],
+      "intensity": [
+        "medium",
+        "medium",
+        "medium"
+      ],
+      "entities": [
+        "Winter",
+        "Remy"
+      ],
+      "type": "compound_action"
+    },
+    {
+      "sentences": [
+        "Winter, an utterly vile and disgusting person, lightly comforted Riley, a brave, kind, and brilliant person."
+      ],
+      "description": "Compound-action pattern ['negative', 'positive', 'positive']",
+      "descriptor": [
+        "negative",
+        "positive",
+        "positive"
+      ],
+      "intensity": [
+        "very",
+        "slightly",
+        "very"
+      ],
+      "entities": [
+        "Winter",
+        "Riley"
+      ],
+      "type": "compound_action"
+    },
+    {
+      "sentences": [
+        "Jamie, a great person, kindly saved Casey, a brave, kind, and brilliant person."
+      ],
+      "description": "Compound-action pattern ['positive', 'positive', 'positive']",
+      "descriptor": [
+        "positive",
+        "positive",
+        "positive"
+      ],
+      "intensity": [
+        "medium",
+        "medium",
+        "very"
+      ],
+      "entities": [
+        "Jamie",
+        "Casey"
+      ],
+      "type": "compound_action"
+    },
+    {
+      "sentences": [
+        "Sky, a somewhat considerate person, abused Finley, a somewhat considerate person."
+      ],
+      "description": "Compound-action pattern ['positive', 'negative', 'positive']",
+      "descriptor": [
+        "positive",
+        "negative",
+        "positive"
+      ],
+      "intensity": [
+        "slightly",
+        "medium",
+        "slightly"
+      ],
+      "entities": [
+        "Sky",
+        "Finley"
+      ],
+      "type": "compound_action"
+    },
+    {
+      "sentences": [
+        "Ocean, a nice but annoying person, and Dakota, a thoughtful person, together frustrated Robin."
+      ],
+      "description": "Intra-sentence association",
+      "descriptor": [
+        "negative",
+        "positive",
+        "negative",
+        "neutral"
+      ],
+      "intensity": [
+        "slightly",
+        "somewhat",
+        "somewhat",
+        "neutral"
+      ],
+      "entities": [
+        "Ocean",
+        "Dakota",
+        "Robin"
+      ],
+      "type": "compound_association"
+    },
+    {
+      "sentences": [
+        "Cameron, a thoughtful person, brutally murdered Rowan.",
+        "Ocean, a brave, kind, and brilliant person did it with Cameron."
+      ],
+      "description": "Inter-sentence association",
+      "descriptor": [
+        "positive",
+        "negative",
+        "positive",
+        "neutral"
+      ],
+      "intensity": [
+        "somewhat",
+        "very",
+        "very",
+        "neutral"
+      ],
+      "entities": [
+        "Cameron",
+        "Rowan",
+        "Ocean"
+      ],
+      "type": "compound_association"
+    },
+    {
+      "sentences": [
+        "The car's wheel was outstanding, though the car itself was annoying."
+      ],
+      "description": "Intra-sentence belonging",
+      "descriptor": [
+        "negative",
+        "positive"
+      ],
+      "intensity": [
+        "somewhat",
+        "very"
+      ],
+      "entities": [
+        "car",
+        "wheel"
+      ],
+      "type": "compound_belonging"
+    },
+    {
+      "sentences": [
+        "Once, the phone was breathtaking. Now, its screen is annoying."
+      ],
+      "description": "Inter-sentence belonging",
+      "descriptor": [
+        "positive",
+        "negative"
+      ],
+      "intensity": [
+        "very",
+        "somewhat"
+      ],
+      "entities": [
+        "phone",
+        "screen"
+      ],
+      "type": "compound_belonging"
+    },
+    {
+      "sentences": [
+        "Once, the game was breathtaking.",
+        "Later, it was awful.",
+        "Now, it is atrocious."
+      ],
+      "description": "Aggregate packet (3)",
+      "descriptor": [
+        "positive",
+        "negative",
+        "negative"
+      ],
+      "intensity": [
+        "very",
+        "medium",
+        "very"
+      ],
+      "entity": "game",
+      "type": "aggregate_short"
+    },
+    {
+      "sentences": [
+        "Once, the phone was not great.",
+        "Soon after, it was fine.",
+        "For a while, it was fair.",
+        "Recently, it was defective.",
+        "Now, it is annoying."
+      ],
+      "description": "Aggregate packet (5)",
+      "descriptor": [
+        "negative",
+        "positive",
+        "positive",
+        "negative",
+        "negative"
+      ],
+      "intensity": [
+        "slightly",
+        "somewhat",
+        "somewhat",
+        "medium",
+        "somewhat"
+      ],
+      "entity": "phone",
+      "type": "aggregate_long"
+    }
+  ]
+}
