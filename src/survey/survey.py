@@ -26,60 +26,39 @@ def initialize_session_state():
         
         .main {
             padding-top: 2rem;
-            background-color: #FAFAFA;
         }
         
         .stMarkdown, .stMarkdown p, .stMarkdown div, .stMarkdown span {
             font-family: 'Source Serif Pro', 'Georgia', serif !important;
             font-size: 16px !important;
             line-height: 1.7 !important;
-            color: #2C3E50 !important;
         }
         
         .stMarkdown h1 {
-            color: #1A252F !important;
             font-family: 'Source Serif Pro', serif !important;
-            border-bottom: 2px solid #34495E !important;
             padding-bottom: 8px !important;
             font-size: 28px !important;
         }
         
         .stMarkdown h2 {
-            color: #2C3E50 !important;
             font-family: 'Source Serif Pro', serif !important;
             font-size: 22px !important;
         }
         
         .stMarkdown h3 {
-            color: #34495E !important;
             font-family: 'Source Serif Pro', serif !important;
             font-size: 18px !important;
         }
         
-        .stProgress .st-bo {
+        .stProgress .st-bo, .stProgress > div > div > div, div[data-testid="stProgress"] > div > div {
             background-color: #34495E !important;
         }
         
-        .stProgress .st-bn {
-            background-color: #E8E8E8 !important;
-        }
-        
-        .stProgress > div > div > div {
-            background-color: #34495E !important;
-        }
-        
-        .stProgress > div {
-            background-color: #E8E8E8 !important;
-            border-radius: 2px !important;
-        }
-        
-        div[data-testid="stProgress"] > div {
-            background-color: #E8E8E8 !important;
+        .stProgress > div, div[data-testid="stProgress"] > div {
             border-radius: 2px !important;
         }
         
         div[data-testid="stProgress"] > div > div {
-            background-color: #34495E !important;
             border-radius: 2px !important;
         }
         
@@ -88,14 +67,12 @@ def initialize_session_state():
         }
         
         .academic-paper {
-            background: white;
             padding: 25px;
             border-radius: 3px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             margin: 15px 0;
             font-family: 'Source Serif Pro', 'Georgia', serif !important;
             line-height: 1.7;
-            border: 1px solid #E8E8E8;
         }
         
         .metric-card {
@@ -121,84 +98,140 @@ def initialize_session_state():
             border-color: #1A252F !important;
         }
         
-        .stSlider {
+        .stSlider, .stCheckbox, .stSelectbox, .stTextInput, .stTextArea, .stNumberInput {
             font-family: 'Source Serif Pro', serif !important;
         }
         
-        .stSlider label {
+        .stSlider label, .stCheckbox label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput label {
             font-family: 'Source Serif Pro', serif !important;
+        }
+        
+        .stDataFrame, .stSuccess, .stError, .stWarning, .stInfo {
+            font-family: 'Source Serif Pro', serif !important;
+        }
+        
+        div[data-testid="stMarkdownContainer"], div[data-testid="column"], div[data-testid="metric-container"], .element-container, .block-container {
+            font-family: 'Source Serif Pro', serif !important;
+        }
+        
+        body[data-theme="light"] .main {
+            background-color: #FAFAFA;
+        }
+        
+        body[data-theme="light"] .stMarkdown, 
+        body[data-theme="light"] .stMarkdown p, 
+        body[data-theme="light"] .stMarkdown div, 
+        body[data-theme="light"] .stMarkdown span {
             color: #2C3E50 !important;
         }
         
-        .stCheckbox {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="light"] .stMarkdown h1 {
+            color: #1A252F !important;
+            border-bottom: 2px solid #34495E !important;
         }
         
-        .stCheckbox label {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="light"] .stMarkdown h2 {
             color: #2C3E50 !important;
         }
         
-        .stSelectbox label {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="light"] .stMarkdown h3 {
+            color: #34495E !important;
+        }
+        
+        body[data-theme="light"] .stProgress .st-bn, 
+        body[data-theme="light"] .stProgress > div, 
+        body[data-theme="light"] div[data-testid="stProgress"] > div {
+            background-color: #E8E8E8 !important;
+        }
+        
+        body[data-theme="light"] .academic-paper {
+            background: white;
+            border: 1px solid #E8E8E8;
+            color: #2C3E50;
+        }
+        
+        body[data-theme="light"] .stSlider label, 
+        body[data-theme="light"] .stCheckbox label, 
+        body[data-theme="light"] .stSelectbox label, 
+        body[data-theme="light"] .stTextInput label, 
+        body[data-theme="light"] .stTextArea label, 
+        body[data-theme="light"] .stNumberInput label {
             color: #2C3E50 !important;
         }
         
-        .stTextInput label {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="light"] .text-content {
+            background-color: white !important;
             color: #2C3E50 !important;
         }
         
-        .stTextArea label {
-            font-family: 'Source Serif Pro', serif !important;
-            color: #2C3E50 !important;
+        body[data-theme="dark"] .main {
+            background-color: #0E1117;
         }
         
-        .stNumberInput label {
-            font-family: 'Source Serif Pro', serif !important;
-            color: #2C3E50 !important;
+        body[data-theme="dark"] .stMarkdown, 
+        body[data-theme="dark"] .stMarkdown p, 
+        body[data-theme="dark"] .stMarkdown div, 
+        body[data-theme="dark"] .stMarkdown span {
+            color: #FAFAFA !important;
         }
         
-        .stDataFrame {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .stMarkdown h1 {
+            color: #FFFFFF !important;
+            border-bottom: 2px solid #FAFAFA !important;
         }
         
-        .stSuccess {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .stMarkdown h2 {
+            color: #FAFAFA !important;
         }
         
-        .stError {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .stMarkdown h3 {
+            color: #FAFAFA !important;
         }
         
-        .stWarning {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .stProgress .st-bn, 
+        body[data-theme="dark"] .stProgress > div, 
+        body[data-theme="dark"] div[data-testid="stProgress"] > div {
+            background-color: #262730 !important;
         }
         
-        .stInfo {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .academic-paper {
+            background: #262730;
+            border: 1px solid #404040;
+            color: #FAFAFA;
         }
         
-        div[data-testid="stMarkdownContainer"] {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .stSlider label, 
+        body[data-theme="dark"] .stCheckbox label, 
+        body[data-theme="dark"] .stSelectbox label, 
+        body[data-theme="dark"] .stTextInput label, 
+        body[data-theme="dark"] .stTextArea label, 
+        body[data-theme="dark"] .stNumberInput label {
+            color: #FAFAFA !important;
         }
         
-        div[data-testid="column"] {
-            font-family: 'Source Serif Pro', serif !important;
-        }
-        
-        div[data-testid="metric-container"] {
-            font-family: 'Source Serif Pro', serif !important;
-        }
-        
-        .element-container {
-            font-family: 'Source Serif Pro', serif !important;
-        }
-        
-        .block-container {
-            font-family: 'Source Serif Pro', serif !important;
+        body[data-theme="dark"] .text-content {
+            background-color: #262730 !important;
+            color: #FAFAFA !important;
         }
     </style>
+    <script>
+        function detectTheme() {
+            const isDark = window.getComputedStyle(document.body).backgroundColor === 'rgb(14, 17, 23)' || 
+                          document.querySelector('[data-testid="stAppViewContainer"]')?.style.backgroundColor === 'rgb(14, 17, 23)' ||
+                          document.querySelector('.main')?.style.backgroundColor === 'rgb(14, 17, 23)';
+            
+            document.body.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        }
+        
+        detectTheme();
+        
+        const observer = new MutationObserver(detectTheme);
+        observer.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
+        
+        setTimeout(detectTheme, 100);
+        setTimeout(detectTheme, 500);
+        setTimeout(detectTheme, 1000);
+    </script>
     """, unsafe_allow_html=True)
 
     hide_menu_style = """
@@ -368,7 +401,7 @@ def highlight_entities_in_sentence(original_text, entities):
         if detail["start"] > current_pos:
             highlighted_sentence_parts.append(original_text[current_pos:detail["start"]])
         
-        highlight_span = f"<span style='color:{detail['color']}; background-color:{HIGHLIGHT_BACKGROUND_COLOR}; padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>{detail['text']}</span>"
+        highlight_span = f"<span style='color:{detail['color']}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>{detail['text']}</span>"
         highlighted_sentence_parts.append(highlight_span)
         current_pos = detail["end"]
 
@@ -396,7 +429,8 @@ def display_packet_question(sentence_item, actual_sentence_index):
     
     entities_to_highlight = get_entities_to_highlight(entity, cumulative_text)
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(cumulative_text, entities_to_highlight)
-    st.markdown(f"<div style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; background-color: white; font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
+    
+    st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
     
     if st.session_state.packet_sentiment_history:
         st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your Previous Ratings:</h3>", unsafe_allow_html=True)
@@ -407,7 +441,7 @@ def display_packet_question(sentence_item, actual_sentence_index):
     st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Rate the sentiment you feel is <strong>directed towards</strong> the highlighted entity.</p>", unsafe_allow_html=True)
     
     display_color = entity_color_map.get(entity, ENTITY_COLORS[0])
-    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:{HIGHLIGHT_BACKGROUND_COLOR}; padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
     
     slider_key = f"packet_slider_{item_id}_{current_sentence_idx}"
     default_value = 0
@@ -479,7 +513,8 @@ def display_regular_question(sentence_item, actual_sentence_index):
     scorable_entities = get_scorable_entities(sentence_item)
     
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(combined_text, scorable_entities)
-    st.markdown(f"<div style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; background-color: white; font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
+    
+    st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
     
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
     st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>For each <strong>highlighted entity</strong>, rate the sentiment you feel is <strong>directed towards them</strong> in the sentence.</p>", unsafe_allow_html=True)
@@ -493,7 +528,7 @@ def display_regular_question(sentence_item, actual_sentence_index):
         slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
         current_value = st.session_state.current_scores[item_id].get(entity, 0)
 
-        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:{HIGHLIGHT_BACKGROUND_COLOR}; padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
 
         score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=current_value, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
 
