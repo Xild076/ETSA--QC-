@@ -451,7 +451,7 @@ def display_packet_question(sentence_item, actual_sentence_index):
 
                         'descriptor': json.dumps(sentence_item.get('descriptor', [])),
                         'intensity': json.dumps(sentence_item.get('intensity', [])),
-                        'all_entities': json.dumps(sentence_item.get('entities', [])),
+                        'all_entities': json.dumps(sentence_item.get('entity', [])),
                         
                         'packet_step': i + 1,
                         'user_sentiment_score': score,
