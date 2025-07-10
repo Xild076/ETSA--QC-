@@ -443,21 +443,21 @@ def display_packet_question(sentence_item, actual_sentence_index):
                         'item_id': item_id,
                         'item_type': sentence_item.get('type', ''),
                         'description': sentence_item.get('description', ''),
-                        'sentences': sentence_item.get('sentences', []),
+                        'sentences': json.dumps(sentences),
                         'combined_text': " ".join(sentences),
                         'code_key': sentence_item.get('code_key', ''),
                         'entity': entity,
                         'seed': st.session_state.seed,
-                        'descriptor': sentence_item.get('descriptor', []),
-                        'intensity': sentence_item.get('intensity', []),
-                        'all_entities': sentence_item.get('entities', []),
+                        'descriptor': json.dumps(sentence_item.get('descriptor', [])),
+                        'intensity': json.dumps(sentence_item.get('intensity', [])),
+                        'all_entities': json.dumps([entity]),
                         'packet_step': i + 1,
                         'user_sentiment_score': score,
                         'user_sentiment_label': sentiment_scale[score],
                         'sentence_at_step': " ".join(sentences[:i + 1]), 
                         'new_sentence_for_step': sentences[i],
-                        'descriptor_for_step': sentence_item['descriptor'][i] if i < len(sentence_item.get('descriptor', [])) else '',
-                        'intensity_for_step': sentence_item['intensity'][i] if i < len(sentence_item.get('intensity', [])) else ''
+                        'descriptor_for_step': sentence_item.get('descriptor', [])[i] if i < len(sentence_item.get('descriptor', [])) else '',
+                        'intensity_for_step': sentence_item.get('intensity', [])[i] if i < len(sentence_item.get('intensity', [])) else ''
                     }
                     
                     st.session_state.user_responses.append(response_data)
@@ -508,21 +508,22 @@ def display_regular_question(sentence_item, actual_sentence_index):
                     'item_id': item_id,
                     'item_type': sentence_item.get('type', ''),
                     'description': sentence_item.get('description', ''),
-                    'sentences': sentence_item.get('sentences', []),
+                    'sentences': json.dumps(sentences),
                     'combined_text': combined_text,
                     'code_key': sentence_item.get('code_key', ''),
                     'entity': entity,
                     'user_sentiment_score': score_value,
                     'user_sentiment_label': sentiment_scale[score_value],
-                    'seed': st.session_state.seed
+                    'seed': st.session_state.seed,
+                    'descriptor': json.dumps(sentence_item.get('descriptor', [])),
+                    'intensity': json.dumps(sentence_item.get('intensity', [])),
+                    'all_entities': json.dumps(sentence_item.get('entities', [])),
+                    'packet_step': '',
+                    'sentence_at_step': '',
+                    'new_sentence_for_step': '',
+                    'descriptor_for_step': '',
+                    'intensity_for_step': ''
                 }
-                
-                if 'descriptor' in sentence_item:
-                    response_data['descriptor'] = sentence_item['descriptor']
-                if 'intensity' in sentence_item:
-                    response_data['intensity'] = sentence_item['intensity']
-                if 'entities' in sentence_item:
-                    response_data['all_entities'] = sentence_item['entities']
                 
                 st.session_state.user_responses.append(response_data)
         
@@ -589,17 +590,6 @@ def export_to_google_sheets(data_df):
         return
     
     try:
-        df_clean = data_df.copy()
-        
-        for col in df_clean.columns:
-            if df_clean[col].dtype == 'object':
-                df_clean[col] = df_clean[col].astype(str)
-            else:
-                df_clean[col] = df_clean[col].astype(str)
-        
-        df_clean = df_clean.fillna('')
-        df_clean = df_clean.replace(['nan', 'None', np.inf, -np.inf], '')
-        
         creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
         client = gspread.authorize(creds)
         
@@ -613,32 +603,37 @@ def export_to_google_sheets(data_df):
         try: 
             ws = spreadsheet.worksheet(ws_name)
         except gspread.WorksheetNotFound: 
-            ws = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(df_clean.columns))
+            ws = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(data_df.columns))
         
-        try:
-            existing_data = ws.get_all_values()
-            if not existing_data or not any(existing_data[0]):
-                ws.clear()
-                header_row = [str(col) for col in df_clean.columns]
-                data_rows = [[str(cell) for cell in row] for row in df_clean.values]
-                all_rows = [header_row] + data_rows
-                ws.update('A1', all_rows, value_input_option='USER_ENTERED')
-            else:
-                data_rows = [[str(cell) for cell in row] for row in df_clean.values]
-                next_row = len(existing_data) + 1
-                ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
+        expected_columns = [
+            'submitted_by_user_login', 'submission_timestamp_utc', 'item_id', 'item_type', 'description',
+            'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity',
+            'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label',
+            'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step'
+        ]
+        
+        df_ordered = data_df.reindex(columns=expected_columns, fill_value='')
+        
+        for col in df_ordered.columns:
+            df_ordered[col] = df_ordered[col].astype(str).replace(['nan', 'None'], '')
+        
+        existing_data = ws.get_all_values()
+        if not existing_data or not any(existing_data[0]):
+            header_row = expected_columns
+            data_rows = df_ordered.values.tolist()
+            all_rows = [header_row] + data_rows
+            ws.update('A1', all_rows, value_input_option='USER_ENTERED')
+        else:
+            data_rows = df_ordered.values.tolist()
+            next_row = len(existing_data) + 1
+            ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
                 
-        except Exception as update_error:
-            st.error(f"Error updating sheet data: {update_error}")
-            return
-            
         st.success(f"Data successfully exported to Google Sheet (ID: {GOOGLE_SHEET_ID})")
         
     except gspread.exceptions.SpreadsheetNotFound: 
         st.error(f"Google Sheet (ID: '{GOOGLE_SHEET_ID}') not found or not shared with the service account: {creds_dict.get('client_email', 'your service account email')}.")
     except Exception as e: 
         st.error(f"An error occurred during Google Sheets export: {e}")
-        st.info(f"Please check your Google Sheet ID, sharing settings (share with {creds_dict.get('client_email', 'your service account email')}), and API permissions.")
 
 def display_finish_screen():
     st.title("Survey Completed!")
@@ -672,12 +667,7 @@ def display_finish_screen():
     if st.session_state.user_responses:
         df = pd.DataFrame(st.session_state.user_responses)
         df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-        
-        current_user_login = "anonymous" 
-        df['submitted_by_user_login'] = current_user_login
-
-        cols = ['submitted_by_user_login', 'submission_timestamp_utc'] + [c for c in df.columns if c not in ['submitted_by_user_login', 'submission_timestamp_utc']]
-        df = df[cols]
+        df['submitted_by_user_login'] = "anonymous"
 
         if GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE" and GOOGLE_SHEET_ID and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
             export_to_google_sheets(df)
@@ -690,7 +680,7 @@ def display_finish_screen():
         st.subheader("Your Data")
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(label="Download Survey Data (CSV)", data=csv, use_container_width=True,
-            file_name=f"survey_data_{current_user_login}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
+            file_name=f"survey_data_anonymous_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
     else: 
         st.warning("No responses were recorded in this session.")
     st.markdown("---")
