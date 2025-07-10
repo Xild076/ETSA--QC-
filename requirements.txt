@@ -58,6 +58,7 @@ murmurhash==1.0.13
 narwhals==1.42.0
 natsort==8.4.0
 networkx==3.5
+nltk==3.9.1
 numpy==2.3.0
 oauthlib==3.2.2
 openpyxl==3.1.5
