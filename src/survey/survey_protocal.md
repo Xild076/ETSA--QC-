@@ -1,5 +1,7 @@
 We are asking you to participate in a research study titled "Quantum Criticism—Entity-Targeted Sentiment Analysis". We will describe this study to you and answer any of your questions. This study is being led by Harry Yin, a high school research student currently associated with MAGICS Lab at USFCA. The Faculty Advisor for this study is Associate Professor David Guy Brizan, Department of CS at USFCA.
 
+---
+
 **Purpose:**
 The purpose of this research is to collect ground truth data on peoples' emotional response towards entities or characters within a text, depending on factors such as how the text is formatted, the intensity of the language, and how the entities/characters interact with each other. The ultimate goal is to use this data in order to develop tools to quantify this phenomenon.
 
