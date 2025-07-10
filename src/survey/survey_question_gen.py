@@ -350,7 +350,12 @@ def generate_aggregate_sentiment_sentences(used_objects):
     
     x, y = _rand.sample(["positive", "negative"], 2)
     seq = [x, y, y]
-    marks3 = ["Once", "Later", "Now"]
+    best_3_item_marker_sets = [
+        ["First", "Next", "Finally"],
+        ["Once", "Later", "Now"],
+        ["At first", "However", "In the end"]
+    ]
+    marks3 = _rand.choice(best_3_item_marker_sets)
     sents, descs, ints = [], [], []
 
     for i, p in enumerate(seq):
@@ -371,6 +376,7 @@ def generate_aggregate_sentiment_sentences(used_objects):
         "intensity": ints,
         "code_key": code_key,
         "entity": subj1,
+        "marks": marks3,
         "type": "aggregate_short"
     })
 
@@ -382,7 +388,13 @@ def generate_aggregate_sentiment_sentences(used_objects):
     
     y2, x2 = _rand.sample(["positive", "negative"], 2)
     seq2 = [y2, x2, x2, y2, y2]
-    marks5 = ["Once", "Soon after", "For a while", "Recently", "Now"]
+    best_temporal_marker_sets = [
+        ["First", "Second", "Third", "Fourth", "Finally"],
+        ["Once", "Soon after", "For a while", "Recently", "Now"],
+        ["Initially", "Subsequently", "After some time", "More recently", "Currently"]
+    ]
+
+    marks5 = _rand.choice(best_temporal_marker_sets)
     sents2, descs2, ints2 = [], [], []
     
     for i, p in enumerate(seq2):
@@ -403,6 +415,7 @@ def generate_aggregate_sentiment_sentences(used_objects):
         "intensity": ints2,
         "code_key": code_key2,
         "entity": subj2,
+        "marks": marks5,
         "type": "aggregate_long"
     })
     

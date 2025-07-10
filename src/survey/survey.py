@@ -457,7 +457,9 @@ def display_packet_question(sentence_item, actual_sentence_index):
                         'sentence_at_step': " ".join(sentences[:i + 1]), 
                         'new_sentence_for_step': sentences[i],
                         'descriptor_for_step': sentence_item.get('descriptor', [])[i] if i < len(sentence_item.get('descriptor', [])) else '',
-                        'intensity_for_step': sentence_item.get('intensity', [])[i] if i < len(sentence_item.get('intensity', [])) else ''
+                        'intensity_for_step': sentence_item.get('intensity', [])[i] if i < len(sentence_item.get('intensity', [])) else '',
+                        'mark': sentence_item.get('marks', [])[i] if i < len(sentence_item.get('marks', [])) else '',
+                        'marks': json.dumps(sentence_item.get('marks', []))
                     }
                     
                     st.session_state.user_responses.append(response_data)
