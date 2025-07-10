@@ -438,25 +438,28 @@ def display_packet_question(sentence_item, actual_sentence_index):
                 st.session_state.packet_sentence_index += 1
                 st.rerun()
             else:
-                response_data = {
-                    'item_id': item_id,
-                    'item_type': sentence_item.get('type', ''),
-                    'description': sentence_item.get('description', ''),
-                    'sentences': json.dumps(sentences),
-                    'code_key': sentence_item.get('code_key', ''),
-                    'entity': entity,
-                    'sentiment_scores_list': json.dumps(st.session_state.packet_sentiment_history),
-                    'final_sentiment_score': st.session_state.packet_sentiment_history[-1],
-                    'final_sentiment_label': sentiment_scale[st.session_state.packet_sentiment_history[-1]],
-                    'seed': st.session_state.seed
-                }
-                
-                if 'descriptor' in sentence_item:
-                    response_data['descriptor'] = json.dumps(sentence_item['descriptor'])
-                if 'intensity' in sentence_item:
-                    response_data['intensity'] = json.dumps(sentence_item['intensity'])
-                
-                st.session_state.user_responses.append(response_data)
+                for i, score in enumerate(st.session_state.packet_sentiment_history):
+                    response_data = {
+                        'item_id': item_id,
+                        'item_type': sentence_item.get('type', ''),
+                        'description': sentence_item.get('description', ''),
+                        'code_key': sentence_item.get('code_key', ''),
+                        'entity': entity,
+                        'seed': st.session_state.seed,
+                        
+                        'packet_step': i + 1,
+                        'user_sentiment_score': score,
+                        'user_sentiment_label': sentiment_scale[score],
+                        'sentence_at_step': " ".join(sentences[:i + 1]), 
+                        
+                        'new_sentence_for_step': sentences[i],
+                        
+                        'descriptor_for_step': sentence_item['descriptor'][i],
+                        'intensity_for_step': sentence_item['intensity'][i]
+                    }
+                    
+                    st.session_state.user_responses.append(response_data)
+                    
                 st.session_state.packet_sentence_index = 0
                 st.session_state.packet_sentiment_history = []
                 return True

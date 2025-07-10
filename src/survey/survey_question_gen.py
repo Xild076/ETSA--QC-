@@ -209,7 +209,7 @@ def generate_compound_association_sentences(used_names):
     
     sentence1 = f"{n4}, {nouns[y][j1]}, {verbs[x][j2]} {n5}."
     sentence2 = f"{n6}, {nouns[y][j3]} did it with {n4}."
-    code_key = f"actor[[{n4}_{j1}]]+actor[[{n6}_{j2}]]->verb[[{verbs[y][j2]}_{j2}]]->target[[{n5}_N]]"
+    code_key = f"actor[[{n4}_{j1}]]+actor[[{n6}_{j3}]]->verb[[{verbs[x][j2]}_{j2}]]->target[[{n5}_N]]"
     
     out.append({
         "sentences": [sentence1, sentence2],
