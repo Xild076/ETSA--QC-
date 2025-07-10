@@ -443,25 +443,21 @@ def display_packet_question(sentence_item, actual_sentence_index):
                         'item_id': item_id,
                         'item_type': sentence_item.get('type', ''),
                         'description': sentence_item.get('description', ''),
-                        'sentences': json.dumps(sentences),
+                        'sentences': sentence_item.get('sentences', []),
                         'combined_text': " ".join(sentences),
                         'code_key': sentence_item.get('code_key', ''),
                         'entity': entity,
                         'seed': st.session_state.seed,
-
-                        'descriptor': json.dumps(sentence_item.get('descriptor', [])),
-                        'intensity': json.dumps(sentence_item.get('intensity', [])),
-                        'all_entities': json.dumps(sentence_item.get('entity', [])),
-                        
+                        'descriptor': sentence_item.get('descriptor', []),
+                        'intensity': sentence_item.get('intensity', []),
+                        'all_entities': sentence_item.get('entities', []),
                         'packet_step': i + 1,
                         'user_sentiment_score': score,
                         'user_sentiment_label': sentiment_scale[score],
                         'sentence_at_step': " ".join(sentences[:i + 1]), 
-                        
                         'new_sentence_for_step': sentences[i],
-                        
-                        'descriptor_for_step': sentence_item['descriptor'][i],
-                        'intensity_for_step': sentence_item['intensity'][i]
+                        'descriptor_for_step': sentence_item['descriptor'][i] if i < len(sentence_item.get('descriptor', [])) else '',
+                        'intensity_for_step': sentence_item['intensity'][i] if i < len(sentence_item.get('intensity', [])) else ''
                     }
                     
                     st.session_state.user_responses.append(response_data)
@@ -512,7 +508,7 @@ def display_regular_question(sentence_item, actual_sentence_index):
                     'item_id': item_id,
                     'item_type': sentence_item.get('type', ''),
                     'description': sentence_item.get('description', ''),
-                    'sentences': json.dumps(sentences),
+                    'sentences': sentence_item.get('sentences', []),
                     'combined_text': combined_text,
                     'code_key': sentence_item.get('code_key', ''),
                     'entity': entity,
@@ -522,11 +518,11 @@ def display_regular_question(sentence_item, actual_sentence_index):
                 }
                 
                 if 'descriptor' in sentence_item:
-                    response_data['descriptor'] = json.dumps(sentence_item['descriptor'])
+                    response_data['descriptor'] = sentence_item['descriptor']
                 if 'intensity' in sentence_item:
-                    response_data['intensity'] = json.dumps(sentence_item['intensity'])
+                    response_data['intensity'] = sentence_item['intensity']
                 if 'entities' in sentence_item:
-                    response_data['all_entities'] = json.dumps(sentence_item['entities'])
+                    response_data['all_entities'] = sentence_item['entities']
                 
                 st.session_state.user_responses.append(response_data)
         
@@ -593,32 +589,51 @@ def export_to_google_sheets(data_df):
         return
     
     try:
-        data_df = data_df.fillna('')
-        data_df = data_df.replace([np.inf, -np.inf], '')
+        df_clean = data_df.copy()
         
-        for col in data_df.select_dtypes(include=[np.number]).columns:
-            data_df[col] = data_df[col].astype(str)
+        for col in df_clean.columns:
+            if df_clean[col].dtype == 'object':
+                df_clean[col] = df_clean[col].astype(str)
+            else:
+                df_clean[col] = df_clean[col].astype(str)
+        
+        df_clean = df_clean.fillna('')
+        df_clean = df_clean.replace(['nan', 'None', np.inf, -np.inf], '')
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
         client = gspread.authorize(creds)
+        
         if GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID: 
             st.error("GOOGLE_SHEET_ID is not set or is a placeholder; cannot export to Google Sheets.")
             return
         
         spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
         ws_name = "Sheet1"
-        ws = None
+        
         try: 
             ws = spreadsheet.worksheet(ws_name)
         except gspread.WorksheetNotFound: 
-            ws = spreadsheet.add_worksheet(title=ws_name, rows="1", cols=len(data_df.columns))
+            ws = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(df_clean.columns))
         
-        headers = ws.row_values(1) 
-        if not headers or all(h == "" for h in headers): 
-            ws.update([data_df.columns.values.tolist()] + data_df.values.tolist())
-        else: 
-            ws.append_rows(data_df.values.tolist(), value_input_option='USER_ENTERED') 
+        try:
+            existing_data = ws.get_all_values()
+            if not existing_data or not any(existing_data[0]):
+                ws.clear()
+                header_row = [str(col) for col in df_clean.columns]
+                data_rows = [[str(cell) for cell in row] for row in df_clean.values]
+                all_rows = [header_row] + data_rows
+                ws.update('A1', all_rows, value_input_option='USER_ENTERED')
+            else:
+                data_rows = [[str(cell) for cell in row] for row in df_clean.values]
+                next_row = len(existing_data) + 1
+                ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
+                
+        except Exception as update_error:
+            st.error(f"Error updating sheet data: {update_error}")
+            return
+            
         st.success(f"Data successfully exported to Google Sheet (ID: {GOOGLE_SHEET_ID})")
+        
     except gspread.exceptions.SpreadsheetNotFound: 
         st.error(f"Google Sheet (ID: '{GOOGLE_SHEET_ID}') not found or not shared with the service account: {creds_dict.get('client_email', 'your service account email')}.")
     except Exception as e: 
