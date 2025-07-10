@@ -524,7 +524,9 @@ def display_regular_question(sentence_item, actual_sentence_index):
                     'sentence_at_step': '',
                     'new_sentence_for_step': '',
                     'descriptor_for_step': '',
-                    'intensity_for_step': ''
+                    'intensity_for_step': '',
+                    'marks': '',
+                    'mark': ''
                 }
                 
                 st.session_state.user_responses.append(response_data)
@@ -611,7 +613,8 @@ def export_to_google_sheets(data_df):
             'submitted_by_user_login', 'submission_timestamp_utc', 'item_id', 'item_type', 'description',
             'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity',
             'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label',
-            'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step'
+            'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step', 
+            'mark', 'marks'
         ]
         
         df_ordered = data_df.reindex(columns=expected_columns, fill_value='')

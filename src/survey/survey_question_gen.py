@@ -183,6 +183,7 @@ def generate_compound_action_sentences(used_names):
             "intensity": [i1, i2, i3],
             "entities": [a, v],
             "code_key": code_key,
+            "marks": [],
             "type": "compound_action"
         })
     
@@ -223,6 +224,7 @@ def generate_compound_association_sentences(used_names):
         "intensity": [i1, i2, i3, "neutral"],
         "entities": [n1, n2, n3],
         "code_key": code_key,
+        "marks": [],
         "type": "compound_association"
     })
     
@@ -289,6 +291,7 @@ def generate_compound_belonging_sentences(used_objects):
         "intensity": [i1, i2],
         "code_key": code_key,
         "entities": [parent, child],
+        "marks": [],
         "type": "compound_belonging"
     })
 
