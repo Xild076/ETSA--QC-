@@ -264,7 +264,10 @@ def display_consent_form():
     
     st.markdown("""
 <div class="academic-paper">
-We thank you for participating in a research study titled "Quantum Criticism—Entity-Targeted Sentiment Analysis". We will describe this study to you and answer any of your questions. This study is being led by Harry Yin, a high school research student currently associated with MAGICS Lab at USFCA. The Faculty Advisor for this study is Associate Professor David Guy Brizan, Department of CS at USFCA.
+
+Estimated time to complete: 10 minutes
+
+We thank you for participating in a research study titled "Quantum Criticism—Entity-Targeted Sentiment Analysis". We will describe this study to you and answer any of your questions. This study is being led by Harry Yin, a research student currently associated with MAGICS Lab at USFCA. The Faculty Advisor for this study is Associate Professor David Guy Brizan, Department of CS at USFCA.
 
 ---
 
@@ -302,7 +305,7 @@ Data from this study may be shared with the research community at large in the f
 Participant involvement is completely voluntary. If at any moment the participant may feel uncomfortable with this survey, the participant may withdraw by closing the brower window. If the participant withdraws, any data collected up to that point will not be used.
 
 **If you have questions:**
-The main researcher conducting this study is Harry Yin, a high school student currently associated with the MAGICS Lab at USFCA. If you have questions, you may contact Harry Yin at harry.d.yin.gpc@gmail.com. You may also contact the MAGICS Lab at USFCA or the Faculty Advisor, Associate Professor David Guy Brizan, at dgbrizan@usfca.edu.
+The main researcher conducting this study is Harry Yin, a student currently associated with the MAGICS Lab at USFCA. If you have questions, you may contact Harry Yin at harry.d.yin.gpc@gmail.com. You may also contact the MAGICS Lab at USFCA or the Faculty Advisor, Associate Professor David Guy Brizan, at dgbrizan@usfca.edu.
         </div>
         """, unsafe_allow_html=True)
     st.markdown("""
