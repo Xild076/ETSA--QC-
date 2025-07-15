@@ -507,14 +507,12 @@ def display_regular_question(sentence_item, actual_sentence_index):
         st.session_state.current_scores[item_id] = {}
     for entity in scorable_entities:
         display_color = entity_color_map.get(entity, "#000000")
-        slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
-        if slider_key not in st.session_state:
-            st.session_state[slider_key] = st.session_state.current_scores[item_id].get(entity, 0)
+        slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('"','_')}"
         score = st.slider(
             label=f"Rate for \"{entity}\"",
             min_value=-4,
             max_value=4,
-            value=st.session_state[slider_key],
+            value=st.session_state.current_scores[item_id].get(entity, 0),
             format="%d",
             key=slider_key,
             label_visibility="collapsed",
