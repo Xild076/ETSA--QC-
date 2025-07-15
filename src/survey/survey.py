@@ -261,6 +261,7 @@ def initialize_session_state():
 
 def display_consent_form():
     st.title("Research Survey Consent Form")
+    
     st.markdown("""
 <div class="academic-paper">
 We thank you for participating in a research study titled "Quantum Criticism—Entity-Targeted Sentiment Analysis". We will describe this study to you and answer any of your questions. This study is being led by Harry Yin, a high school research student currently associated with MAGICS Lab at USFCA. The Faculty Advisor for this study is Associate Professor David Guy Brizan, Department of CS at USFCA.
@@ -272,6 +273,11 @@ The purpose of this research is to collect ground truth data on peoples' emotion
 
 **What we will ask you to do:**
 We will ask you to, given a text, to read the text and give each highlighted entity/character within the text a rating on a 9-point scale from -4 (Extremely Negative) to 4 (Extremely Positive) depending on how you feel about the entity/character. There will be 16 questions in the survey and should take at most 10 minutes to complete.
+    """, unsafe_allow_html=True)
+
+    with st.expander("More Information", expanded=False):
+        st.markdown("""
+<div class="academic-paper">
 
 **Risks and discomforts:**
 We do not anticipate any significant risks from participating in this research. The given sample text may describe mildly intense situations, but they are brief and fictional. We believe that the risk of discomfort is minimal.
@@ -282,7 +288,7 @@ We do not anticipate any direct benefits to the participant.
 However, we hope to learn more clearly about the way text and textual formatting shapes sentiment. This information may benefit other people now or in the future by mitigating the effects of manipulative language online.
 
 **Incentives for participation:**
-There are no inventives for participation.
+There are no incentives for participation.
 
 **Privacy/Confidentiality/Data Security:**
 The responses are anonymous. We do not collect any personally identifiable information (ex: name, email, or IP address).
@@ -297,8 +303,10 @@ Participant involvement is completely voluntary. If at any moment the participan
 
 **If you have questions:**
 The main researcher conducting this study is Harry Yin, a high school student currently associated with the MAGICS Lab at USFCA. If you have questions, you may contact Harry Yin at harry.d.yin.gpc@gmail.com. You may also contact the MAGICS Lab at USFCA or the Faculty Advisor, Associate Professor David Guy Brizan, at dgbrizan@usfca.edu.
-
----
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("""
+<div class="academic-paper">
 
 Please check the following boxes to consent to this survey.
 
@@ -345,7 +353,7 @@ sentiment_scale = {-4: "Extremely Negative", -3: "Negative", -2: "Somewhat Negat
 def get_scorable_entities(item):
     if item.get('type') in ['compound_action', 'compound_association', 'compound_belonging']:
         return item.get('entities', [])
-    elif item.get('type') in ['aggregate_short', 'aggregate_long']:
+    elif item.get('type') in ['aggregate_short', 'aggregate_medium', 'aggregate_long']:
         return [item.get('entity', '')]
     return []
 
@@ -414,60 +422,44 @@ def display_packet_question(sentence_item, actual_sentence_index):
     item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
     sentences = sentence_item.get('sentences', [])
     entity = sentence_item.get('entity', '')
-    
     current_sentence_idx = st.session_state.packet_sentence_index
     total_sentences = len(sentences)
-    
     if current_sentence_idx >= total_sentences:
         st.session_state.packet_sentence_index = 0
         st.session_state.packet_sentiment_history = []
         return True
-    
     cumulative_text = " ".join(sentences[:current_sentence_idx + 1])
-    
     st.markdown(f"<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Step {current_sentence_idx + 1} of {total_sentences}:</h3>", unsafe_allow_html=True)
-    
     entities_to_highlight = get_entities_to_highlight(entity, cumulative_text)
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(cumulative_text, entities_to_highlight)
-    
     st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
-    
     if st.session_state.packet_sentiment_history:
         st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your Previous Ratings:</h3>", unsafe_allow_html=True)
         for i, score in enumerate(st.session_state.packet_sentiment_history):
             st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'><strong>Step {i + 1}:</strong> {score} ({sentiment_scale[score]})</p>", unsafe_allow_html=True)
-    
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Current Rating:</h3>", unsafe_allow_html=True)
     st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Rate the sentiment you feel is <strong>directed towards</strong> the highlighted entity.</p>", unsafe_allow_html=True)
-    
     display_color = entity_color_map.get(entity, ENTITY_COLORS[0])
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
-    
     slider_key = f"packet_slider_{item_id}_{current_sentence_idx}"
-    default_value = 0
-    if st.session_state.packet_sentiment_history:
-        default_value = st.session_state.packet_sentiment_history[-1]
-    
+    if slider_key not in st.session_state:
+        st.session_state[slider_key] = 0
     score = st.slider(
-        label=f"Rate for \"{entity}\"", 
+        label=f"Rate for \"{entity}\"",
         min_value=-4,
-        max_value=4, 
-        value=default_value, 
-        format="%d", 
-        key=slider_key, 
-        label_visibility="collapsed", 
+        max_value=4,
+        value=st.session_state[slider_key],
+        format="%d",
+        key=slider_key,
+        label_visibility="collapsed",
         help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})"
     )
-    
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
-    
     col1, col2 = st.columns(2)
-    
     with col2:
         button_text = "Next Step" if current_sentence_idx < total_sentences - 1 else "Complete Question"
         if st.button(button_text, key=f"next_btn_{item_id}_{current_sentence_idx}", type="primary"):
             st.session_state.packet_sentiment_history.append(score)
-            
             if current_sentence_idx < total_sentences - 1:
                 st.session_state.packet_sentence_index += 1
                 st.rerun()
@@ -488,55 +480,49 @@ def display_packet_question(sentence_item, actual_sentence_index):
                         'packet_step': i + 1,
                         'user_sentiment_score': score,
                         'user_sentiment_label': sentiment_scale[score],
-                        'sentence_at_step': " ".join(sentences[:i + 1]), 
+                        'sentence_at_step': " ".join(sentences[:i + 1]),
                         'new_sentence_for_step': sentences[i],
                         'descriptor_for_step': sentence_item.get('descriptor', [])[i] if i < len(sentence_item.get('descriptor', [])) else '',
                         'intensity_for_step': sentence_item.get('intensity', [])[i] if i < len(sentence_item.get('intensity', [])) else '',
                         'mark': sentence_item.get('marks', [])[i] if i < len(sentence_item.get('marks', [])) else '',
                         'marks': json.dumps(sentence_item.get('marks', []))
                     }
-                    
                     st.session_state.user_responses.append(response_data)
-                    
                 st.session_state.packet_sentence_index = 0
                 st.session_state.packet_sentiment_history = []
                 return True
-    
     return False
 
 def display_regular_question(sentence_item, actual_sentence_index):
     item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
     sentences = sentence_item.get('sentences', [])
     combined_text = " ".join(sentences)
-    
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentence:</h3>", unsafe_allow_html=True)
     scorable_entities = get_scorable_entities(sentence_item)
-    
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(combined_text, scorable_entities)
-    
     st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
-    
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
     st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>For each <strong>highlighted entity</strong>, rate the sentiment you feel is <strong>directed towards them</strong> in the sentence.</p>", unsafe_allow_html=True)
-
-    if item_id not in st.session_state.current_scores: 
+    if item_id not in st.session_state.current_scores:
         st.session_state.current_scores[item_id] = {}
-
     for entity in scorable_entities:
         display_color = entity_color_map.get(entity, "#000000")
-
         slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
-        current_value = st.session_state.current_scores[item_id].get(entity, 0)
-
-        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
-
-        score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=current_value, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
-
+        if slider_key not in st.session_state:
+            st.session_state[slider_key] = st.session_state.current_scores[item_id].get(entity, 0)
+        score = st.slider(
+            label=f"Rate for \"{entity}\"",
+            min_value=-4,
+            max_value=4,
+            value=st.session_state[slider_key],
+            format="%d",
+            key=slider_key,
+            label_visibility="collapsed",
+            help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})"
+        )
         st.session_state.current_scores[item_id][entity] = score
-        
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
         st.markdown("---")
-        
     if st.button("Next Question", key=f"next_btn_{item_id}", type="primary", use_container_width=True):
         for entity in scorable_entities:
             score_value = st.session_state.current_scores[item_id].get(entity)
@@ -563,11 +549,8 @@ def display_regular_question(sentence_item, actual_sentence_index):
                     'marks': '',
                     'mark': ''
                 }
-                
                 st.session_state.user_responses.append(response_data)
-        
         return True
-    
     return False
 
 def display_question():
@@ -600,7 +583,7 @@ def display_question():
         
     sentence_item = all_data[actual_sentence_index]
     
-    is_packet_question = sentence_item.get('type') in ['aggregate_short', 'aggregate_long']
+    is_packet_question = sentence_item.get('type') in ['aggregate_short', 'aggregate_medium', 'aggregate_long']
     
     if is_packet_question:
         question_complete = display_packet_question(sentence_item, actual_sentence_index)
