@@ -240,7 +240,7 @@ def generate_compound_association_sentences(used_names):
     j3 = _rand.choice(list(nouns[y].keys()))
     
     sentence1 = f"{n4}, {nouns[y][j1]}, {verbs[x][j2]} {n5}."
-    sentence2 = f"{n6}, {nouns[y][j3]}, did it with {n4}."
+    sentence2 = f"{n6}, {nouns[y][j3]}, did it together with {n4}."
     code_key = f"actor[[{n4}_{j1}]]+actor[[{n6}_{j3}]]->verb[[{verbs[x][j2]}_{j2}]]->target[[{n5}_N]]"
     
     out.append({
@@ -308,8 +308,8 @@ def generate_compound_belonging_sentences(used_objects):
     word3 = _rand.choice(desc[y][j1])
     word4 = _rand.choice(desc[x][j2])
     
-    sentence1 = f"Once, the {parent2} was {word3}."
-    sentence2 = f"Now, its {child2} is {word4}."
+    sentence1 = f"The {parent2} is {word3}."
+    sentence2 = f"Its {child2} is {word4}."
     code_key = f"parent[[{parent2}_{j1}]]->child[[{child2}_{j2}]]"
 
     out.append({
