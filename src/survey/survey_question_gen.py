@@ -67,17 +67,17 @@ names = [
 ]
 
 pos_nouns = {
-    "very": "a brave, kind, and brilliant person",
-    "medium": "a great person",
-    "somewhat": "a thoughtful person",
-    "slightly": "a somewhat considerate person"
+    "very": ["a brave, kind, and brilliant person", "a heroic and wonderful figure"],
+    "medium": ["a great person", "a commendable individual"],
+    "somewhat": ["a thoughtful person", "a decent individual"],
+    "slightly": ["a somewhat considerate person", "a mildly pleasant individual"]
 }
 
 neg_nouns = {
-    "very": "an utterly vile and disgusting person",
-    "medium": "an unpleasant person",
-    "somewhat": "a problematic person",
-    "slightly": "a slightly annoying person"
+    "very": ["an utterly vile and disgusting person", "a monstrous and reprehensible figure"],
+    "medium": ["an unpleasant person", "a distasteful individual"],
+    "somewhat": ["a problematic person", "a troubling individual"],
+    "slightly": ["a slightly annoying person", "a mildly irritating individual"]
 }
 
 pos_verbs = {
@@ -175,8 +175,8 @@ def generate_compound_action_sentences(used_names):
         i1 = _rand.choice(list(nouns[p[0]].keys()))
         i2 = _rand.choice(list(verbs[p[1]].keys()))
         i3 = _rand.choice(list(nouns[p[2]].keys()))
-        
-        sentence = f"{a}, {nouns[p[0]][i1]}, {verbs[p[1]][i2]} {v}, {nouns[p[2]][i3]}."
+
+        sentence = f"{a}, {_rand.choice(nouns[p[0]][i1])}, {verbs[p[1]][i2]} {v}, {_rand.choice(nouns[p[2]][i3])}."
         code_key = f"actor[[{a}_{i1}]]->verb[[{verbs[p[1]][i2]}_{i2}]]->target[[{v}_{i3}]]"
         
         out.append({
@@ -217,8 +217,8 @@ def generate_compound_association_sentences(used_names):
     i2 = _rand.choice(list(nouns[y].keys()))
 
     action = _rand.choice(neutral_actions_together)
-    
-    sentence = f"{n1}, {nouns[x][i1]}, and {n2}, {nouns[y][i2]}, often {action} together."
+
+    sentence = f"{n1}, {_rand.choice(nouns[x][i1])}, and {n2}, {_rand.choice(nouns[y][i2])}, often {action} together."
     code_key = f"actor[[{n1}_{i1}]]+actor[[{n2}_{i2}]]->verb[[{action}_neutral]]"
 
     out.append({
@@ -240,8 +240,8 @@ def generate_compound_association_sentences(used_names):
     
     j1 = _rand.choice(list(nouns[x].keys()))
     j2 = _rand.choice(list(verbs[x].keys()))
-    
-    sentence1 = f"{n4}, {nouns[x][j1]}, often hung out with {n5}, {nouns[x][j2]}."
+
+    sentence1 = f"{n4}, {_rand.choice(nouns[x][j1])}, often hung out with {n5}, {_rand.choice(nouns[x][j2])}."
     code_key = f"actor[[{n4}_{j1}]]+actor[[{n5}_{j2}]]->verb[[hung out_neutral]]"
 
     out.append({
