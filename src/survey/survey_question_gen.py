@@ -77,7 +77,7 @@ neg_nouns = {
     "very": "an utterly vile and disgusting person",
     "medium": "an unpleasant person",
     "somewhat": "a problematic person",
-    "slightly": "a nice but annoying person"
+    "slightly": "a slightly annoying person"
 }
 
 pos_verbs = {
@@ -107,6 +107,8 @@ neg_desc = {
     "somewhat": ["poor", "broken", "annoying", "flawed", "disappointing"],
     "slightly": ["unremarkable", "problematic", "bland", "mediocre", "uninspired"]
 }
+
+neutral_actions_together = ['ate', 'talked', 'worked', 'walked']
 
 # Very (1 - 0.7)
 # ___ (0.7 - 0.5)
@@ -192,7 +194,7 @@ def generate_compound_action_sentences(used_names):
 
 """
 ##### Question 1:
-**Purpose:** To check intra-sentence association
+**Purpose:** To check intra-sentence opposite direction association
 **Text or Structure:**
 "{+ entity} and {- entity} {+ action} together."
 ##### Question 2:
@@ -206,49 +208,48 @@ def generate_compound_association_sentences(used_names):
     out = []
     
     available_names = [n for n in names if n not in used_names]
-    if len(available_names) < 3:
+    if len(available_names) < 2:
         available_names = names
-    n1, n2, n3 = _rand.sample(available_names, 3)
-    used_names.update([n1, n2, n3])
+    n1, n2 = _rand.sample(available_names, 2)
+    used_names.update([n1, n2])
     
     i1 = _rand.choice(list(nouns[x].keys()))
     i2 = _rand.choice(list(nouns[y].keys()))
-    i3 = _rand.choice(list(verbs[x].keys()))
+
+    action = _rand.choice(neutral_actions_together)
     
-    sentence = f"{n1}, {nouns[x][i1]}, and {n2}, {nouns[y][i2]}, together {verbs[x][i3]} {n3}."
-    code_key = f"actor[[{n1}_{i1}]]+actor[[{n2}_{i2}]]->verb[[{verbs[x][i3]}_{i3}]]->target[[{n3}_N]]"
-    
+    sentence = f"{n1}, {nouns[x][i1]}, and {n2}, {nouns[y][i2]}, often {action} together."
+    code_key = f"actor[[{n1}_{i1}]]+actor[[{n2}_{i2}]]->verb[[{action}_neutral]]"
+
     out.append({
         "sentences": [sentence],
-        "description": "Intra-sentence association",
-        "descriptor": [x, y, x, "neutral"],
-        "intensity": [i1, i2, i3, "neutral"],
-        "entities": [n1, n2, n3],
+        "description": "Intra-sentence opposite direction association",
+        "descriptor": [x, y, "neutral"],
+        "intensity": [i1, i2, "neutral"],
+        "entities": [n1, n2],
         "code_key": code_key,
         "marks": [],
         "type": "compound_association"
     })
     
     available_names = [n for n in names if n not in used_names]
-    if len(available_names) < 3:
-        available_names = [n for n in names if n not in [n1, n2, n3]]
-    n4, n5, n6 = _rand.sample(available_names, 3)
-    used_names.update([n4, n5, n6])
+    if len(available_names) < 2:
+        available_names = [n for n in names if n not in [n1, n2]]
+    n4, n5 = _rand.sample(available_names, 2)
+    used_names.update([n4, n5])
     
-    j1 = _rand.choice(list(nouns[y].keys()))
+    j1 = _rand.choice(list(nouns[x].keys()))
     j2 = _rand.choice(list(verbs[x].keys()))
-    j3 = _rand.choice(list(nouns[y].keys()))
     
-    sentence1 = f"{n4}, {nouns[y][j1]}, {verbs[x][j2]} {n5}."
-    sentence2 = f"{n6}, {nouns[y][j3]}, did it together with {n4}."
-    code_key = f"actor[[{n4}_{j1}]]+actor[[{n6}_{j3}]]->verb[[{verbs[x][j2]}_{j2}]]->target[[{n5}_N]]"
-    
+    sentence1 = f"{n4}, {nouns[x][j1]}, often hung out with {n5}, {nouns[x][j2]}."
+    code_key = f"actor[[{n4}_{j1}]]+actor[[{n5}_{j2}]]->verb[[hung out_neutral]]"
+
     out.append({
-        "sentences": [sentence1, sentence2],
-        "description": "Inter-sentence association",
-        "descriptor": [y, x, y, "neutral"],
-        "intensity": [j1, j2, j3, "neutral"],
-        "entities": [n4, n5, n6],
+        "sentences": [sentence1],
+        "description": "Intra-sentence same direction association",
+        "descriptor": [x, x, "neutral"],
+        "intensity": [j1, j2, "neutral"],
+        "entities": [n4, n5],
         "code_key": code_key,
         "type": "compound_association"
     })
@@ -287,7 +288,7 @@ def generate_compound_belonging_sentences(used_objects):
 
     out.append({
         "sentences": [sentence],
-        "description": "Intra-sentence belonging",
+        "description": "Intra-sentence opposite belonging",
         "descriptor": [x, y],
         "intensity": [i1, i2],
         "code_key": code_key,
@@ -304,18 +305,17 @@ def generate_compound_belonging_sentences(used_objects):
     
     child2 = _rand.choice(parent_child[parent2])
     j1 = _rand.choice(list(desc[y].keys()))
-    j2 = _rand.choice(list(desc[x].keys()))
+    j2 = _rand.choice(list(desc[y].keys()))
     word3 = _rand.choice(desc[y][j1])
-    word4 = _rand.choice(desc[x][j2])
-    
-    sentence1 = f"The {parent2} is {word3}."
-    sentence2 = f"Its {child2} is {word4}."
+    word4 = _rand.choice(desc[y][j2])
+
+    sentence1 = f"The {parent2} is {word3}, and its {child2} is {word4}."
     code_key = f"parent[[{parent2}_{j1}]]->child[[{child2}_{j2}]]"
 
     out.append({
-        "sentences": [sentence1, sentence2],
-        "description": "Inter-sentence belonging",
-        "descriptor": [y, x],
+        "sentences": [sentence1],
+        "description": "Intra-sentence same belonging",
+        "descriptor": [y, y],
         "intensity": [j1, j2],
         "code_key": code_key,
         "entities": [parent2, child2],
@@ -371,10 +371,8 @@ def generate_aggregate_sentiment_sentences(used_objects):
     _rand.shuffle(neg_keys_all)
     positive_keys = []
     negative_keys = []
-    # Ensure no repeats within the packet, but cycle if needed
     for _ in range(num_positive):
         if len(positive_keys) == len(pos_keys_all):
-            # If more needed, reshuffle and continue, but avoid repeats within this packet
             break
         positive_keys.append(pos_keys_all[len(positive_keys)])
     for _ in range(num_negative):
@@ -382,7 +380,6 @@ def generate_aggregate_sentiment_sentences(used_objects):
             break
         negative_keys.append(neg_keys_all[len(negative_keys)])
 
-    # If more needed than available, cycle through keys but never repeat within the packet
     if len(positive_keys) < num_positive:
         needed = num_positive - len(positive_keys)
         extra = [k for k in pos_keys_all if k not in positive_keys]
@@ -399,7 +396,6 @@ def generate_aggregate_sentiment_sentences(used_objects):
     for i, p in enumerate(seq):
         if p == "positive":
             d = next(pos_iter)
-            # Avoid repeats until all unique keys are used
             while d in used_pos and len(used_pos) < len(positive_keys):
                 d = next(pos_iter)
             used_pos.add(d)
