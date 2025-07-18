@@ -9,6 +9,8 @@ import re
 from rich import print
 import matplotlib.pyplot as plt
 import math
+from sklearn.linear_model import LinearRegression
+import inspect
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -46,20 +48,13 @@ def fit(formula, X, y, bounds, remove_outliers_method):
         try:
             result = least_squares(
                 residuals,
-                x0=[2.5, 2.5, 2.5],
+                x0=np.average(bounds),
                 args=(X, y),
                 bounds=bounds,
                 loss='soft_l1',
                 f_scale=0.3
             )
             params = result.x
-            y_pred = formula(X, *params)
-            mse = mean_squared_error(y, y_pred)
-            soft_l1_loss = np.sum(np.square(y - y_pred)) / len(y)
-            print(f"Optimal Params (lambda, w, b): {np.round(params, 4)}")
-            print(f"MSE: {mse:.4f}")
-            print(f"Soft L1 Loss: {soft_l1_loss:.4f}")
-            return params
         except Exception as e:
             print(f"Could not fit model: {e}")
             return None
@@ -77,45 +72,99 @@ def fit(formula, X, y, bounds, remove_outliers_method):
                 print(f"Could not fit model: Not enough data points after outlier removal.")
                 return None
 
-            params, _ = curve_fit(formula, X_filtered, y_filtered, bounds=bounds)
-            y_pred = formula(X_filtered, *params)
-            mse = mean_squared_error(y_filtered, y_pred)
-            print(f"Optimal Params (lambda, w, b): {np.round(params, 4)}")
-            print(f"MSE: {mse:.4f}")
-            return params
+            params, _ = curve_fit(formula, X_filtered, y_filtered, p0=np.average(bounds), bounds=bounds)
         except Exception as e:
             print(f"Could not fit model: {e}")
             return None
     elif remove_outliers_method == "none":
         try:
-            params, _ = curve_fit(formula, X, y, bounds=bounds)
-            y_pred = formula(X, *params)
-            mse = mean_squared_error(y, y_pred)
-            print(f"Optimal Params (lambda, w, b): {np.round(params, 4)}")
-            print(f"MSE: {mse:.4f}")
-            return params
+            params, _ = curve_fit(formula, X, y, p0=np.average(bounds), bounds=bounds)
         except Exception as e:
             print(f"Could not fit model: {e}")
             return None
-    return None
+    y_pred = formula(X, *params)
+    mse = mean_squared_error(y, y_pred)
+    soft_l1_loss = np.sum(np.square(y - y_pred)) / len(y)
+    r2_loss = 1 - (np.sum((y - y_pred) ** 2) / np.sum((y - np.mean(y)) ** 2))
+    return {
+        'params': params,
+        'mse': mse,
+        'soft_l1_loss': soft_l1_loss,
+        'r2_loss': r2_loss
+    }
+
+def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    theoretical_intensity_map = {'very': 0.85, 'medium': 0.6, 'somewhat': 0.4, 'slightly': 0.2, 'neutral': 0.0}
+    polarity_map = {'positive': 1, 'negative': -1, 'neutral': 0}
+
+    def get_stimulus_sentiment(row):
+        try:
+            descriptor = ast.literal_eval(row['descriptor'])[0]
+            intensity = ast.literal_eval(row['intensity'])[0]
+            return polarity_map.get(descriptor, 0) * theoretical_intensity_map.get(intensity, 0)
+        except (ValueError, SyntaxError, IndexError):
+            return 0.0
+
+    reference_df = df[df['packet_step'] == 1].copy()
+    
+    reference_df['ground_truth_stimulus_sentiment'] = reference_df.apply(get_stimulus_sentiment, axis=1)
+
+    user_final_normalizers = {}
+
+    for seed in df['seed'].unique():
+        user_ref_data = reference_df[reference_df['seed'] == seed]
+        
+        if len(user_ref_data) >= 2:
+            X = user_ref_data[['user_sentiment_score']]
+            y = user_ref_data['ground_truth_stimulus_sentiment']
+            model = LinearRegression().fit(X, y)
+            m, c = model.coef_[0], model.intercept_
+            user_final_normalizers[seed] = (m, c)
+        else:
+            user_final_normalizers[seed] = (1/4, 0)
+            
+    def apply_final_normalization(row):
+        m, c = user_final_normalizers.get(row['seed'])
+        return m * row['user_sentiment_score'] + c
+
+    df['user_normalized_sentiment_scores'] = df.apply(apply_final_normalization, axis=1)
+
+    df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(associate_sentiment_integer)
+    
+    return df, user_final_normalizers
+
+def fit_compound(formula, X, y, remove_outliers_method):
+    sig = inspect.signature(formula)
+    params = sig.parameters
+    num_params = len(params)
+
+    bounds = ([-5] * num_params, [5] * num_params)
+
+    return fit(formula, X, y, bounds, remove_outliers_method)
 
 
-def create_action_df():
+df, _ = add_score_interpretations(df)
+
+
+def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
     action_df = df[df['item_type'] == 'compound_action'].copy()
     
     cols_to_ignore = ['submission_timestamp_utc']
     subset_cols = [col for col in action_df.columns if col not in cols_to_ignore]
     action_df.drop_duplicates(subset=subset_cols, inplace=True)
-        
-    action_df.drop_duplicates(inplace=True)
-
+    
     action_data = []
 
     for _, row in action_df.iterrows():
         entities = ast.literal_eval(row['all_entities'])
         seed = row['seed']
-        s_user_actor = associate_sentiment_integer(action_df[(action_df['seed'] == seed) & (action_df['entity'] == entities[0])]['user_sentiment_score'])
-        s_user_target = associate_sentiment_integer(action_df[(action_df['seed'] == seed) & (action_df['entity'] == entities[1])]['user_sentiment_score'])
+        s_user_actor = action_df[(action_df['seed'] == seed) & (action_df['entity'] == entities[0])][score_key]
+        s_user_target = action_df[(action_df['seed'] == seed) & (action_df['entity'] == entities[1])][score_key]
+
+        if isinstance(s_user_actor, pd.Series):
+            s_user_actor = s_user_actor.iloc[0] if not s_user_actor.empty else None
+        if isinstance(s_user_target, pd.Series):
+            s_user_target = s_user_target.iloc[0] if not s_user_target.empty else None
 
         descriptor = ast.literal_eval(row['descriptor'])
         intensity = ast.literal_eval(row['intensity'])
@@ -123,7 +172,7 @@ def create_action_df():
         base_sentiments = []
         for desc, intens in zip(descriptor, intensity):
             base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
-        
+
         action_data.append({
             's_init_actor': base_sentiments[0],
             's_init_action': base_sentiments[1],
@@ -137,33 +186,26 @@ def create_action_df():
 
     return action_df
 
-def actor_formula_v1(X, lambda_actor, w, b):
-    s_init_actor, driver = X
-    s_new = lambda_actor * s_init_actor + (1 - lambda_actor) * w * driver + b
-    return np.tanh(s_new)
-
-def actor_formula_v2(X, w_actor, w_driver, b):
-    s_init_actor, driver = X
-    s_new = w_actor * s_init_actor + w_driver * driver + b
-    return np.tanh(s_new)
-
-
-def create_association_df():
+def create_association_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
     association_df = df[df['item_type'] == 'compound_association'].copy()
     
     cols_to_ignore = ['submission_timestamp_utc']
     subset_cols = [col for col in association_df.columns if col not in cols_to_ignore]
     association_df.drop_duplicates(subset=subset_cols, inplace=True)
     
-    association_df.drop_duplicates(inplace=True)
-
     association_data = []
 
     for _, row in association_df.iterrows():
         entities = ast.literal_eval(row['all_entities'])
         seed = row['seed']
-        s_user_entity1 = associate_sentiment_integer(association_df[(association_df['seed'] == seed) & (association_df['entity'] == entities[0])]['user_sentiment_score'])
-        s_user_entity2 = associate_sentiment_integer(association_df[(association_df['seed'] == seed) & (association_df['entity'] == entities[1])]['user_sentiment_score'])
+        s_user_entity = association_df[(association_df['seed'] == seed) & (association_df['entity'] == entities[0])][score_key]
+        s_user_other = association_df[(association_df['seed'] == seed) & (association_df['entity'] == entities[1])][score_key]
+
+        if isinstance(s_user_entity, pd.Series):
+            s_user_entity = s_user_entity.iloc[0] if not s_user_entity.empty else None
+        if isinstance(s_user_other, pd.Series):
+            s_user_other = s_user_other.iloc[0] if not s_user_other.empty else None
+
 
         descriptor = ast.literal_eval(row['descriptor'])
         intensity = ast.literal_eval(row['intensity'])
@@ -173,14 +215,95 @@ def create_association_df():
             base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
         
         association_data.append({
-            's_init_entity1': base_sentiments[0],
-            's_init_association': base_sentiments[1],
-            's_init_entity2': base_sentiments[2],
-            's_user_entity1': s_user_entity1,
-            's_user_entity2': s_user_entity2
+            's_init_entity': base_sentiments[0],
+            's_init_other': base_sentiments[1],
+            's_user_entity': s_user_entity,
+            's_user_other': s_user_other
+        })
+        association_data.append({
+            's_init_entity': base_sentiments[1],
+            's_init_other': base_sentiments[0],
+            's_user_entity': s_user_other,
+            's_user_other': s_user_entity
         })
     
     association_df = pd.DataFrame(association_data)
     association_df.drop_duplicates(inplace=True)
 
     return association_df
+
+def create_belonging_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
+    belonging_df = df[df['item_type'] == 'compound_belonging'].copy()
+
+    cols_to_ignore = ['submission_timestamp_utc']
+    subset_cols = [col for col in belonging_df.columns if col not in cols_to_ignore]
+    belonging_df.drop_duplicates(subset=subset_cols, inplace=True)
+
+    belonging_data = []
+
+    for _, row in belonging_df.iterrows():
+        entities = ast.literal_eval(row['all_entities'])
+
+        seed = row['seed']
+        s_user_entity = belonging_df[(belonging_df['seed'] == seed) & (belonging_df['entity'] == entities[0])][score_key]
+        s_user_other = belonging_df[(belonging_df['seed'] == seed) & (belonging_df['entity'] == entities[1])][score_key]
+
+        if isinstance(s_user_entity, pd.Series):
+            s_user_entity = s_user_entity.iloc[0] if not s_user_entity.empty else None
+        if isinstance(s_user_other, pd.Series):
+            s_user_other = s_user_other.iloc[0] if not s_user_other.empty else None
+
+        descriptor = ast.literal_eval(row['descriptor'])
+        intensity = ast.literal_eval(row['intensity'])
+
+        base_sentiments = []
+        for desc, intens in zip(descriptor, intensity):
+            base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
+        
+        belonging_data.append({
+            's_init_parent': base_sentiments[0],
+            's_init_child': base_sentiments[1],
+            's_user_parent': s_user_entity,
+            's_user_child': s_user_other
+        })
+
+    belonging_df = pd.DataFrame(belonging_data)
+    belonging_df.drop_duplicates(inplace=True)
+
+    return belonging_df
+
+def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
+    aggregate_df = df[df['item_type'].str.contains('aggregate')].copy()
+
+    cols_to_ignore = ['submission_timestamp_utc']
+    subset_cols = [col for col in aggregate_df.columns if col not in cols_to_ignore]
+    aggregate_df.drop_duplicates(subset=subset_cols, inplace=True)
+
+    aggregate_data = []
+
+    for _, group in aggregate_df.groupby("item_id"):
+
+        descriptor = ast.literal_eval(group.iloc[0]['descriptor'])
+        intensity = ast.literal_eval(group.iloc[0]['intensity'])
+        base_sentiments = []
+        for desc, intens in zip(descriptor, intensity):
+            base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
+        for i, row in enumerate(group.sort_values("packet_step").iterrows()):
+            row = row[1]
+            if i == 0:
+                continue
+            aggregate_data.append({
+                's_inits': base_sentiments[:i+1],
+                's_user': row[score_key],
+            })
+    
+    aggregate_df = pd.DataFrame(aggregate_data)
+
+    return aggregate_df
+
+
+print(create_action_df('user_normalized_sentiment_scores'))
+print(create_association_df('user_normalized_sentiment_scores'))
+print(create_belonging_df('user_normalized_sentiment_scores'))
+print(create_aggregate_df('user_normalized_sentiment_scores'))
+
