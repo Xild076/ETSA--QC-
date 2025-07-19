@@ -93,13 +93,32 @@ def initialize_session_state():
     if 'seed' not in st.session_state: st.session_state.seed = None
     if 'packet_sentence_index' not in st.session_state: st.session_state.packet_sentence_index = 0
     if 'packet_sentiment_history' not in st.session_state: st.session_state.packet_sentiment_history = []
+    if 'attention_check_shown' not in st.session_state: st.session_state.attention_check_shown = False
+    if 'attention_check_passed' not in st.session_state: st.session_state.attention_check_passed = True
+def display_attention_check():
+    st.markdown("""
+    <div class=\"academic-paper\">
+    <h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Attention Check</h3>
+    <p style='font-size: 17px;'>
+    To ensure data quality, please select <b>Somewhat Positive (2)</b> as your answer for this question.
+    </p>
+    </div>
+    """, unsafe_allow_html=True)
+    score = st.slider(label="Please select Somewhat Positive (2)", min_value=-4, max_value=4, value=0, format="%d", key="attention_check_slider", label_visibility="collapsed")
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+    if st.button("Next", key="attention_check_next_btn", type="primary", use_container_width=True):
+        st.session_state.attention_check_shown = True
+        st.session_state.current_question_index += 1
+        st.session_state.attention_check_passed = (score == 2)
+        st.rerun()
+    return False
 
 def display_consent_form():
     st.title("Research Survey Consent Form")
     st.markdown("""
 <div class="academic-paper">
 
-Estimated time to complete: 10 minutes
+Estimated time to complete: 10-15 minutes
 
 We thank you for participating in a research study titled "Quantum Criticism—Entity-Targeted Sentiment Analysis". We will describe this study to you and answer any of your questions. This study is being led by Harry Yin, a research student currently associated with MAGICS Lab at USFCA. The Faculty Advisor for this study is Associate Professor David Guy Brizan, Department of CS at USFCA.
 
@@ -111,7 +130,7 @@ The purpose of this research is to collect ground truth data on peoples' emotion
 
 **What we will ask you to do:**
 
-We will ask you to, given a text, to read the text and give each highlighted entity/character within the text a rating on a 9-point scale from -4 (Extremely Negative) to 4 (Extremely Positive) depending on how you feel about the entity/character. There will be 16 questions in the survey and should take at most 10 minutes to complete.
+We will ask you to, given a text, to read the text and give each highlighted entity/character within the text a rating on a 9-point scale from -4 (Extremely Negative) to 4 (Extremely Positive) depending on how you feel about the entity/character. There will be 30 questions in the survey and should take at most 10 minutes to complete.
 
     """, unsafe_allow_html=True)
 
@@ -315,15 +334,26 @@ def display_question():
     all_data = st.session_state.sentences_data + st.session_state.packet_data
     total_questions = len(st.session_state.shuffled_indices) if st.session_state.shuffled_indices else 0
 
+    midpoint = total_questions // 2 if total_questions > 0 else 0
+    is_attention_check = (
+        not st.session_state.attention_check_shown and
+        current_q_idx == midpoint and
+        total_questions > 3
+    )
+
+    progress_total = total_questions + (1 if not st.session_state.attention_check_shown else 0)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50; text-align: center; margin-bottom: 10px;'><strong>Question {current_q_idx + 1} of {progress_total}</strong></p>", unsafe_allow_html=True)
+    st.progress((current_q_idx + 1) / progress_total if progress_total > 0 else 0)
+
+    if is_attention_check:
+        display_attention_check()
+        return
+
     if total_questions == 0:
         st.error("No questions loaded. Please restart.")
         st.session_state.survey_complete = True
         st.rerun()
         return
-
-    progress_value = (current_q_idx + 1) / total_questions if total_questions > 0 else 0
-    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50; text-align: center; margin-bottom: 10px;'><strong>Question {current_q_idx + 1} of {total_questions}</strong></p>", unsafe_allow_html=True)
-    st.progress(progress_value)
 
     if not (0 <= current_q_idx < total_questions):
         st.error("Question index out of bounds.")
@@ -424,13 +454,18 @@ You can take a look at all the data we've collected so far at this Google Sheet 
 
 You can take a look at the project page here: [Project Page](https://github.com/Xild076/ETSA--QC-)
 
-    </div>
+</div>
     """, unsafe_allow_html=True)
     if st.session_state.user_responses:
         df = pd.DataFrame(st.session_state.user_responses)
         df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         df['submitted_by_user_login'] = "anonymous"
-        if GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE" and GOOGLE_SHEET_ID and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
+        if (
+            st.session_state.get('attention_check_passed', True)
+            and GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
+            and GOOGLE_SHEET_ID
+            and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
+        ):
             export_to_google_sheets(df)
         elif GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
             st.warning("Automatic Google Sheet Export is not configured by the admin (GOOGLE_SHEET_ID is missing or is a placeholder). Your data has not been automatically uploaded.")

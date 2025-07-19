@@ -206,17 +206,17 @@ def generate_compound_action_sentences(used_names):
 def generate_compound_association_sentences(used_names):
     x, y = _rand.sample(["positive", "negative"], 2)
     out = []
-    
+
     available_names = [n for n in names if n not in used_names]
     if len(available_names) < 2:
         available_names = names
     n1, n2 = _rand.sample(available_names, 2)
     used_names.update([n1, n2])
-    
+
     i1 = _rand.choice(list(nouns[x].keys()))
     i2 = _rand.choice(list(nouns[y].keys()))
-
-    action = _rand.choice(neutral_actions_together)
+    _rand.shuffle(neutral_actions_together)
+    action = neutral_actions_together.pop()
 
     sentence = f"{n1}, {_rand.choice(nouns[x][i1])}, and {n2}, {_rand.choice(nouns[y][i2])}, often {action} together."
     code_key = f"actor[[{n1}_{i1}]]+actor[[{n2}_{i2}]]->verb[[{action}_neutral]]"
@@ -231,29 +231,74 @@ def generate_compound_association_sentences(used_names):
         "marks": [],
         "type": "compound_association"
     })
-    
+
     available_names = [n for n in names if n not in used_names]
     if len(available_names) < 2:
         available_names = [n for n in names if n not in [n1, n2]]
-    n4, n5 = _rand.sample(available_names, 2)
-    used_names.update([n4, n5])
-    
+    n3, n4 = _rand.sample(available_names, 2)
+    used_names.update([n3, n4])
+
     j1 = _rand.choice(list(nouns[x].keys()))
     j2 = _rand.choice(list(verbs[x].keys()))
 
-    sentence1 = f"{n4}, {_rand.choice(nouns[x][j1])}, often hung out with {n5}, {_rand.choice(nouns[x][j2])}."
-    code_key = f"actor[[{n4}_{j1}]]+actor[[{n5}_{j2}]]->verb[[hung out_neutral]]"
+    sentence1 = f"{n3}, {_rand.choice(nouns[x][j1])}, often hung out with {n4}, {_rand.choice(nouns[x][j2])}."
+    code_key = f"actor[[{n3}_{j1}]]+actor[[{n4}_{j2}]]->verb[[hung out_neutral]]"
 
     out.append({
         "sentences": [sentence1],
         "description": "Intra-sentence same direction association",
         "descriptor": [x, x, "neutral"],
         "intensity": [j1, j2, "neutral"],
-        "entities": [n4, n5],
+        "entities": [n3, n4],
         "code_key": code_key,
         "type": "compound_association"
     })
-    
+
+    available_names = [n for n in names if n not in used_names]
+    if len(available_names) < 2:
+        available_names = names
+    n5, n6 = _rand.sample(available_names, 2)
+    used_names.update([n5, n6])
+
+    k1 = _rand.choice(list(nouns[y].keys()))
+    k2 = _rand.choice(list(verbs[y].keys()))
+    action2 = neutral_actions_together.pop()
+
+    sentence2 = f"{n5}, {_rand.choice(nouns[y][k1])}, and {n6}, {_rand.choice(verbs[y][k2])}, {action2} together every weekend."
+    code_key = f"actor[[{n5}_{k1}]]+actor[[{n6}_{k2}]]->verb[[{action2}_neutral]]"
+
+    out.append({
+        "sentences": [sentence2],
+        "description": "Intra-sentence same polarity association (second valence set)",
+        "descriptor": [y, y, "neutral"],
+        "intensity": [k1, k2, "neutral"],
+        "entities": [n5, n6],
+        "code_key": code_key,
+        "type": "compound_association"
+    })
+
+    available_names = [n for n in names if n not in used_names]
+    if len(available_names) < 2:
+        available_names = names
+    n7, n8 = _rand.sample(available_names, 2)
+    used_names.update([n7, n8])
+
+    l1 = _rand.choice(list(nouns[y].keys()))
+    l2 = _rand.choice(list(nouns[x].keys()))
+
+    sentence3 = f"{n7}, {_rand.choice(nouns[y][l1])}, partnered with {n8}, {_rand.choice(nouns[x][l2])} all the time."
+    code_key = f"actor[[{n7}_{l1}]]+actor[[{n8}_{l2}]]->verb[[partnered with_neutral]]"
+
+    out.append({
+        "sentences": [sentence3],
+        "description": "Intra-sentence opposite polarity association (second valence set)",
+        "descriptor": [y, x, "neutral"],
+        "intensity": [l1, l2, "neutral"],
+        "entities": [n7, n8],
+        "code_key": code_key,
+        "type": "compound_association"
+    })
+
     return out
 
 """
@@ -283,11 +328,11 @@ def generate_compound_belonging_sentences(used_objects):
     word1 = _rand.choice(desc[x][i1])
     word2 = _rand.choice(desc[y][i2])
     
-    sentence = f"The {parent}'s {child} was {word2}, though the {parent} itself was {word1}."
+    sentence1 = f"The {parent}'s {child} was {word2}, though the {parent} itself was {word1}."
     code_key = f"parent[[{parent}_{i1}]]->child[[{child}_{i2}]]"
 
     out.append({
-        "sentences": [sentence],
+        "sentences": [sentence1],
         "description": "Intra-sentence opposite belonging",
         "descriptor": [x, y],
         "intensity": [i1, i2],
@@ -309,16 +354,66 @@ def generate_compound_belonging_sentences(used_objects):
     word3 = _rand.choice(desc[y][j1])
     word4 = _rand.choice(desc[y][j2])
 
-    sentence1 = f"The {parent2} is {word3}, and its {child2} is {word4}."
+    sentence2 = f"The {parent2} is {word3}, and its {child2} is {word4}."
     code_key = f"parent[[{parent2}_{j1}]]->child[[{child2}_{j2}]]"
 
     out.append({
-        "sentences": [sentence1],
+        "sentences": [sentence2],
         "description": "Intra-sentence same belonging",
         "descriptor": [y, y],
         "intensity": [j1, j2],
         "code_key": code_key,
         "entities": [parent2, child2],
+        "type": "compound_belonging"
+    })
+
+    available_objects = [obj for obj in list(parent_child.keys()) if obj not in used_objects]
+    if len(available_objects) < 1:
+        available_objects = [obj for obj in list(parent_child.keys()) if obj != parent]
+    parent3 = _rand.choice(available_objects)
+    used_objects.add(parent3)
+
+    child3 = _rand.choice(parent_child[parent3])
+    k1 = _rand.choice(list(desc[y].keys()))
+    k2 = _rand.choice(list(desc[x].keys()))
+    word5 = _rand.choice(desc[y][k1])
+    word6 = _rand.choice(desc[x][k2])
+
+    sentence3 = f"The {child3} was {word6}, but the {parent3} was {word5}."
+    code_key = f"parent[[{parent3}_{k1}]]->child[[{child3}_{k2}]]"
+
+    out.append({
+        "sentences": [sentence3],
+        "description": "Intra-sentence opposite belonging (second valence set)",
+        "descriptor": [y, x],
+        "intensity": [k1, k2],
+        "code_key": code_key,
+        "entities": [parent3, child3],
+        "type": "compound_belonging"
+    })
+
+    available_objects = [obj for obj in list(parent_child.keys()) if obj not in used_objects]
+    if len(available_objects) < 1:
+        available_objects = [obj for obj in list(parent_child.keys()) if obj != parent]
+    parent4 = _rand.choice(available_objects)
+    used_objects.add(parent4)
+
+    child4 = _rand.choice(parent_child[parent4])
+    l1 = _rand.choice(list(desc[y].keys()))
+    l2 = _rand.choice(list(desc[y].keys()))
+    word7 = _rand.choice(desc[x][l1])
+    word8 = _rand.choice(desc[x][l2])
+
+    sentence4 = f"The {parent4} is {word7}, and its {child4} is {word8}."
+    code_key = f"parent[[{parent4}_{l1}]]->child[[{child4}_{l2}]]"
+
+    out.append({
+        "sentences": [sentence4],
+        "description": "Intra-sentence same belonging (second valence set)",
+        "descriptor": [x, x],
+        "intensity": [l1, l2],
+        "code_key": code_key,
+        "entities": [parent4, child4],
         "type": "compound_belonging"
     })
     
