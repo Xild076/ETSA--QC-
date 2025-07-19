@@ -792,7 +792,7 @@ def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
 
     return {
         'params': result.x,
-        'loss': result.fun,
+        'loss': result.fun / len(aggregate_df),
         'success': result.success
     }
 
