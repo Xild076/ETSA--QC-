@@ -261,10 +261,10 @@ def generate_compound_association_sentences(used_names):
     used_names.update([n5, n6])
 
     k1 = _rand.choice(list(nouns[y].keys()))
-    k2 = _rand.choice(list(verbs[y].keys()))
+    k2 = _rand.choice(list(nouns[y].keys()))
     action2 = neutral_actions_together.pop()
 
-    sentence2 = f"{n5}, {_rand.choice(nouns[y][k1])}, and {n6}, {_rand.choice(verbs[y][k2])}, {action2} together every weekend."
+    sentence2 = f"{n5}, {_rand.choice(nouns[y][k1])}, and {n6}, {_rand.choice(nouns[y][k2])}, {action2} together every weekend."
     code_key = f"actor[[{n5}_{k1}]]+actor[[{n6}_{k2}]]->verb[[{action2}_neutral]]"
 
     out.append({
