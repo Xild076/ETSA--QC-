@@ -604,7 +604,7 @@ def generate_aggregate_sentiment_sentences(used_objects):
     used_objects.add(subj3)
 
     x3, y3 = _rand.sample(["positive", "negative"], 2)
-    seq3 = [x3, x3, y3, y3, x3, y3, y3, y3, x3]
+    seq3 = [x3, x3, x3, y3, y3, y3, y3, y3, x3]
     temporal_marker_sets_9 = [
         ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Finally"],
         ["Initially", "Then", "After that", "Later", "Next", "Subsequently", "Eventually", "Finally", "Now"],

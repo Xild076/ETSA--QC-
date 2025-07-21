@@ -283,10 +283,18 @@ def display_packet_question(sentence_item, actual_sentence_index):
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
     score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col2:
+    col_left, col_center, col_right = st.columns([1,2,1])
+    confirm_key = f"confirm_packet_{item_id}_{current_sentence_idx}"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+    with col_center:
         button_text = "Next Step" if current_sentence_idx < total_sentences - 1 else "Complete Question"
-        if st.button(button_text, key=f"next_btn_{item_id}_{current_sentence_idx}", type="primary"):
+        if st.button(button_text, key=f"next_btn_{item_id}_{current_sentence_idx}", type="primary", use_container_width=True):
+            if score == 0 and not st.session_state[confirm_key]:
+                st.session_state[confirm_key] = True
+                st.warning("Are you sure you want to continue without changing the default value? Click again to confirm.")
+                st.stop()
+            st.session_state[confirm_key] = False
             st.session_state.packet_sentiment_history.append(score)
             if current_sentence_idx < total_sentences - 1:
                 st.session_state.packet_sentence_index += 1
@@ -311,15 +319,26 @@ def display_regular_question(sentence_item, actual_sentence_index):
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
     st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>For each <strong>highlighted entity</strong>, rate the sentiment you feel is <strong>directed towards them</strong> in the sentence.</p>", unsafe_allow_html=True)
 
+    confirm_key = f"confirm_regular_{item_id}"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+    slider_scores = {}
     for entity in scorable_entities:
         display_color = entity_color_map.get(entity, "#000000")
         slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
         score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
+        slider_scores[entity] = score
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
         st.markdown("---")
 
     if st.button("Next Question", key=f"next_btn_{item_id}", type="primary", use_container_width=True):
+        all_default = all(s == 0 for s in slider_scores.values())
+        if all_default and not st.session_state[confirm_key]:
+            st.session_state[confirm_key] = True
+            st.warning("Are you sure you want to continue without changing the default value(s)? Click again to confirm.")
+            st.stop()
+        st.session_state[confirm_key] = False
         for entity in scorable_entities:
             slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
             score_value = st.session_state[slider_key]
