@@ -215,6 +215,8 @@ def generate_compound_association_sentences(used_names):
 
     i1 = _rand.choice(list(nouns[x].keys()))
     i2 = _rand.choice(list(nouns[y].keys()))
+    if not neutral_actions_together:
+        neutral_actions_together.extend(['ate', 'talked', 'worked', 'walked'])
     _rand.shuffle(neutral_actions_together)
     action = neutral_actions_together.pop()
 
@@ -262,6 +264,8 @@ def generate_compound_association_sentences(used_names):
 
     k1 = _rand.choice(list(nouns[y].keys()))
     k2 = _rand.choice(list(nouns[y].keys()))
+    if not neutral_actions_together:
+        neutral_actions_together.extend(['ate', 'talked', 'worked', 'walked'])
     action2 = neutral_actions_together.pop()
 
     sentence2 = f"{n5}, {_rand.choice(nouns[y][k1])}, and {n6}, {_rand.choice(nouns[y][k2])}, {action2} together every weekend."
