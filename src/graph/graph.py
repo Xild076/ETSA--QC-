@@ -1,227 +1,147 @@
+from typing import Callable, List
+from enum import Enum
 import networkx as nx
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Button
-import mplcursors
-from enum import Enum
-from dataclasses import dataclass
-from typing import Dict, List
-import spacy
-import afinn
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-nlp = spacy.load("en_core_web_sm")
-_analyzer = SentimentIntensityAnalyzer()
-_afinn = afinn.Afinn()
 
-def _tokenize_with_word(text):
-    return [token.text for token in nlp(text)]
+class SentimentAnalyzerSystem:
+    def __init__(self):
+        pass
 
-def normalized_afinn_score(text):
-    scores = [_afinn.score(w) for w in _tokenize_with_word(text)]
-    relevant = [s for s in scores if s != 0]
-    return sum(relevant) / len(relevant) / 5.0 if relevant else 0.0
+    def analyze_sentiment(self, text):
+        raise NotImplementedError("This method should be overridden by subclasses")
 
-def analyze_sentiment(text):
-    return (_analyzer.polarity_scores(text)['compound'] + normalized_afinn_score(text)) / 2 if text else 0.0
+class VADERSentimentAnalyzer(SentimentAnalyzerSystem):
+    def __init__(self):
+        self.analyzer = SentimentIntensityAnalyzer()
 
-class RelationshipType(Enum):
+    def analyze_sentiment(self, text):
+        return self.analyzer.polarity_scores(text)['compound'] if text else 0.0
+
+class EntityRole(Enum):
+    ACTOR = "actor"
+    TARGET = "target"
+    PARENT = "parent"
+    CHILD = "child"
+    ASSOCIATE = "associate"
+
+class RelationType(Enum):
+    TEMPORAL = "temporal"
+    ACTION = "action"
+    BELONGING = "belonging"
     ASSOCIATION = "association"
-    BELONGING   = "belonging"
-    ACTION      = "action"
 
-@dataclass
-class Term:
-    text: str
-    token_idx_is: int
-    token_idx_ft: int
-
-@dataclass
-class Aspect:
-    aspect_id: int
-    label: str
-    references: Dict[int, List[Term]]
-
-@dataclass
-class Relationship:
-    relationship_id: int
-    source: int
-    target: int
-    type: RelationshipType
-    sentence_idx: int
-    term_text: str
-    idx_ia: int
-    idx_ft: int
-
-class SentimentPropertyGraph:
-    def __init__(self, text):
-        self.G = nx.DiGraph()
+class RelationGraph:
+    def __init__(self, text="", sentiment_analyzer_system=None):
+        self.graph = nx.Graph()
         self.text = text
-        self.sentences = [s.text for s in nlp(text).sents]
-        self.aspects: Dict[int, Aspect] = {}
-        self.relationships: Dict[int, Relationship] = {}
-        self.sentences_data = {i: {"aspects": [], "terms": [], "relationships": []}
-                               for i in range(len(self.sentences))}
-        self.aspect_id_counter = 0
-        self.relationship_id_counter = 0
+        self.sentiment_analyzer_system = sentiment_analyzer_system
+        self.entity_ids = set()
+        self.aggregate_sentiments = {}
+        if self.sentiment_analyzer_system is None:
+            self.sentiment_analyzer_system = VADERSentimentAnalyzer()
 
-    def add_aspect(self, refs_dict: Dict[int, List[Dict]], label=None):
-        self.aspect_id_counter += 1
-        aid = self.aspect_id_counter
-        refs = {}
-        for i in range(len(self.sentences)):
-            terms = [Term(r["text"], r["token_idx_is"], r["token_idx_ft"])
-                     for r in refs_dict.get(i, [])]
-            refs[i] = terms
-            if terms:
-                self.sentences_data[i]["aspects"].append(aid)
-                self.sentences_data[i]["terms"].extend(terms)
-        
-        default_label_text = ""
-        first_sentence_refs = refs_dict.get(0)
-        if first_sentence_refs and len(first_sentence_refs) > 0 and isinstance(first_sentence_refs[0], dict):
-            default_label_text = first_sentence_refs[0].get("text", "")
-        
-        lbl = label or default_label_text or f"Aspect_{aid}"
-        self.aspects[aid] = Aspect(aid, lbl, refs)
-        self.G.add_node(aid, label=lbl, history=[], sentiment=0.0)
+    def add_entity_node(self, id:int, head:str, modifier:List[str], entity_role:EntityRole, sentence_layer:int):
+        self.entity_ids.add(id)
+        self.graph.add_node(f"{id}_{sentence_layer}", head=head, modifier=modifier, text=self.text, entity_role=entity_role, sentence_layer=sentence_layer)
+        self.graph.nodes[f"{id}_{sentence_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
 
-    def add_aspect_term(self, aspect_id, sentence_idx, term_text, idx_ia, idx_ft):
-        t = Term(term_text, idx_ia, idx_ft)
-        self.aspects[aspect_id].references[sentence_idx].append(t)
-        self.sentences_data[sentence_idx]["aspects"].append(aspect_id)
-        self.sentences_data[sentence_idx]["terms"].append(t)
+    def add_temporal_edge(self, entity_id:int):
+        if entity_id not in self.entity_ids:
+            raise ValueError(f"Entity ID {entity_id} not found in the graph.")
+        layers = []
+        for node in self.graph.nodes:
+            id_int = int(str(node).split('_')[0])
+            sentence_layer = int(str(node).split('_')[1])
+            if id_int == entity_id:
+                layers.append(sentence_layer)
+        layers = sorted(layers)
+        for i in range(len(layers) - 1):
+            self.graph.add_edge(f"{entity_id}_{layers[i]}", f"{entity_id}_{layers[i + 1]}", relation=RelationType.TEMPORAL)
+    
+    def add_action_edge(self, actor_id:int, target_id:int, sentence_layer:int, head:str, modifier:List[str]):
+        if actor_id not in self.entity_ids or target_id not in self.entity_ids:
+            raise ValueError(f"Actor ID {actor_id} or Target ID {target_id} not found in the graph.")
+        self.graph.add_edge(f"{actor_id}_{sentence_layer}", f"{target_id}_{sentence_layer}", 
+                            actor=f"{actor_id}_{sentence_layer}", target=f"{target_id}_{sentence_layer}",
+                            relation=RelationType.ACTION, head=head, modifier=modifier)
+        self.graph.nodes[f"{actor_id}_{sentence_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
 
-    def add_relationship(self, source_id, target_id, rel_type,
-                         sentence_idx, term_text, idx_ia, idx_ft):
-        self.relationship_id_counter += 1
-        rid = self.relationship_id_counter
-        r = Relationship(rid, source_id, target_id, rel_type,
-                         sentence_idx, term_text, idx_ia, idx_ft)
-        self.relationships[rid] = r
-        self.sentences_data[sentence_idx]["relationships"].append(r)
-        self.G.add_edge(source_id, target_id, relationship=r, type=rel_type)
+    def add_belonging_edge(self, parent_id:int, child_id:int, sentence_layer:int):
+        if parent_id not in self.entity_ids or child_id not in self.entity_ids:
+            raise ValueError(f"Parent ID {parent_id} or Child ID {child_id} not found in the graph.")
+        self.graph.add_edge(f"{parent_id}_{sentence_layer}", f"{child_id}_{sentence_layer}", 
+                            parent=f"{parent_id}_{sentence_layer}", child=f"{child_id}_{sentence_layer}",
+                            relation=RelationType.BELONGING)
 
-    def _merge_adjacent_terms(self, terms: List[Term]):
-        sorted_terms = sorted(terms, key=lambda t: t.token_idx_is)
-        merged = []
-        if not sorted_terms:
-            return merged
-        start = sorted_terms[0].token_idx_is
-        end   = sorted_terms[0].token_idx_ft
-        texts = [sorted_terms[0].text]
-        for t in sorted_terms[1:]:
-            if t.token_idx_is <= end + 1:
-                end = max(end, t.token_idx_ft)
-                texts.append(t.text)
-            else:
-                merged.append({"text":" ".join(texts),"token_idx_is":start,"token_idx_ft":end})
-                start, end, texts = t.token_idx_is, t.token_idx_ft, [t.text]
-        merged.append({"text":" ".join(texts),"token_idx_is":start,"token_idx_ft":end})
-        return merged
+    def add_association_edge(self, entity1_id:int, entity2_id:int, sentence_layer:int):
+        if entity1_id not in self.entity_ids or entity2_id not in self.entity_ids:
+            raise ValueError(f"Entity1 ID {entity1_id} or Entity2 ID {entity2_id} not found in the graph.")
+        self.graph.add_edge(f"{entity1_id}_{sentence_layer}", f"{entity2_id}_{sentence_layer}", 
+                            entity1=f"{entity1_id}_{sentence_layer}", entity2=f"{entity2_id}_{sentence_layer}",
+                            relation=RelationType.ASSOCIATION)
 
-    def animate_processing(self):
-        phases = []
-        for i in range(len(self.sentences)):
-            phases += [("Merge & Raw", i),
-                       ("Relationships", i),
-                       ("Intra Adjust", i),
-                       ("Inter Adjust", i)]
-        fig, ax = plt.subplots(figsize=(10,6))
-        btn_ax = fig.add_axes([0.82, 0.01, 0.15, 0.06])
-        btn = Button(btn_ax, "Next")
-        pos = nx.spring_layout(self.G, seed=42)
-        state = {"idx": 0}
+    def run_compound_action_sentiment_calculations(self, function:Callable=None):
+        for edge in self.graph.edges:
+            if 'relation' in self.graph[edge] and self.graph[edge]['relation'] == RelationType.ACTION:
+                actor = self.graph[edge]['actor']
+                target = self.graph[edge]['target']
+                actor_sentiment_init = self.graph.nodes[actor]['init_sentiment']
+                action_sentiment_init = self.graph.edges[edge]['init_sentiment']
+                target_sentiment_init = self.graph.nodes[target]['init_sentiment']
 
-        def show_phase(event=None):
-            idx = state["idx"]
-            if idx >= len(phases):
-                btn.label.set_text("Done")
-                btn.on_clicked(lambda e: None)
-                return
-            phase, sent_i = phases[idx]
-            ax.clear()
-            info = []
-            if phase == "Merge & Raw":
-                for aid in self.sentences_data[sent_i]["aspects"]:
-                    merged = self._merge_adjacent_terms(self.aspects[aid].references[sent_i])
-                    val = sum(analyze_sentiment(m["text"]) for m in merged) / len(merged) if merged else 0.0
-                    self.G.nodes[aid]["history"].append(val)
-                    self.G.nodes[aid]["sentiment"] = val
-                    info.append(f"{self.aspects[aid].label}: merged={ [m['text'] for m in merged] } -> raw={val:.2f}")
-            elif phase == "Relationships":
-                for r in self.sentences_data[sent_i]["relationships"]:
-                    info.append(f"Rel {r.relationship_id}: {r.source}->{r.target} [{r.type.value}] “{r.term_text}”")
-            elif phase == "Intra Adjust":
-                for r in self.sentences_data[sent_i]["relationships"]:
-                    for aid in (r.source, r.target):
-                        base = self.G.nodes[aid]["sentiment"]
-                        opp = r.target if aid==r.source else r.source
-                        opp_val = self.G.nodes[opp]["sentiment"]
-                        if r.type == RelationshipType.ACTION:
-                            rs = analyze_sentiment(r.term_text)
-                            new = (base*3 + rs*opp_val) / 4
-                        else:
-                            new = (base*3 + opp_val) / 4
-                        self.G.nodes[aid]["sentiment"] = new
-                        self.G.nodes[aid]["history"].append(new)
-                        info.append(f"{self.aspects[aid].label}: adjusted={new:.2f}")
-            else:
-                for aid,data in self.G.nodes(data=True):
-                    hist = data["history"]
-                    n = len(hist)
-                    if n < 2:
-                        val = hist[-1] if hist else 0.0
-                    else:
-                        weights = [((j/(n-1)-0.5)**2) for j in range(n)]
-                        total = sum(weights)
-                        val = sum(h*w for h,w in zip(hist,weights)) / total if total else 0.0
-                    self.G.nodes[aid]["sentiment"] = val
-                    info.append(f"{self.aspects[aid].label}: inter={val:.2f} hist={['{:.2f}'.format(h) for h in hist]}")
-            node_colors = ["green" if self.G.nodes[n]["sentiment"]>0 else "red" if self.G.nodes[n]["sentiment"]<0 else "gray"
-                           for n in self.G.nodes]
-            sizes = [600 + 150*abs(self.G.nodes[n]["sentiment"]) for n in self.G]
-            edge_colors = ["blue" if phase=="Relationships" and d["relationship"].sentence_idx==sent_i else "lightgray"
-                           for _,_,d in self.G.edges(data=True)]
-            widths = [3 if phase=="Relationships" and d["relationship"].sentence_idx==sent_i else 1
-                      for _,_,d in self.G.edges(data=True)]
-            nodes = nx.draw_networkx_nodes(self.G, pos, node_color=node_colors, node_size=sizes, ax=ax)
-            nx.draw_networkx_edges(self.G, pos, edge_color=edge_colors, width=widths, ax=ax)
-            nx.draw_networkx_labels(self.G, pos, ax=ax)
-            ax.set_title(f"{phase} (Sentence {sent_i+1}/{len(self.sentences)})")
-            ax.text(1.02, 0.5, "\n".join(info), transform=ax.transAxes, va="center", fontsize=9,
-                    bbox=dict(facecolor="white",edgecolor="black",boxstyle="round,pad=0.5"))
-            mplcursors.cursor(nodes, hover=True).connect(
-                "add", lambda sel: sel.annotation.set_text(
-                    f"{self.G.nodes[list(self.G.nodes())[sel.index]]}"
-                ))
-            state["idx"] += 1
-            plt.draw()
+                if function is None:
+                    raise ValueError("No function provided for compound sentiment calculation")
+                actor_sentiment_compound, target_sentiment_compound = function(actor_sentiment_init, action_sentiment_init, target_sentiment_init)
 
-        btn.on_clicked(show_phase)
-        show_phase()
-        plt.show()
+                self.graph.nodes[actor]['compound_sentiment'] = actor_sentiment_compound
+                self.graph.nodes[target]['compound_sentiment'] = target_sentiment_compound
 
-    def visualize(self):
-        pos = nx.spring_layout(self.G, seed=42)
-        node_colors = ["green" if d["sentiment"]>0 else "red" if d["sentiment"]<0 else "gray"
-                       for _,d in self.G.nodes(data=True)]
-        sizes = [600 + 150*abs(d["sentiment"]) for _,d in self.G.nodes(data=True)]
-        plt.figure(figsize=(10,6))
-        nx.draw_networkx(self.G, pos, node_color=node_colors, node_size=sizes, arrowsize=12, font_size=10)
-        plt.show()
+    def run_compound_belonging_sentiment_calculations(self, function:Callable=None):
+        for edge in self.graph.edges:
+            if 'relation' in self.graph[edge] and self.graph[edge]['relation'] == RelationType.BELONGING:
+                parent = self.graph[edge]['parent']
+                child = self.graph[edge]['child']
+                parent_sentiment_init = self.graph.nodes[parent]['init_sentiment']
+                child_sentiment_init = self.graph.nodes[child]['init_sentiment']
 
-if __name__=='__main__':
-    text = "The battery life is fantastic. The camera quality is disappointing. The phone is decent."
-    spg = SentimentPropertyGraph(text)
-    spg.add_aspect({0:[{"text":"battery","token_idx_is":1,"token_idx_ft":1},
-                       {"text":"life","token_idx_is":2,"token_idx_ft":2}]}, "battery_life")
-    spg.add_aspect({1:[{"text":"camera","token_idx_is":1,"token_idx_ft":1},
-                       {"text":"quality","token_idx_is":2,"token_idx_ft":2}]}, "camera_quality")
-    spg.add_aspect({2:[{"text":"phone","token_idx_is":1,"token_idx_ft":1}]}, "phone")
-    spg.add_aspect_term(1,0,"fantastic",4,4)
-    spg.add_aspect_term(2,1,"disappointing",4,4)
-    spg.add_aspect_term(3,2,"decent",3,3)
-    spg.add_relationship(1,3,RelationshipType.BELONGING,2,"belongs",2,2)
-    spg.add_relationship(2,3,RelationshipType.BELONGING,2,"belongs",3,3)
-    spg.animate_processing()
-    spg.visualize()
+                if function is None:
+                    raise ValueError("No function provided for compound sentiment calculation")
+                parent_sentiment_compound, child_sentiment_compound = function(parent_sentiment_init, child_sentiment_init)
+
+                self.graph.nodes[parent]['compound_sentiment'] = parent_sentiment_compound
+                self.graph.nodes[child]['compound_sentiment'] = child_sentiment_compound
+
+    def run_compound_association_sentiment_calculations(self, function:Callable=None):
+        for edge in self.graph.edges:
+            if 'relation' in self.graph[edge] and self.graph[edge]['relation'] == RelationType.ASSOCIATION:
+                entity1 = self.graph[edge]['entity1']
+                entity2 = self.graph[edge]['entity2']
+                entity1_sentiment_init = self.graph.nodes[entity1]['init_sentiment']
+                entity2_sentiment_init = self.graph.nodes[entity2]['init_sentiment']
+
+                if function is None:
+                    raise ValueError("No function provided for compound sentiment calculation")
+                entity1_sentiment_compound, entity2_sentiment_compound = function(entity1_sentiment_init, entity2_sentiment_init)
+
+                self.graph.nodes[entity1]['compound_sentiment'] = entity1_sentiment_compound
+                self.graph.nodes[entity2]['compound_sentiment'] = entity2_sentiment_compound
+
+    def run_aggregate_sentiment_calculations(self, entity_id, function:Callable=None):
+        layers = []
+        for node in self.graph.nodes:
+            id_int = int(str(node).split('_')[0])
+            sentence_layer = int(str(node).split('_')[1])
+            if id_int == entity_id:
+                layers.append(sentence_layer)
+        layers = sorted(layers)
+        sentiments = []
+        for layer in layers:
+            node = f"{entity_id}_{layer}"
+            sentiments.append(self.graph.nodes[node].get('compound_sentiment', 0.0)) if 'compound_sentiment' in self.graph.nodes[node] else self.graph.nodes[node].get('init_sentiment', 0.0)
+        if function is None:
+            raise ValueError("No function provided for aggregate sentiment calculation")
+        result = function(sentiments) if sentiments else 0.0
+        self.aggregate_sentiments[entity_id] = result
+        return result
