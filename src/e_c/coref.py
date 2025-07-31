@@ -2,12 +2,17 @@ import os, warnings, logging, nltk, spacy
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 warnings.filterwarnings("ignore")
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 logging.disable(logging.CRITICAL)
 nltk.download("punkt", quiet=True)
 
 from functools import lru_cache
 from typing import Dict, Any, List, Tuple
 from maverick import Maverick
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from clause import clause_extraction as ce
 from transformers.utils import logging as tlog
 tlog.set_verbosity_error()
 
@@ -26,7 +31,7 @@ def _spacy():
 
 def _sent_spans(text: str) -> List[Tuple[int, int]]:
     spans, i = [], 0
-    for s in nltk.sent_tokenize(text):
+    for s in ce.constituency_clauses(text):
         j = text.index(s, i); spans.append((j, j + len(s))); i = j + len(s)
     return spans
 
@@ -58,12 +63,12 @@ def resolve(text: str, device: str = "-1") -> Tuple[Dict[int, Dict[str, Any]], D
             clusters[next_id] = {"entity_references": [(t, [s, e])]}
             seen.add((s, e)); next_id += 1
     spans = _sent_spans(text)
-    sent_map = {f"sentence_{i}": {"entities": []} for i in range(len(spans))}
+    sent_map = {f"clause_{i}": {"entities": []} for i in range(len(spans))}
     for info in clusters.values():
         for txt, (s, e) in info["entity_references"]:
             for i, (ss, se) in enumerate(spans):
                 if ss <= s < se:
-                    sent_map[f"sentence_{i}"]["entities"].append((txt, [s, e])); break
+                    sent_map[f"clause_{i}"]["entities"].append((txt, [s, e])); break
     return clusters, sent_map
 
 text = "The man hit the child. The child was sad."

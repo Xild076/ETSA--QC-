@@ -180,10 +180,10 @@ def print_entity_summary(result, doc_text):
                   f"(Universal Tokens {uni_start}-{uni_end}, "
                   f"Sentence Tokens {inter_start}-{inter_end})")
 
-text = "Barack Obama was the 44th President of the United States. He was born in Hawaii. Obama served two terms."
+"""text = "Barack Obama was the 44th President of the United States. He was born in Hawaii. Obama served two terms."
 result = extract_entities_with_coref(text)
 print_entity_summary(result, text)
 
 text2 = "The European Union announced new regulations. These regulations will affect tech companies. The EU hopes this fosters innovation."
 result2 = extract_entities_with_coref(text2)
-print_entity_summary(result2, text2)
+print_entity_summary(result2, text2)"""

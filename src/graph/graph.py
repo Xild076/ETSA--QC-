@@ -81,11 +81,29 @@ class RelationGraph:
         if relation not in RELATION_TYPES:
             raise ValueError(f"Invalid relation type: {relation}. Valid relations are: {list(RELATION_TYPES.keys())}")
 
-    def add_entity_node(self, id:int, head:str, modifier:List[str], entity_role:str, sentence_layer:int):
+    def add_entity_node(self, id:int, head:str, modifier:List[str], entity_role:str, clause_layer:int):
         self._validate_role(entity_role)
         self.entity_ids.add(id)
-        self.graph.add_node(f"{id}_{sentence_layer}", head=head, modifier=modifier, text=self.text, entity_role=entity_role, sentence_layer=sentence_layer)
-        self.graph.nodes[f"{id}_{sentence_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
+        self.graph.add_node(f"{id}_{clause_layer}", head=head, modifier=modifier, text=self.text, entity_role=entity_role, clause_layer=clause_layer)
+        self.graph.nodes[f"{id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
+    
+    def add_entity_modifier(self, entity_id:int, modifier:List[str], clause_layer:int):
+        if entity_id not in self.entity_ids:
+            raise ValueError(f"Entity ID {entity_id} not found in the graph.")
+        node_key = f"{entity_id}_{clause_layer}"
+        if node_key not in self.graph.nodes:
+            raise ValueError(f"Node {node_key} not found in the graph.")
+        current_modifiers = self.graph.nodes[node_key].get('modifier', [])
+        self.graph.nodes[node_key]['modifier'] = current_modifiers + modifier
+    
+    def set_entity_role(self, entity_id:int, entity_role:str, clause_layer:int):
+        self._validate_role(entity_role)
+        if entity_id not in self.entity_ids:
+            raise ValueError(f"Entity ID {entity_id} not found in the graph.")
+        node_key = f"{entity_id}_{clause_layer}"
+        if node_key not in self.graph.nodes:
+            raise ValueError(f"Node {node_key} not found in the graph.")
+        self.graph.nodes[node_key]['entity_role'] = entity_role
 
     def add_temporal_edge(self, entity_id:int):
         if entity_id not in self.entity_ids:
@@ -93,33 +111,33 @@ class RelationGraph:
         layers = []
         for node in self.graph.nodes:
             id_int = int(str(node).split('_')[0])
-            sentence_layer = int(str(node).split('_')[1])
+            clause_layer = int(str(node).split('_')[1])
             if id_int == entity_id:
-                layers.append(sentence_layer)
+                layers.append(clause_layer)
         layers = sorted(layers)
         for i in range(len(layers) - 1):
             self.graph.add_edge(f"{entity_id}_{layers[i]}", f"{entity_id}_{layers[i + 1]}", relation="temporal")
     
-    def add_action_edge(self, actor_id:int, target_id:int, sentence_layer:int, head:str, modifier:List[str]):
+    def add_action_edge(self, actor_id:int, target_id:int, clause_layer:int, head:str, modifier:List[str]):
         if actor_id not in self.entity_ids or target_id not in self.entity_ids:
             raise ValueError(f"Actor ID {actor_id} or Target ID {target_id} not found in the graph.")
-        self.graph.add_edge(f"{actor_id}_{sentence_layer}", f"{target_id}_{sentence_layer}", 
-                            actor=f"{actor_id}_{sentence_layer}", target=f"{target_id}_{sentence_layer}",
+        self.graph.add_edge(f"{actor_id}_{clause_layer}", f"{target_id}_{clause_layer}", 
+                            actor=f"{actor_id}_{clause_layer}", target=f"{target_id}_{clause_layer}",
                             relation="action", head=head, modifier=modifier)
-        self.graph.nodes[f"{actor_id}_{sentence_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
+        self.graph.nodes[f"{actor_id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
 
-    def add_belonging_edge(self, parent_id:int, child_id:int, sentence_layer:int):
+    def add_belonging_edge(self, parent_id:int, child_id:int, clause_layer:int):
         if parent_id not in self.entity_ids or child_id not in self.entity_ids:
             raise ValueError(f"Parent ID {parent_id} or Child ID {child_id} not found in the graph.")
-        self.graph.add_edge(f"{parent_id}_{sentence_layer}", f"{child_id}_{sentence_layer}", 
-                            parent=f"{parent_id}_{sentence_layer}", child=f"{child_id}_{sentence_layer}",
+        self.graph.add_edge(f"{parent_id}_{clause_layer}", f"{child_id}_{clause_layer}", 
+                            parent=f"{parent_id}_{clause_layer}", child=f"{child_id}_{clause_layer}",
                             relation="belonging")
 
-    def add_association_edge(self, entity1_id:int, entity2_id:int, sentence_layer:int):
+    def add_association_edge(self, entity1_id:int, entity2_id:int, clause_layer:int):
         if entity1_id not in self.entity_ids or entity2_id not in self.entity_ids:
             raise ValueError(f"Entity1 ID {entity1_id} or Entity2 ID {entity2_id} not found in the graph.")
-        self.graph.add_edge(f"{entity1_id}_{sentence_layer}", f"{entity2_id}_{sentence_layer}", 
-                            entity1=f"{entity1_id}_{sentence_layer}", entity2=f"{entity2_id}_{sentence_layer}",
+        self.graph.add_edge(f"{entity1_id}_{clause_layer}", f"{entity2_id}_{clause_layer}", 
+                            entity1=f"{entity1_id}_{clause_layer}", entity2=f"{entity2_id}_{clause_layer}",
                             relation="association")
 
     def run_compound_action_sentiment_calculations(self, function:Callable=None):
@@ -175,9 +193,9 @@ class RelationGraph:
         layers = []
         for node in self.graph.nodes:
             id_int = int(str(node).split('_')[0])
-            sentence_layer = int(str(node).split('_')[1])
+            clause_layer = int(str(node).split('_')[1])
             if id_int == entity_id:
-                layers.append(sentence_layer)
+                layers.append(clause_layer)
         layers = sorted(layers)
         sentiments = []
         for layer in layers:
@@ -220,7 +238,7 @@ class GraphVisualizer:
 
         pos_2d = nx.spring_layout(self.graph, k=2.0, iterations=100, seed=42)
         pos_3d = {
-            node: (pos_2d[node][0], pos_2d[node][1], data['sentence_layer'])
+            node: (pos_2d[node][0], pos_2d[node][1], data['clause_layer'])
             for node, data in self.graph.nodes(data=True)
         }
 
@@ -270,7 +288,7 @@ class GraphVisualizer:
 
             hover_info = (f"<b>{data['head']} ({node})</b><br>"
                           f"Role: {data['entity_role']}<br>"
-                          f"Layer: {data['sentence_layer']}<br>"
+                          f"Layer: {data['clause_layer']}<br>"
                           f"Sentiment: {sentiment_str}")
             node_text.append(hover_info)
 
@@ -297,7 +315,7 @@ class GraphVisualizer:
             scene=dict(
                 xaxis=dict(showticklabels=False, title=''),
                 yaxis=dict(showticklabels=False, title=''),
-                zaxis=dict(title='Sentence Layer', nticks=max(pos[2] for pos in pos_3d.values()) + 1)
+                zaxis=dict(title='Clause Layer', nticks=max(pos[2] for pos in pos_3d.values()) + 1)
             )
         )
 
@@ -308,46 +326,46 @@ class GraphVisualizer:
             fig.show()
 
 
-if __name__ == '__main__':
-    story_text = """
+"""if __name__ == '__main__':
+    story_text = "
     Alice, a brilliant engineer, proposed an innovative project.
     The ambitious rival, Bob, watched Alice with envy.
     The company's CEO, a wise leader, approved the valuable project.
     However, Bob treacherously sabotaged the project's delicate code.
     Alice, initially devastated, felt a surge of determination.
     She masterfully fixed the corrupted code, saving the entire project.
-    """
+    "
     
     vader_analyzer = VADERSentimentAnalyzer()
     relation_graph = RelationGraph(text=story_text, sentiment_analyzer_system=vader_analyzer)
 
-    relation_graph.add_entity_node(id=1, head="Alice", modifier=["brilliant engineer"], entity_role="actor", sentence_layer=0)
-    relation_graph.add_entity_node(id=2, head="project", modifier=["innovative"], entity_role="target", sentence_layer=0)
-    relation_graph.add_action_edge(actor_id=1, target_id=2, sentence_layer=0, head="proposed", modifier=[])
+    relation_graph.add_entity_node(id=1, head="Alice", modifier=["brilliant engineer"], entity_role="actor", clause_layer=0)
+    relation_graph.add_entity_node(id=2, head="project", modifier=["innovative"], entity_role="target", clause_layer=0)
+    relation_graph.add_action_edge(actor_id=1, target_id=2, clause_layer=0, head="proposed", modifier=[])
 
-    relation_graph.add_entity_node(id=3, head="Bob", modifier=["ambitious", "rival"], entity_role="actor", sentence_layer=1)
-    relation_graph.add_entity_node(id=1, head="Alice", modifier=[], entity_role="target", sentence_layer=1)
-    relation_graph.add_action_edge(actor_id=3, target_id=1, sentence_layer=1, head="watched", modifier=["with envy"])
+    relation_graph.add_entity_node(id=3, head="Bob", modifier=["ambitious", "rival"], entity_role="actor", clause_layer=1)
+    relation_graph.add_entity_node(id=1, head="Alice", modifier=[], entity_role="target", clause_layer=1)
+    relation_graph.add_action_edge(actor_id=3, target_id=1, clause_layer=1, head="watched", modifier=["with envy"])
 
-    relation_graph.add_entity_node(id=4, head="CEO", modifier=["wise leader"], entity_role="actor", sentence_layer=2)
-    relation_graph.add_entity_node(id=5, head="company", modifier=[], entity_role="parent", sentence_layer=2)
-    relation_graph.add_entity_node(id=2, head="project", modifier=["valuable"], entity_role="target", sentence_layer=2)
-    relation_graph.add_action_edge(actor_id=4, target_id=2, sentence_layer=2, head="approved", modifier=[])
-    relation_graph.add_belonging_edge(parent_id=5, child_id=4, sentence_layer=2)
+    relation_graph.add_entity_node(id=4, head="CEO", modifier=["wise leader"], entity_role="actor", clause_layer=2)
+    relation_graph.add_entity_node(id=5, head="company", modifier=[], entity_role="parent", clause_layer=2)
+    relation_graph.add_entity_node(id=2, head="project", modifier=["valuable"], entity_role="target", clause_layer=2)
+    relation_graph.add_action_edge(actor_id=4, target_id=2, clause_layer=2, head="approved", modifier=[])
+    relation_graph.add_belonging_edge(parent_id=5, child_id=4, clause_layer=2)
 
-    relation_graph.add_entity_node(id=3, head="Bob", modifier=[], entity_role="actor", sentence_layer=3)
-    relation_graph.add_entity_node(id=6, head="code", modifier=["delicate"], entity_role="target", sentence_layer=3)
-    relation_graph.add_entity_node(id=2, head="project", modifier=[], entity_role="parent", sentence_layer=3)
-    relation_graph.add_action_edge(actor_id=3, target_id=6, sentence_layer=3, head="sabotaged", modifier=["treacherously"])
-    relation_graph.add_belonging_edge(parent_id=2, child_id=6, sentence_layer=3)
+    relation_graph.add_entity_node(id=3, head="Bob", modifier=[], entity_role="actor", clause_layer=3)
+    relation_graph.add_entity_node(id=6, head="code", modifier=["delicate"], entity_role="target", clause_layer=3)
+    relation_graph.add_entity_node(id=2, head="project", modifier=[], entity_role="parent", clause_layer=3)
+    relation_graph.add_action_edge(actor_id=3, target_id=6, clause_layer=3, head="sabotaged", modifier=["treacherously"])
+    relation_graph.add_belonging_edge(parent_id=2, child_id=6, clause_layer=3)
     
-    relation_graph.add_entity_node(id=1, head="Alice", modifier=["initially devastated", "determined"], entity_role="actor", sentence_layer=4)
+    relation_graph.add_entity_node(id=1, head="Alice", modifier=["initially devastated", "determined"], entity_role="actor", clause_layer=4)
     
-    relation_graph.add_entity_node(id=1, head="She (Alice)", modifier=[], entity_role="actor", sentence_layer=5)
-    relation_graph.add_entity_node(id=6, head="code", modifier=["corrupted"], entity_role="target", sentence_layer=5)
-    relation_graph.add_entity_node(id=2, head="project", modifier=[], entity_role="associate", sentence_layer=5)
-    relation_graph.add_action_edge(actor_id=1, target_id=6, sentence_layer=5, head="fixed", modifier=["masterfully"])
-    relation_graph.add_association_edge(entity1_id=1, entity2_id=2, sentence_layer=5)
+    relation_graph.add_entity_node(id=1, head="She (Alice)", modifier=[], entity_role="actor", clause_layer=5)
+    relation_graph.add_entity_node(id=6, head="code", modifier=["corrupted"], entity_role="target", clause_layer=5)
+    relation_graph.add_entity_node(id=2, head="project", modifier=[], entity_role="associate", clause_layer=5)
+    relation_graph.add_action_edge(actor_id=1, target_id=6, clause_layer=5, head="fixed", modifier=["masterfully"])
+    relation_graph.add_association_edge(entity1_id=1, entity2_id=2, clause_layer=5)
 
     relation_graph.add_temporal_edge(entity_id=1)
     relation_graph.add_temporal_edge(entity_id=2)
@@ -380,3 +398,4 @@ if __name__ == '__main__':
 
     visualizer = GraphVisualizer(relation_graph)
     visualizer.draw_graph(save_path="graph_sentiment_analysis.html")
+"""

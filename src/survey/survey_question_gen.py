@@ -3,6 +3,9 @@ import itertools
 from afinn import Afinn
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import json
+import ssl
+
+ssl._create_default_https_context = ssl._create_unverified_context
 
 nltk.download("punkt", quiet=True)
 afn, sia = Afinn(), SentimentIntensityAnalyzer()
@@ -67,46 +70,319 @@ names = [
 ]
 
 pos_nouns = {
-    "very": ["a brave, kind, and brilliant person", "a heroic and wonderful figure"],
-    "medium": ["a great person", "a commendable individual"],
-    "somewhat": ["a thoughtful person", "a decent individual"],
-    "slightly": ["a somewhat considerate person", "a mildly pleasant individual"]
+    "very": [
+        # Median: 0.90, Mean: 0.86, SD: 0.14
+        "a brilliant person",
+        # Median: 0.90, Mean: 0.89, SD: 0.14
+        "a superb person",
+        # Median: 0.94, Mean: 0.87, SD: 0.15
+        "a magnificent person",
+        # Median: 0.94, Mean: 0.85, SD: 0.17
+        "a perfect person",
+        # Median: 0.76, Mean: 0.77, SD: 0.14
+        "a charming person",
+    ],
+    "medium": [
+        # Median: 0.54, Mean: 0.63, SD: 0.21
+        "a sincere person",
+        # Median: 0.60, Mean: 0.60, SD: 0.24
+        "a kind person",
+        # Median: 0.66, Mean: 0.69, SD: 0.17
+        "a wise person",
+        # Median: 0.50, Mean: 0.64, SD: 0.23
+        "a respectful person",
+        # Median: 0.68, Mean: 0.69, SD: 0.18
+        "a noble person",
+    ],
+    "somewhat": [
+        # Median: 0.46, Mean: 0.49, SD: 0.32
+        "an empathetic person",
+        # Median: 0.48, Mean: 0.50, SD: 0.32
+        "an agreeable person",
+        # Median: 0.50, Mean: 0.49, SD: 0.32
+        "an authentic person",
+        # Median: 0.42, Mean: 0.40, SD: 0.38
+        "a patient person",
+        # Median: 0.37, Mean: 0.35, SD: 0.36
+        "a polite person",
+    ],
+    "slightly": [
+        # Median: 0.21, Mean: 0.35, SD: 0.34
+        "a decent person",
+        # Median: 0.16, Mean: 0.31, SD: 0.37
+        "an orderly person",
+        # Median: 0.15, Mean: 0.34, SD: 0.39
+        "an approachable person",
+        # Median: 0.02, Mean: 0.30, SD: 0.40
+        "a dependable person",
+        # Median: 0.21, Mean: 0.31, SD: 0.36
+        "a neat person",
+    ],
 }
 
 neg_nouns = {
-    "very": ["an utterly vile and disgusting person", "a monstrous and reprehensible figure"],
-    "medium": ["an unpleasant person", "a distasteful individual"],
-    "somewhat": ["a problematic person", "a troubling individual"],
-    "slightly": ["a slightly annoying person", "a mildly irritating individual"]
+    "very": [
+        # Median: -0.87, Mean: -0.87, SD: 0.12
+        "an evil person",
+        # Median: -0.87, Mean: -0.86, SD: 0.15
+        "a cruel person",
+        # Median: -0.77, Mean: -0.70, SD: 0.24
+        "a tyrannical person",
+        # Median: -0.92, Mean: -0.84, SD: 0.20
+        "a vile person",
+        # Median: -0.81, Mean: -0.80, SD: 0.19
+        "a wicked person",
+    ],
+    "medium": [
+        # Median: -0.58, Mean: -0.67, SD: 0.20
+        "a selfish person",
+        # Median: -0.66, Mean: -0.61, SD: 0.28
+        "a naive person",
+        # Median: -0.71, Mean: -0.68, SD: 0.22
+        "a careless person",
+        # Median: -0.55, Mean: -0.56, SD: 0.33
+        "an arrogant person",
+        # Median: -0.56, Mean: -0.54, SD: 0.35
+        "a shallow person",
+    ],
+    "somewhat": [
+        # Median: -0.34, Mean: -0.48, SD: 0.35
+        "a greedy person",
+        # Median: -0.44, Mean: -0.50, SD: 0.31
+        "a spiteful person",
+        # Median: -0.46, Mean: -0.53, SD: 0.34
+        "an obnoxious person",
+        # Median: -0.36, Mean: -0.45, SD: 0.39
+        "a lazy person",
+        # Median: -0.36, Mean: -0.52, SD: 0.33
+        "a rude person",
+    ],
+    "slightly": [
+        # Median: -0.36, Mean: -0.24, SD: 0.56
+        "a moody person",
+        # Median: -0.44, Mean: -0.38, SD: 0.40
+        "a clumsy person",
+        # Median: -0.45, Mean: -0.43, SD: 0.39
+        "an awkward person",
+        # Median: -0.36, Mean: -0.34, SD: 0.50
+        "a gullible person",
+        # Median: -0.33, Mean: -0.35, SD: 0.45
+        "a fussy person",
+    ],
 }
 
 pos_verbs = {
-    "very": "heroically and bravely rescued",
-    "medium": "kindly saved",
-    "somewhat": "encouraged",
-    "slightly": "lightly comforted"
+    "very": [
+        # Median: 0.84, Mean: 0.83, SD: 0.10
+        "bravely supported",
+        # Median: 0.91, Mean: 0.90, SD: 0.07
+        "brilliantly saved",
+        # Median: 0.90, Mean: 0.85, SD: 0.15
+        "magnificently defended",
+        # Median: 0.94, Mean: 0.89, SD: 0.11
+        "perfectly vindicated",
+        # Median: 0.79, Mean: 0.80, SD: 0.14
+        "honestly comforted",
+    ],
+    "medium": [
+        # Median: 0.60, Mean: 0.65, SD: 0.17
+        "kindly helped",
+        # Median: 0.57, Mean: 0.64, SD: 0.20
+        "ably complimented",
+        # Median: 0.61, Mean: 0.67, SD: 0.18
+        "creatively encouraged",
+        # Median: 0.67, Mean: 0.70, SD: 0.16
+        "wisely reassured",
+        # Median: 0.71, Mean: 0.68, SD: 0.19
+        "sincerely promoted",
+    ],
+    "somewhat": [
+        # Median: 0.43, Mean: 0.37, SD: 0.26
+        "fairly hired",
+        # Median: 0.40, Mean: 0.52, SD: 0.26
+        "thoughtfully taught",
+        # Median: 0.48, Mean: 0.51, SD: 0.26
+        "loyally believed",
+        # Median: 0.46, Mean: 0.50, SD: 0.30
+        "gently aided",
+        # Median: 0.44, Mean: 0.49, SD: 0.35
+        "sensibly thanked",
+    ],
+    "slightly": [
+        # Median: 0.17, Mean: 0.24, SD: 0.22
+        "decently forgave",
+        # Median: 0.33, Mean: 0.32, SD: 0.40
+        "adequately recognized",
+        # Median: 0.34, Mean: 0.37, SD: 0.33
+        "patiently encouraged",
+        # Median: 0.33, Mean: 0.32, SD: 0.32
+        "calmly advised",
+        # Median: 0.34, Mean: 0.38, SD: 0.38
+        "politely taught",
+    ],
 }
 
 neg_verbs = {
-    "very": "brutally murdered",
-    "medium": "abused",
-    "somewhat": "frustrated",
-    "slightly": "mildly annoyed"
+    "very": [
+        # Median: -0.85, Mean: -0.87, SD: 0.07
+        "brutally attacked",
+        # Median: -0.73, Mean: -0.83, SD: 0.14
+        "viciously assaulted",
+        # Median: -0.87, Mean: -0.82, SD: 0.21
+        "cruelly tortured",
+        # Median: -0.87, Mean: -0.75, SD: 0.22
+        "unfairly disgraced",
+        # Median: -0.74, Mean: -0.72, SD: 0.23
+        "rudely abandoned",
+    ],
+    "medium": [
+        # Median: -0.63, Mean: -0.70, SD: 0.17
+        "carelessly blamed",
+        # Median: -0.66, Mean: -0.72, SD: 0.18
+        "selfishly exploited",
+        # Median: -0.70, Mean: -0.65, SD: 0.22
+        "corruptly coerced",
+        # Median: -0.69, Mean: -0.69, SD: 0.21
+        "poorly shamed",
+        # Median: -0.56, Mean: -0.67, SD: 0.21
+        "falsely accused",
+    ],
+    "somewhat": [
+        # Median: -0.42, Mean: -0.50, SD: 0.27
+        "lazily ignored",
+        # Median: -0.30, Mean: -0.45, SD: 0.35
+        "clumsily demoted",
+        # Median: -0.53, Mean: -0.56, SD: 0.25
+        "awkwardly tricked",
+        # Median: -0.39, Mean: -0.34, SD: 0.22
+        "stubbornly argued",
+        # Median: -0.46, Mean: -0.35, SD: 0.30
+        "thoughtlessly revealed",
+    ],
+    "slightly": [
+        # Median: -0.18, Mean: -0.36, SD: 0.35
+        "blandly scolded",
+        # Median: -0.30, Mean: -0.41, SD: 0.30
+        "weakly resisted",
+        # Median: -0.23, Mean: -0.40, SD: 0.28
+        "slowly answered",
+        # Median: -0.18, Mean: -0.34, SD: 0.38
+        "timidly retreated",
+        # Median: -0.10, Mean: -0.34, SD: 0.39
+        "apathetically shrugged",
+    ],
 }
 
 pos_desc = {
-    "very": ["superb", "outstanding", "breathtaking", "magnificent", "wonderful"],
-    "medium": ["great", "excellent", "terrific", "impressive", "delightful"],
-    "somewhat": ["solid", "fair", "somewhat nice", "satisfactory", "acceptable"],
-    "slightly": ["okay", "alright", "acceptable", "passable", "tolerable"]
+    "very": [
+        # Median: 0.88, Mean: 0.84, SD: 0.14
+        "brilliant",
+        # Median: 0.89, Mean: 0.87, SD: 0.14
+        "superb",
+        # Median: 0.90, Mean: 0.85, SD: 0.15
+        "magnificent",
+        # Median: 0.89, Mean: 0.86, SD: 0.15
+        "wonderful",
+        # Median: 0.90, Mean: 0.84, SD: 0.17
+        "perfect",
+    ],
+    "medium": [
+        # Median: 0.58, Mean: 0.64, SD: 0.17
+        "good",
+        # Median: 0.62, Mean: 0.65, SD: 0.18
+        "nice",
+        # Median: 0.63, Mean: 0.65, SD: 0.19
+        "strong",
+        # Median: 0.60, Mean: 0.62, SD: 0.22
+        "effective",
+        # Median: 0.57, Mean: 0.68, SD: 0.22
+        "enjoyable",
+    ],
+    "somewhat": [
+        # Median: 0.36, Mean: 0.38, SD: 0.23
+        "satisfactory",
+        # Median: 0.42, Mean: 0.46, SD: 0.23
+        "fine",
+        # Median: 0.43, Mean: 0.54, SD: 0.24
+        "engaging",
+        # Median: 0.36, Mean: 0.45, SD: 0.33
+        "supported",
+        # Median: 0.36, Mean: 0.43, SD: 0.34
+        "responsive",
+    ],
+    "slightly": [
+        # Median: 0.10, Mean: 0.32, SD: 0.38
+        "functional",
+        # Median: 0.23, Mean: 0.09, SD: 0.36
+        "okay",
+        # Median: 0.22, Mean: 0.28, SD: 0.36
+        "standard",
+        # Median: 0.22, Mean: 0.29, SD: 0.34
+        "simple",
+        # Median: 0.21, Mean: 0.28, SD: 0.36
+        "passable",
+    ],
 }
 
 neg_desc = {
-    "very": ["atrocious", "horrendous", "appalling", "dreadful", "abysmal"],
-    "medium": ["bad", "awful", "defective", "lousy", "not good"],
-    "somewhat": ["poor", "broken", "annoying", "flawed", "disappointing"],
-    "slightly": ["unremarkable", "problematic", "bland", "mediocre", "uninspired"]
+    "very": [
+        # Median: -0.89, Mean: -0.81, SD: 0.20
+        "terrible",
+        # Median: -0.76, Mean: -0.77, SD: 0.13
+        "disastrous",
+        # Median: -0.96, Mean: -0.84, SD: 0.19
+        "horrible",
+        # Median: -0.93, Mean: -0.83, SD: 0.21
+        "dreadful",
+        # Median: -0.95, Mean: -0.84, SD: 0.21
+        "awful",
+    ],
+    "medium": [
+        # Median: -0.54, Mean: -0.65, SD: 0.19
+        "lousy",
+        # Median: -0.60, Mean: -0.69, SD: 0.18
+        "disappointing",
+        # Median: -0.54, Mean: -0.67, SD: 0.23
+        "useless",
+        # Median: -0.64, Mean: -0.68, SD: 0.20
+        "annoying",
+        # Median: -0.68, Mean: -0.64, SD: 0.21
+        "frustrating",
+    ],
+    "somewhat": [
+        # Median: -0.44, Mean: -0.53, SD: 0.23
+        "weak",
+        # Median: -0.39, Mean: -0.39, SD: 0.32
+        "unsupported",
+        # Median: -0.40, Mean: -0.48, SD: 0.34
+        "sluggish",
+        # Median: -0.44, Mean: -0.47, SD: 0.33
+        "problematic",
+        # Median: -0.35, Mean: -0.42, SD: 0.33
+        "unstable",
+    ],
+    "slightly": [
+        # Median: -0.11, Mean: -0.26, SD: 0.38
+        "clunky",
+        # Median: -0.09, Mean: -0.33, SD: 0.39
+        "deteriorating",
+        # Median: -0.16, Mean: -0.28, SD: 0.40
+        "outdated",
+        # Median: -0.21, Mean: -0.23, SD: 0.35
+        "basic",
+        # Median: -0.21, Mean: -0.25, SD: 0.38
+        "limited",
+    ],
 }
+
+loaded_lexicons = json.load(open("src/sentiment/lexicons/optimized_lexicon.json", "r"))
+
+pos_nouns = loaded_lexicons["pos_nouns"]
+neg_nouns = loaded_lexicons["neg_nouns"]
+pos_verbs = loaded_lexicons["pos_verbs"]
+neg_verbs = loaded_lexicons["neg_verbs"]
+pos_desc = loaded_lexicons["pos_desc"]
+neg_desc = loaded_lexicons["neg_desc"]
 
 neutral_actions_together = ['ate', 'talked', 'worked', 'walked']
 
@@ -123,7 +399,7 @@ parent_child = {
     "house": ["roof", "wall", "window"]
 }
 
-objs = ["phone", "laptop", "game", "car"]
+objs = ["phone", "laptop", "game", "program"]
 
 nouns = {
     "positive": pos_nouns,
@@ -176,9 +452,11 @@ def generate_compound_action_sentences(used_names):
         i2 = _rand.choice(list(verbs[p[1]].keys()))
         i3 = _rand.choice(list(nouns[p[2]].keys()))
 
-        sentence = f"{a}, {_rand.choice(nouns[p[0]][i1])}, {verbs[p[1]][i2]} {v}, {_rand.choice(nouns[p[2]][i3])}."
-        code_key = f"actor[[{a}_{i1}]]->verb[[{verbs[p[1]][i2]}_{i2}]]->target[[{v}_{i3}]]"
-        
+        verb = _rand.choice(verbs[p[1]][i2])
+
+        sentence = f"{a}, {_rand.choice(nouns[p[0]][i1])}, {verb} {v}, {_rand.choice(nouns[p[2]][i3])}."
+        code_key = f"actor[[{a}_{i1}]]->verb[[{verb}_{i2}]]->target[[{v}_{i3}]]"
+
         out.append({
             "sentences": [sentence],
             "description": f"Compound-action pattern {p}",
@@ -681,6 +959,39 @@ def generate_aggregate_sentiment_sentences(used_objects):
 
     return out
 
+def calibration_gen(seed=None, used_words=None):
+    rnd = random.Random(seed)
+    pos_pool = []
+    for d in [pos_nouns, pos_verbs, pos_desc]:
+        for v in d.values():
+            pos_pool.extend(v)
+    neg_pool = []
+    for d in [neg_nouns, neg_verbs, neg_desc]:
+        for v in d.values():
+            neg_pool.extend(v)
+    if used_words:
+        pos_pool = [w for w in pos_pool if w not in used_words]
+        neg_pool = [w for w in neg_pool if w not in used_words]
+    if not pos_pool:
+        for d in [pos_nouns, pos_verbs, pos_desc]:
+            for v in d.values():
+                pos_pool.extend(v)
+    if not neg_pool:
+        for d in [neg_nouns, neg_verbs, neg_desc]:
+            for v in d.values():
+                neg_pool.extend(v)
+    pos_word = rnd.choice(pos_pool)
+    neg_word = rnd.choice(neg_pool)
+    def get_type(word, dicts):
+        for dname, d in dicts:
+            for k, v in d.items():
+                if word in v:
+                    return dname
+        return None
+    pos_type = get_type(pos_word, [('noun', pos_nouns), ('verb', pos_verbs), ('desc', pos_desc)])
+    neg_type = get_type(neg_word, [('noun', neg_nouns), ('verb', neg_verbs), ('desc', neg_desc)])
+    return pos_word, neg_word, pos_type, neg_type
+
 def survey_gen(seed=None):
     if seed is not None: 
         _rand.seed(seed)
@@ -703,3 +1014,5 @@ def survey_gen(seed=None):
         "items": out, 
         "packets": packets
     }
+
+# json.dump(survey_gen(), open("survey_data.json", "w"), indent=4, ensure_ascii=False)

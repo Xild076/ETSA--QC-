@@ -6,8 +6,188 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
+
 import re
 from survey_question_gen import survey_gen
+from survey_question_gen import calibration_gen
+
+def get_calibration_examples():
+    seed = st.session_state.get('seed', None)
+    used_words = set()
+    for item in st.session_state.get('sentences_data', []):
+        for k in ['sentences', 'description']:
+            v = item.get(k, [])
+            if isinstance(v, list):
+                used_words.update(v)
+            elif isinstance(v, str):
+                used_words.add(v)
+    for item in st.session_state.get('packet_data', []):
+        for k in ['sentences', 'description']:
+            v = item.get(k, [])
+            if isinstance(v, list):
+                used_words.update(v)
+            elif isinstance(v, str):
+                used_words.add(v)
+    pos_word, neg_word, _, _ = calibration_gen(seed=seed, used_words=used_words)
+    return pos_word, neg_word
+
+def display_calibration_questions():
+    st.markdown("""
+    <div class="academic-paper">
+    <h3>Practice Questions</h3>
+    <p>Before you begin the main survey, please answer two quick practice questions. This will help you get familiar with the rating scale. Each practice question shows a single phrase. Rate the sentiment the phrase conveys, from -4 (Extremely Negative) to 4 (Extremely Positive).</p>
+    </div>
+    """, unsafe_allow_html=True)
+    pos_text, neg_text = get_calibration_examples()
+    if isinstance(pos_text, (list, tuple)):
+        pos_text = random.choice(pos_text)
+    if isinstance(neg_text, (list, tuple)):
+        neg_text = random.choice(neg_text)
+    st.markdown(f"<div style='margin-top:1.5em; margin-bottom:0.5em;'><b>Example 1:</b> <i>{pos_text}</i></div>", unsafe_allow_html=True)
+    pos_score = st.slider(
+        label="How would you rate the sentiment of this phrase?",
+        min_value=-4, max_value=4, value=0, format="%d", key="calib_pos_slider",
+        help="Rating scale: -4 (Extremely Negative) to 4 (Extremely Positive)",
+        step=1
+    )
+    st.markdown("""
+    <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: "Source Serif Pro", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-4</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-3</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-2</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-1</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>0</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>1</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>2</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>3</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>4</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"You rated the sentiment as: <b>{pos_score} ({sentiment_scale[pos_score]})</b>", unsafe_allow_html=True)
+
+    st.markdown(f"<div style='margin-top:2em; margin-bottom:0.5em;'><b>Example 2:</b> <i>{neg_text}</i></div>", unsafe_allow_html=True)
+    neg_score = st.slider(
+        label="How would you rate the sentiment of this phrase?",
+        min_value=-4, max_value=4, value=0, format="%d", key="calib_neg_slider",
+        help="Rating scale: -4 (Extremely Negative) to 4 (Extremely Positive)",
+        step=1
+    )
+    st.markdown("""
+    <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: "Source Serif Pro", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-4</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-3</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-2</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-1</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>0</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>1</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>2</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>3</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>4</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"You rated the sentiment as: <b>{neg_score} ({sentiment_scale[neg_score]})</b>", unsafe_allow_html=True)
+    if st.button("Continue", key="calib_continue_btn", type="primary", use_container_width=True):
+        st.session_state['calibration_pos_score'] = pos_score
+        st.session_state['calibration_neg_score'] = neg_score
+        st.session_state['calibration_complete'] = True
+        st.rerun()
+    st.stop()
+
+def display_calibration_confirmation():
+    pos_score = st.session_state.get('calibration_pos_score', None)
+    neg_score = st.session_state.get('calibration_neg_score', None)
+    pos_text, neg_text = get_calibration_examples()
+    if isinstance(pos_text, (list, tuple)):
+        pos_text = random.choice(pos_text)
+    if isinstance(neg_text, (list, tuple)):
+        neg_text = random.choice(neg_text)
+    st.markdown(f"""
+    <div class="academic-paper">
+    <h3>Practice Confirmation</h3>
+    <p>You said the sentiment conveyed about <b>'{pos_text}'</b> is <b>{pos_score} ({sentiment_scale.get(pos_score, pos_score)})</b>.</p>
+    <p>You said the sentiment conveyed about <b>'{neg_text}'</b> is <b>{neg_score} ({sentiment_scale.get(neg_score, neg_score)})</b>.</p>
+    <p>Does this seem right?</p>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Yes, continue to survey", key="calib_confirm_final_btn", type="primary", use_container_width=True):
+        st.session_state['calibration_confirmed'] = True
+        st.rerun()
+    if st.button("No, redo practice questions", key="calib_redo_btn", use_container_width=True):
+        st.session_state['calibration_complete'] = False
+        st.session_state.pop('calib_pos_idx', None)
+        st.session_state.pop('calib_neg_idx', None)
+        st.rerun()
+    st.stop()
 
 GOOGLE_SHEET_ID = "1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0"
 GOOGLE_CREDENTIALS_SECRET_KEY = "google_service_account_credentials"
@@ -271,17 +451,71 @@ def display_packet_question(sentence_item, actual_sentence_index):
     entities_to_highlight = get_entities_to_highlight(entity, cumulative_text)
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(cumulative_text, entities_to_highlight)
     st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
-    if st.session_state.packet_sentiment_history:
-        st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your Previous Ratings:</h3>", unsafe_allow_html=True)
-        for i, score in enumerate(st.session_state.packet_sentiment_history):
-            st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'><strong>Step {i + 1}:</strong> {score} ({sentiment_scale[score]})</p>", unsafe_allow_html=True)
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Current Rating:</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Rate the sentiment you feel is <strong>directed towards</strong> the highlighted entity.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Evaluate the sentiment conveyed about the entity in the sentence.</p>", unsafe_allow_html=True)
     display_color = entity_color_map.get(entity, ENTITY_COLORS[0])
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
     slider_key = f"packet_slider_{item_id}_{current_sentence_idx}"
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
-    score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
+    score = st.slider(
+        label=f"Rate for \"{entity}\"",
+        min_value=-4,
+        max_value=4,
+        value=0,
+        format="%d",
+        key=slider_key,
+        label_visibility="collapsed",
+        help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})",
+        step=1,
+    )
+    st.markdown("""
+    <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: "Source Serif Pro", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-4</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-3</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-2</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>-1</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>0</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>1</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>2</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>3</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
+        </div>
+        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+        <div style='text-align:center; min-width:32px;'>
+            <div style='font-weight:600; font-size:13px;'>4</div>
+            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     col_left, col_center, col_right = st.columns([1,2,1])
     confirm_key = f"confirm_packet_{item_id}_{current_sentence_idx}"
@@ -317,7 +551,7 @@ def display_regular_question(sentence_item, actual_sentence_index):
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(combined_text, scorable_entities)
     st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
     st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>For each <strong>highlighted entity</strong>, rate the sentiment you feel is <strong>directed towards them</strong> in the sentence.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>For each highlighted entity, evaluate the sentiment conveyed about it in the sentence.</p>", unsafe_allow_html=True)
 
     confirm_key = f"confirm_regular_{item_id}"
     if confirm_key not in st.session_state:
@@ -325,9 +559,57 @@ def display_regular_question(sentence_item, actual_sentence_index):
     slider_scores = {}
     for entity in scorable_entities:
         display_color = entity_color_map.get(entity, "#000000")
-        slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
+        slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('"','_')}"
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
         score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
+        st.markdown("""
+        <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: \"Source Serif Pro\", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-4</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-3</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-2</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-1</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>0</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>1</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>2</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>3</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>4</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         slider_scores[entity] = score
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
         st.markdown("---")
@@ -425,7 +707,7 @@ def export_to_google_sheets(data_df):
             ws = spreadsheet.worksheet(ws_name)
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(data_df.columns))
-        expected_columns = ['submitted_by_user_login', 'submission_timestamp_utc', 'item_id', 'item_type', 'description', 'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity', 'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label', 'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step', 'mark', 'marks']
+        expected_columns = ['submitted_by_user_login', 'submission_timestamp_utc', 'demographic_age', 'demographic_country', 'item_id', 'item_type', 'description', 'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity', 'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label', 'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step', 'mark', 'marks']
         df_ordered = data_df.reindex(columns=expected_columns, fill_value='')
         for col in df_ordered.columns:
             df_ordered[col] = df_ordered[col].astype(str).replace(['nan', 'None'], '')
@@ -444,6 +726,24 @@ def export_to_google_sheets(data_df):
         st.error(f"Google Sheet (ID: '{GOOGLE_SHEET_ID}') not found or not shared with the service account: {creds_dict.get('client_email', 'your service account email')}.")
     except Exception as e:
         st.error(f"An error occurred during Google Sheets export: {e}")
+
+def display_demographic_section():
+    st.markdown("""
+    <div class="academic-paper" style="background:#fffbe6; border:1px solid #ffe58f;">
+    <h3>Optional Demographic Questions</h3>
+    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    with st.form("demographic_form", clear_on_submit=False):
+        age = st.text_input("What is your age? (Optional)", value=st.session_state.get('demographic_age', ""))
+        country = st.text_input("What country do you currently reside in? (If US, you may specify state)", value=st.session_state.get('demographic_country', ""))
+        submitted = st.form_submit_button("Submit Demographics (Optional)")
+        if submitted:
+            st.session_state['demographic_age'] = age
+            st.session_state['demographic_country'] = country
+            st.session_state['demographic_complete'] = True
+            st.success("Demographic information saved.")
+            st.rerun()
 
 def display_finish_screen():
     st.title("Survey Completed!")
@@ -475,10 +775,16 @@ You can take a look at the project page here: [Project Page](https://github.com/
 
 </div>
     """, unsafe_allow_html=True)
+    st.markdown("---")
+    st.subheader("Your Data")
     if st.session_state.user_responses:
         df = pd.DataFrame(st.session_state.user_responses)
         df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         df['submitted_by_user_login'] = "anonymous"
+        demographic_age = st.session_state.get('demographic_age', "")
+        demographic_country = st.session_state.get('demographic_country', "")
+        df['demographic_age'] = demographic_age
+        df['demographic_country'] = demographic_country
         if (
             st.session_state.get('attention_check_passed', True)
             and GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
@@ -490,21 +796,26 @@ You can take a look at the project page here: [Project Page](https://github.com/
             st.warning("Automatic Google Sheet Export is not configured by the admin (GOOGLE_SHEET_ID is missing or is a placeholder). Your data has not been automatically uploaded.")
         elif not st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
             st.warning(f"Automatic Google Sheet Export is not configured by the admin (the '{GOOGLE_CREDENTIALS_SECRET_KEY}' secret is missing). Your data has not been automatically uploaded.")
-        st.markdown("---")
-        st.subheader("Your Data")
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(label="Download Survey Data (CSV)", data=csv, use_container_width=True, file_name=f"survey_data_anonymous_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
     else:
         st.warning("No responses were recorded in this session.")
     st.markdown("---")
+    return
 
 def main():
     st.set_page_config(page_title="Sentence Sentiment Survey", layout="centered", initial_sidebar_state="collapsed")
     initialize_session_state()
     if not st.session_state.consent_given:
         display_consent_form()
+    elif not st.session_state.get('calibration_complete', False):
+        display_calibration_questions()
+    elif not st.session_state.get('calibration_confirmed', False):
+        display_calibration_confirmation()
     elif not st.session_state.survey_complete:
         display_question()
+    elif not st.session_state.get('demographic_complete', False):
+        display_demographic_section()
     else:
         display_finish_screen()
 

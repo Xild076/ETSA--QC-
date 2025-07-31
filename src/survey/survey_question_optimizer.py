@@ -18,8 +18,7 @@ import warnings
 from scipy.optimize import OptimizeWarning
 from matplotlib.widgets import Slider
 import matplotlib.gridspec as gridspec
-
-
+import json
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -27,19 +26,19 @@ url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVY
 df = pd.read_csv(url)
 
 intensity_map_string = {
-    'very': 0.85,  # Midpoint of VADER's [0.7, 1.0] range
-    'medium': 0.6,   # Midpoint of [0.5, 0.7]
-    'somewhat': 0.4, # Midpoint of [0.3, 0.5]
-    'slightly': 0.2, # Midpoint of [0.1, 0.3]
-    'neutral': 0.0 # Midpoint of [-0.1, 0.1]
+    'very': 0.85,
+    'medium': 0.6,
+    'somewhat': 0.4,
+    'slightly': 0.2,
+    'neutral': 0.0
 }
 
 intensity_map_integer = {
-    4: 0.85,  # Midpoint of VADER's [0.7, 1.0] range
-    3: 0.6,   # Midpoint of [0.5, 0.7]
-    2: 0.4,   # Midpoint of [0.3, 0.5]
-    1: 0.2,   # Midpoint of [0.1, 0.3]
-    0: 0.0 # Midpoint of [-0.1, 0.1]
+    4: 0.85,
+    3: 0.6,
+    2: 0.4,
+    1: 0.2,
+    0: 0.0
 }
 
 sentiment_sign_map = {'positive': 1, 'negative': -1}
@@ -70,14 +69,14 @@ def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'dropt
             return None
     elif remove_outliers_method == "droptop":
         try:
-            if len(y) < 10: 
+            if len(y) < 10:
                 p = 80
             else:
                 p = 90
             mask = y < np.percentile(y, p)
             y_filtered = y[mask]
             X_filtered = X[:, mask]
-            
+
             if X_filtered.shape[1] < len(bounds[0]):
                 print(f"Could not fit model: Not enough data points after outlier removal.")
                 return None
@@ -97,7 +96,7 @@ def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'dropt
     soft_l1_loss = np.sum(np.square(y - y_pred)) / len(y)
     ss_res = np.sum((y - y_pred) ** 2)
     ss_tot = np.sum((y - np.mean(y)) ** 2)
-    
+
     if ss_tot > 0:
         r2_loss = 1 - (ss_res / ss_tot)
     else:
@@ -113,7 +112,6 @@ def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'dropt
 def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     theoretical_intensity_map = {'very': 0.85, 'medium': 0.6, 'somewhat': 0.4, 'slightly': 0.2, 'neutral': 0.0}
     polarity_map = {'positive': 1, 'negative': -1, 'neutral': 0}
-
     def get_stimulus_sentiment(row):
         try:
             descriptor = ast.literal_eval(row['descriptor'])[0]
@@ -121,42 +119,53 @@ def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             return polarity_map.get(descriptor, 0) * theoretical_intensity_map.get(intensity, 0)
         except (ValueError, SyntaxError, IndexError):
             return 0.0
-
     reference_df = df[df['packet_step'] == 1].copy()
-    
     reference_df['ground_truth_stimulus_sentiment'] = reference_df.apply(get_stimulus_sentiment, axis=1)
-
+    calibration_df = df[df['item_type'].str.contains('calibration', na=False)].copy()
     user_final_normalizers = {}
-
     for seed in df['seed'].unique():
+        cal_m, cal_c = None, None
+        user_cal_data = calibration_df[calibration_df['seed'] == seed]
+        pos_response = user_cal_data[user_cal_data['code_key'] == 'calibration_positive']
+        neg_response = user_cal_data[user_cal_data['code_key'] == 'calibration_negative']
+        if not pos_response.empty and not neg_response.empty:
+            try:
+                desc_pos = json.loads(pos_response['description'].iloc[0])
+                desc_neg = json.loads(neg_response['description'].iloc[0])
+                y1 = desc_pos.get('ground_truth')
+                y2 = desc_neg.get('ground_truth')
+                x1 = pos_response['user_sentiment_score'].iloc[0]
+                x2 = neg_response['user_sentiment_score'].iloc[0]
+                if x1 is not None and x2 is not None and y1 is not None and y2 is not None and x1 != x2:
+                    cal_m = (y2 - y1) / (x2 - x1)
+                    cal_c = y1 - cal_m * x1
+            except (json.JSONDecodeError, KeyError, IndexError):
+                pass
+        ref_m, ref_c = None, None
         user_ref_data = reference_df[reference_df['seed'] == seed]
-        
         if len(user_ref_data) >= 2:
             X = user_ref_data[['user_sentiment_score']]
             y = user_ref_data['ground_truth_stimulus_sentiment']
             model = LinearRegression().fit(X, y)
-            m, c = model.coef_[0], model.intercept_
-            user_final_normalizers[seed] = (m, c)
+            ref_m, ref_c = model.coef_[0], model.intercept_
+        if cal_m is not None and cal_c is not None:
+            user_final_normalizers[seed] = (cal_m, cal_c)
+        elif ref_m is not None and ref_c is not None:
+            user_final_normalizers[seed] = (ref_m, ref_c)
         else:
             user_final_normalizers[seed] = (1/4, 0)
-            
     def apply_final_normalization(row):
-        m, c = user_final_normalizers.get(row['seed'])
+        m, c = user_final_normalizers.get(row['seed'], (1/4, 0))
         return m * row['user_sentiment_score'] + c
-
     df['user_normalized_sentiment_scores'] = df.apply(apply_final_normalization, axis=1)
-
     df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(associate_sentiment_integer)
-    
     return df, user_final_normalizers
 
 def fit_compound(formula, X, y, remove_outliers_method:Literal['lsquares', 'droptop', 'none']='none'):
     sig = inspect.signature(formula)
     params = sig.parameters
     num_params = len(params) - 1
-
     bounds = ([0] + [-5] * (num_params - 1), [1] + [5] * (num_params - 1))
-
     return fit(formula, X, y, bounds, remove_outliers_method)
 
 
@@ -165,11 +174,11 @@ df, _ = add_score_interpretations(df)
 
 def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
     action_df = df[df['item_type'] == 'compound_action'].copy()
-    
+
     cols_to_ignore = ['submission_timestamp_utc']
     subset_cols = [col for col in action_df.columns if col not in cols_to_ignore]
     action_df.drop_duplicates(subset=subset_cols, inplace=True)
-    
+
     action_data = []
 
     for _, row in action_df.iterrows():
@@ -197,7 +206,7 @@ def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized
             's_user_actor': s_user_actor,
             's_user_target': s_user_target
         })
-    
+
     action_df = pd.DataFrame(action_data)
     action_df.drop_duplicates(inplace=True)
 
@@ -205,11 +214,11 @@ def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized
 
 def create_association_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
     association_df = df[df['item_type'] == 'compound_association'].copy()
-    
+
     cols_to_ignore = ['submission_timestamp_utc']
     subset_cols = [col for col in association_df.columns if col not in cols_to_ignore]
     association_df.drop_duplicates(subset=subset_cols, inplace=True)
-    
+
     association_data = []
 
     for _, row in association_df.iterrows():
@@ -230,7 +239,7 @@ def create_association_df(score_key: Literal['user_sentiment_score', 'user_norma
         base_sentiments = []
         for desc, intens in zip(descriptor, intensity):
             base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
-        
+
         association_data.append({
             's_init_entity': base_sentiments[0],
             's_init_other': base_sentiments[1],
@@ -243,7 +252,7 @@ def create_association_df(score_key: Literal['user_sentiment_score', 'user_norma
             's_user_entity': s_user_other,
             's_user_other': s_user_entity
         })
-    
+
     association_df = pd.DataFrame(association_data)
     association_df.drop_duplicates(inplace=True)
 
@@ -276,7 +285,7 @@ def create_belonging_df(score_key: Literal['user_sentiment_score', 'user_normali
         base_sentiments = []
         for desc, intens in zip(descriptor, intensity):
             base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
-        
+
         belonging_data.append({
             's_init_parent': base_sentiments[0],
             's_init_child': base_sentiments[1],
@@ -312,7 +321,7 @@ def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normali
                 's_inits': base_sentiments[:n],
                 's_user': score,
             })
-    
+
     aggregate_df = pd.DataFrame(aggregate_data)
 
     return aggregate_df
@@ -461,7 +470,7 @@ def determine_association_parameters(association_model_df: pd.DataFrame,
         neg_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] <= 0)]
         neg_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] > 0)]
 
-    
+
         output = {}
         if splits == 'other':
             if not pos_entity_df.empty:
@@ -744,7 +753,7 @@ def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
         loss_function: Callable = aggregate_error_dynamic_softl1,
         print_process: bool = False
     ) -> dict:
-    
+
     loss_name = loss_function.__name__
 
     if "logistic" in loss_name:
@@ -855,7 +864,7 @@ def test_all_parameterizations():
             for loss_name, loss_func in aggregate_loss_functions:
                 res = determine_aggregate_parameters(aggregate_df, loss_func)
                 if res['success']: all_results.append({'model_type': 'Aggregate', 'score_key': score_key, 'loss_function': loss_name, **res})
-    
+
     console.print("\n[bold green]✅ Comprehensive Analysis Complete.[/bold green]\n")
 
     for model_type in model_param_determiners.keys():
@@ -934,7 +943,7 @@ def test_all_parameterizations():
                         betas = logistic_function(n_range, params[4], params[5], params[6], params[7])
                     ax2.plot(n_range, alphas, 'b-o', label=r'$\alpha_N$ (Primacy)'), ax2.plot(n_range, betas, 'g-s', label=r'$\beta_N$ (Recency)')
                     ax2.set_title(f'Parameters vs. N (up to N={n})'), ax2.set_xlabel('Number of Items (N)'), ax2.set_ylabel('Parameter Value'), ax2.legend(), ax2.grid(True, linestyle='--', alpha=0.6)
-                    
+
                     current_alpha, current_beta = alphas[-1], betas[-1]
                     weights = calculate_weights(n, current_alpha, current_beta)
                     markerline, stemlines, baseline = ax3.stem(range(1, n + 1), weights, label=f'N={n}', basefmt=" ")
@@ -942,7 +951,7 @@ def test_all_parameterizations():
                     ax3.plot(range(1, n + 1), weights, 'r-')
                     ax3.set_title(fr'Weight Distribution for N={n} ($\alpha={current_alpha:.2f}, \beta={current_beta:.2f}$)'), ax3.set_xlabel('Item Position (i)'), ax3.set_ylabel('Weight'), ax3.set_ylim(bottom=0), ax3.grid(True, linestyle='--', alpha=0.6)
                     fig.canvas.draw_idle()
-                
+
                 update(int(max_n/2))
                 n_slider.on_changed(update)
             plt.show()
@@ -954,3 +963,6 @@ def test_all_parameterizations():
         for err in fitting_errors:
             error_table.add_row(err['model_type'], err['score_key'], err['function'], err['outlier_method'], err['split'], err['error'])
         console.print(error_table)
+
+if __name__ == '__main__':
+    test_all_parameterizations()

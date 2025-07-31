@@ -1,0 +1,662 @@
+{
+    "pos_desc": {
+        "very": [
+            {
+                "text": "excellent",
+                "combined_score": 0.9055877953532669,
+                "standard_deviation": 0.3195122140687573
+            },
+            {
+                "text": "wonderful",
+                "combined_score": 0.8773177724613912,
+                "standard_deviation": 0.31545368893523357
+            },
+            {
+                "text": "beautiful",
+                "combined_score": 0.8461893155966782,
+                "standard_deviation": 0.3048338045140675
+            },
+            {
+                "text": "superb",
+                "combined_score": 0.8375288549871495,
+                "standard_deviation": 0.30547380354897274
+            },
+            {
+                "text": "absolutely perfect",
+                "combined_score": 0.8812264848901994,
+                "standard_deviation": 0.33827372673504186
+            }
+        ],
+        "strong": [
+            {
+                "text": "good",
+                "combined_score": 0.6753579330149977,
+                "standard_deviation": 0.29598153718054077
+            },
+            {
+                "text": "splendid",
+                "combined_score": 0.6641937746173944,
+                "standard_deviation": 0.2997389593535347
+            },
+            {
+                "text": "marvelous",
+                "combined_score": 0.7139351742965894,
+                "standard_deviation": 0.3435058420712374
+            },
+            {
+                "text": "remarkable",
+                "combined_score": 0.6585062672227621,
+                "standard_deviation": 0.33671018063072744
+            },
+            {
+                "text": "outstanding",
+                "combined_score": 0.7880877926696093,
+                "standard_deviation": 0.32489040984159534
+            }
+        ],
+        "moderate": [
+            {
+                "text": "useful",
+                "combined_score": 0.4787076523573862,
+                "standard_deviation": 0.3190992618065429
+            },
+            {
+                "text": "pleasant",
+                "combined_score": 0.547365173013329,
+                "standard_deviation": 0.2894321887741312
+            },
+            {
+                "text": "enjoyable",
+                "combined_score": 0.542437896432024,
+                "standard_deviation": 0.318530885568073
+            },
+            {
+                "text": "elegant",
+                "combined_score": 0.5297730037843188,
+                "standard_deviation": 0.32635609178702724
+            },
+            {
+                "text": "positive",
+                "combined_score": 0.5555724997106946,
+                "standard_deviation": 0.3422095767554656
+            }
+        ],
+        "slight": [
+            {
+                "text": "fine",
+                "combined_score": 0.3052482163979499,
+                "standard_deviation": 0.3133964881133773
+            },
+            {
+                "text": "satisfactory",
+                "combined_score": 0.29191108186774783,
+                "standard_deviation": 0.3233982548695523
+            },
+            {
+                "text": "decent",
+                "combined_score": 0.2315623952598168,
+                "standard_deviation": 0.3620595098557721
+            },
+            {
+                "text": "reasonable",
+                "combined_score": 0.21577440503018874,
+                "standard_deviation": 0.37104844740831744
+            },
+            {
+                "text": "adequate",
+                "combined_score": 0.1558743891256827,
+                "standard_deviation": 0.37362131873259313
+            }
+        ]
+    },
+    "neg_verbs": {
+        "very": [
+            {
+                "text": "brutally humiliated",
+                "combined_score": -0.8354697960943398,
+                "standard_deviation": 0.36859547676950855
+            },
+            {
+                "text": "seriously harmed",
+                "combined_score": -0.8107704142012806,
+                "standard_deviation": 0.36903106923519585
+            },
+            {
+                "text": "violently attacked",
+                "combined_score": -0.8269391553469141,
+                "standard_deviation": 0.38865202429679835
+            },
+            {
+                "text": "repeatedly annoyed",
+                "combined_score": -0.8068748516187486,
+                "standard_deviation": 0.38423727813885383
+            },
+            {
+                "text": "severely traumatized",
+                "combined_score": -0.7840298113888751,
+                "standard_deviation": 0.3928802958506402
+            }
+        ],
+        "strong": [
+            {
+                "text": "angrily mocked",
+                "combined_score": -0.7360058101317122,
+                "standard_deviation": 0.3511775114486883
+            },
+            {
+                "text": "hurt",
+                "combined_score": -0.6927974985402846,
+                "standard_deviation": 0.3770139856220892
+            },
+            {
+                "text": "unfairly blamed",
+                "combined_score": -0.6377915287028584,
+                "standard_deviation": 0.37957591506148586
+            },
+            {
+                "text": "betrayed",
+                "combined_score": -0.5707456384518632,
+                "standard_deviation": 0.37218510832441154
+            },
+            {
+                "text": "hopelessly scarred",
+                "combined_score": -0.7279104269561668,
+                "standard_deviation": 0.39618010805349024
+            }
+        ],
+        "moderate": [
+            {
+                "text": "deceived",
+                "combined_score": -0.49209823331534863,
+                "standard_deviation": 0.3701668053739038
+            },
+            {
+                "text": "hesitated",
+                "combined_score": -0.4191999452186955,
+                "standard_deviation": 0.3591206271078373
+            },
+            {
+                "text": "openly opposed",
+                "combined_score": -0.47949211667513564,
+                "standard_deviation": 0.37443895413010375
+            },
+            {
+                "text": "complained",
+                "combined_score": -0.34894071100619106,
+                "standard_deviation": 0.35641193735132004
+            },
+            {
+                "text": "undermined",
+                "combined_score": -0.4840160970901449,
+                "standard_deviation": 0.38314886165263423
+            }
+        ],
+        "slight": [
+            {
+                "text": "separated",
+                "combined_score": -0.10981999049145802,
+                "standard_deviation": 0.34427228094629003
+            },
+            {
+                "text": "whispered",
+                "combined_score": -0.12084239741994275,
+                "standard_deviation": 0.34950826192394574
+            },
+            {
+                "text": "weakened",
+                "combined_score": -0.22581237949828306,
+                "standard_deviation": 0.3852284032281931
+            },
+            {
+                "text": "estranged",
+                "combined_score": -0.1686712051569312,
+                "standard_deviation": 0.3865324434219367
+            },
+            {
+                "text": "restrained",
+                "combined_score": -0.13747977626820404,
+                "standard_deviation": 0.37210297600452386
+            }
+        ]
+    },
+    "pos_nouns": {
+        "very": [
+            {
+                "text": "the superb and excellent person",
+                "combined_score": 0.9065489526754452,
+                "standard_deviation": 0.31537175838221154
+            },
+            {
+                "text": "the admirable and respectable person",
+                "combined_score": 0.8588511906905514,
+                "standard_deviation": 0.33527435789681503
+            },
+            {
+                "text": "the gracious and kind person",
+                "combined_score": 0.8610348392284544,
+                "standard_deviation": 0.3370843646174979
+            },
+            {
+                "text": "the happy and cheerful person",
+                "combined_score": 0.8555844327675317,
+                "standard_deviation": 0.3290938467669874
+            },
+            {
+                "text": "the loving and affectionate person",
+                "combined_score": 0.8435297653097591,
+                "standard_deviation": 0.326406977489782
+            }
+        ],
+        "strong": [
+            {
+                "text": "the loving person",
+                "combined_score": 0.7893617721510223,
+                "standard_deviation": 0.33237783740423543
+            },
+            {
+                "text": "the creative and imaginative person",
+                "combined_score": 0.6958422474687092,
+                "standard_deviation": 0.34620253373279997
+            },
+            {
+                "text": "the intelligent person",
+                "combined_score": 0.6911003882505827,
+                "standard_deviation": 0.3479132197142645
+            },
+            {
+                "text": "the principled and ethical person",
+                "combined_score": 0.6618442101111428,
+                "standard_deviation": 0.34669163469389047
+            },
+            {
+                "text": "the noble and dignified person",
+                "combined_score": 0.7994061877039916,
+                "standard_deviation": 0.34632049489332856
+            }
+        ],
+        "moderate": [
+            {
+                "text": "the reasonable and fair person",
+                "combined_score": 0.47396178354077345,
+                "standard_deviation": 0.3179664169990883
+            },
+            {
+                "text": "the decent and honest person",
+                "combined_score": 0.5368599276778403,
+                "standard_deviation": 0.31867144454021296
+            },
+            {
+                "text": "the witty person",
+                "combined_score": 0.4945674004654089,
+                "standard_deviation": 0.34523190983748303
+            },
+            {
+                "text": "the neat person",
+                "combined_score": 0.39588007684544557,
+                "standard_deviation": 0.3483755755977436
+            },
+            {
+                "text": "the sincere person",
+                "combined_score": 0.5934709237353255,
+                "standard_deviation": 0.3350593699472035
+            }
+        ],
+        "slight": [
+            {
+                "text": "the sensible person",
+                "combined_score": 0.2654460332770314,
+                "standard_deviation": 0.3864310558178936
+            },
+            {
+                "text": "the straightforward person",
+                "combined_score": 0.21517521236091852,
+                "standard_deviation": 0.3952365202678578
+            },
+            {
+                "text": "the level headed person",
+                "combined_score": 0.256374137631307,
+                "standard_deviation": 0.39346902202754797
+            },
+            {
+                "text": "the articulate person",
+                "combined_score": 0.33211075892258024,
+                "standard_deviation": 0.39518432675140996
+            },
+            {
+                "text": "the tidy person",
+                "combined_score": 0.19709770344197752,
+                "standard_deviation": 0.4040242302953636
+            }
+        ]
+    },
+    "neg_desc": {
+        "very": [
+            {
+                "text": "horrible",
+                "combined_score": -0.8560756105078591,
+                "standard_deviation": 0.3211233070990357
+            },
+            {
+                "text": "terrible",
+                "combined_score": -0.863743095710501,
+                "standard_deviation": 0.32920842177517484
+            },
+            {
+                "text": "horrific",
+                "combined_score": -0.8236240872540408,
+                "standard_deviation": 0.30323830451220823
+            },
+            {
+                "text": "disastrous",
+                "combined_score": -0.8143565389382343,
+                "standard_deviation": 0.29913685328131306
+            },
+            {
+                "text": "bad",
+                "combined_score": -0.8044821951162094,
+                "standard_deviation": 0.3069557231786786
+            }
+        ],
+        "strong": [
+            {
+                "text": "dangerous",
+                "combined_score": -0.750483128599243,
+                "standard_deviation": 0.30464257672738015
+            },
+            {
+                "text": "useless",
+                "combined_score": -0.7279664323983921,
+                "standard_deviation": 0.32029955435792196
+            },
+            {
+                "text": "unpleasant",
+                "combined_score": -0.6614753534138202,
+                "standard_deviation": 0.3057505903654917
+            },
+            {
+                "text": "disappointing",
+                "combined_score": -0.632131413032694,
+                "standard_deviation": 0.3176764593192154
+            },
+            {
+                "text": "poor",
+                "combined_score": -0.7511032312377105,
+                "standard_deviation": 0.3349439529800349
+            }
+        ],
+        "moderate": [
+            {
+                "text": "mediocre",
+                "combined_score": -0.5040873920732627,
+                "standard_deviation": 0.3336907682943425
+            },
+            {
+                "text": "dull",
+                "combined_score": -0.39924487814403353,
+                "standard_deviation": 0.3343310280141216
+            },
+            {
+                "text": "unhealthy",
+                "combined_score": -0.5640512861763989,
+                "standard_deviation": 0.319887782845296
+            },
+            {
+                "text": "weak",
+                "combined_score": -0.536639133500501,
+                "standard_deviation": 0.341131086543139
+            },
+            {
+                "text": "unwarranted",
+                "combined_score": -0.4521081113187527,
+                "standard_deviation": 0.3655143634533884
+            }
+        ],
+        "slight": [
+            {
+                "text": "awkward",
+                "combined_score": -0.2594809540587443,
+                "standard_deviation": 0.38648690084314913
+            },
+            {
+                "text": "inferior",
+                "combined_score": -0.33404383969108264,
+                "standard_deviation": 0.3902212113990591
+            },
+            {
+                "text": "unqualified",
+                "combined_score": -0.15563556055227915,
+                "standard_deviation": 0.3965664917196335
+            },
+            {
+                "text": "unwanted",
+                "combined_score": -0.37691954465226996,
+                "standard_deviation": 0.3983074774310527
+            },
+            {
+                "text": "outdated",
+                "combined_score": -0.17409545895126133,
+                "standard_deviation": 0.4257071876984036
+            }
+        ]
+    },
+    "pos_verbs": {
+        "very": [
+            {
+                "text": "offered joy to",
+                "combined_score": 0.8179718774655252,
+                "standard_deviation": 0.3605540815808194
+            },
+            {
+                "text": "bravely defended",
+                "combined_score": 0.804579720154174,
+                "standard_deviation": 0.3611065096014689
+            },
+            {
+                "text": "gave welcome to",
+                "combined_score": 0.7809660011015258,
+                "standard_deviation": 0.3747877804897851
+            },
+            {
+                "text": "celebrated",
+                "combined_score": 0.7690482634220893,
+                "standard_deviation": 0.36830988534735043
+            },
+            {
+                "text": "smiled at",
+                "combined_score": 0.7733713304070446,
+                "standard_deviation": 0.3851966011727498
+            }
+        ],
+        "strong": [
+            {
+                "text": "stood strong for",
+                "combined_score": 0.7430006950404358,
+                "standard_deviation": 0.3870106521606491
+            },
+            {
+                "text": "shared laugh with",
+                "combined_score": 0.5962035914911193,
+                "standard_deviation": 0.36947534248530206
+            },
+            {
+                "text": "accepted totally",
+                "combined_score": 0.6093037616004546,
+                "standard_deviation": 0.38898845079139605
+            },
+            {
+                "text": "commended",
+                "combined_score": 0.6140645216575927,
+                "standard_deviation": 0.3877173563986211
+            },
+            {
+                "text": "inspired confidence in",
+                "combined_score": 0.6970503831027293,
+                "standard_deviation": 0.41481295356456555
+            }
+        ],
+        "moderate": [
+            {
+                "text": "provided nurturing to",
+                "combined_score": 0.40427962322343713,
+                "standard_deviation": 0.35936074894429126
+            },
+            {
+                "text": "showed friendship to",
+                "combined_score": 0.45947051649962867,
+                "standard_deviation": 0.39765071958264775
+            },
+            {
+                "text": "fostered inclusion for",
+                "combined_score": 0.42165199425761346,
+                "standard_deviation": 0.37999674911327563
+            },
+            {
+                "text": "brought opportunity to",
+                "combined_score": 0.5157358167760093,
+                "standard_deviation": 0.38256785389788867
+            },
+            {
+                "text": "trusted completely",
+                "combined_score": 0.4009188119167255,
+                "standard_deviation": 0.37423681761228766
+            }
+        ],
+        "slight": [
+            {
+                "text": "led to safety for",
+                "combined_score": 0.2358062205913442,
+                "standard_deviation": 0.34714770818775703
+            },
+            {
+                "text": "made effort for",
+                "combined_score": 0.21983238477976277,
+                "standard_deviation": 0.3593185672952395
+            },
+            {
+                "text": "taught",
+                "combined_score": 0.18968302694459757,
+                "standard_deviation": 0.3742967256640657
+            },
+            {
+                "text": "checked on",
+                "combined_score": 0.09921478400500411,
+                "standard_deviation": 0.33057171261039614
+            },
+            {
+                "text": "encouraged",
+                "combined_score": 0.2716733681259884,
+                "standard_deviation": 0.37467779304973836
+            }
+        ]
+    },
+    "neg_nouns": {
+        "very": [
+            {
+                "text": "the abusive and violent person",
+                "combined_score": -0.8601216066717068,
+                "standard_deviation": 0.33636740461708625
+            },
+            {
+                "text": "the cowardly and fearful person",
+                "combined_score": -0.8622324556602372,
+                "standard_deviation": 0.3395149917122561
+            },
+            {
+                "text": "the dangerous person",
+                "combined_score": -0.8211512978447808,
+                "standard_deviation": 0.3414193434693084
+            },
+            {
+                "text": "the vile and disgusting person",
+                "combined_score": -0.8796926631265769,
+                "standard_deviation": 0.35237261378800594
+            },
+            {
+                "text": "the cruel and heartless person",
+                "combined_score": -0.8733541480880093,
+                "standard_deviation": 0.35412124290307473
+            }
+        ],
+        "strong": [
+            {
+                "text": "the cynical and pessimistic person",
+                "combined_score": -0.6612883671644385,
+                "standard_deviation": 0.31022996112470913
+            },
+            {
+                "text": "the awkward and uncomfortable person",
+                "combined_score": -0.7856522960063024,
+                "standard_deviation": 0.3343028909261338
+            },
+            {
+                "text": "the insecure and anxious person",
+                "combined_score": -0.6677464522015165,
+                "standard_deviation": 0.3514663596333203
+            },
+            {
+                "text": "the clumsy and careless person",
+                "combined_score": -0.7782369848177435,
+                "standard_deviation": 0.36253473431933325
+            },
+            {
+                "text": "the messy and disorganized person",
+                "combined_score": -0.5819457554201146,
+                "standard_deviation": 0.34282481002529225
+            }
+        ],
+        "moderate": [
+            {
+                "text": "the difficult person",
+                "combined_score": -0.3867689910670121,
+                "standard_deviation": 0.33741693813581475
+            },
+            {
+                "text": "the sinister person",
+                "combined_score": -0.48320132428291773,
+                "standard_deviation": 0.35708595156662665
+            },
+            {
+                "text": "the harsh person",
+                "combined_score": -0.38963562892702996,
+                "standard_deviation": 0.37027065619301713
+            },
+            {
+                "text": "the lazy person",
+                "combined_score": -0.4698511301451259,
+                "standard_deviation": 0.3854312811995524
+            },
+            {
+                "text": "the vague and unclear person",
+                "combined_score": -0.4871100239182052,
+                "standard_deviation": 0.3783903207311988
+            }
+        ],
+        "slight": [
+            {
+                "text": "the hesitant and unsure person",
+                "combined_score": -0.2877570167624288,
+                "standard_deviation": 0.36337594877033297
+            },
+            {
+                "text": "the abrasive person",
+                "combined_score": -0.2056733835502355,
+                "standard_deviation": 0.38627902625481364
+            },
+            {
+                "text": "the volatile and unpredictable person",
+                "combined_score": -0.23823554103297212,
+                "standard_deviation": 0.3933085133533604
+            },
+            {
+                "text": "the blunt person",
+                "combined_score": -0.09715959461934773,
+                "standard_deviation": 0.3701462205056704
+            },
+            {
+                "text": "the reserved and timid person",
+                "combined_score": -0.21330952299413858,
+                "standard_deviation": 0.38811286254058674
+            }
+        ]
+    }
+}

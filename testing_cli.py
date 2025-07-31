@@ -14,14 +14,17 @@ def run_tests():
     test_all_parameterizations()
 
 def main():
-    parser = argparse.ArgumentParser(description="Stock Prediction Model CLI")
-    parser.add_argument('command', choices=['app', 'tests'], help="Command to execute")
+    parser = argparse.ArgumentParser(description="ETSA CLI")
+    parser.add_argument('command', choices=['app', 'tests', 'ttw'], help="Command to execute")
     args = parser.parse_args()
 
     if args.command == 'app':
         run_app()
     elif args.command == 'tests':
         run_tests()
+    elif args.command == 'ttw':
+        print(f"{Fore.YELLOW}Running ttw.py...{Style.RESET_ALL}")
+        subprocess.run(["python", "src/sentiment/ttw.py"], cwd=os.path.dirname(__file__))
 
 if __name__ == "__main__":
     main()
