@@ -11,6 +11,7 @@ import ast
 import os
 import argparse
 from typing import Dict, List, Any, Set, Tuple
+import math
 
 ssl._create_default_https_context = ssl._create_unverified_context
 console = Console(width=120)
@@ -35,7 +36,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from textblob import TextBlob
 from flair.models import TextClassifier
 from flair.data import Sentence
-from transformers import pipeline
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer, AutoModelForSequenceClassification
 from pysentimiento import create_analyzer
 
 CONFIG = {
@@ -44,14 +45,16 @@ CONFIG = {
     "output_dir": "src/sentiment/lexicons",
     "output_filename": "optimized_lexicon.json",
     "huggingface_models_to_load": [
-        "distilbert-base-uncased-finetuned-sst-2-english",
         "nlptown/bert-base-multilingual-uncased-sentiment",
         "finiteautomata/bertweet-base-sentiment-analysis",
         "ProsusAI/finbert",
     ],
+    "logit_based_models": [
+        "distilbert-base-uncased-finetuned-sst-2-english"
+    ],
     "pysentimiento_model": "pysentimiento/robertuito-sentiment-analysis",
-    "enable_wordnet_expansion": True,
-    "MIN_WORD_FREQUENCY": 1e-6, # Corresponds to words like 'hesitant', 'witty', 'abhorrent'
+    "perplexity_model": "gpt2",
+    "MIN_WORD_FREQUENCY": 1e-6,
     "valence_map": {
         "very": {"range": [0.80, 1.0], "midpoint": 0.90},
         "strong": {"range": [0.60, 0.80], "midpoint": 0.70},
@@ -64,7 +67,23 @@ CONFIG = {
         "sd_leniency_step": 0.05,
         "initial_sd_threshold": 0.35
     },
+    "GOODNESS_WEIGHTS": {
+        "distance": 0.30,
+        "std_dev": 0.25,
+        "cohesion": 0.15,
+        "perplexity": 0.20,
+        "brevity": 0.10
+    },
+    "VALIDATION_CONFIG": {
+        "verb_ppl_threshold_multiplier": 5.0,
+        "verb_forbidden_pos": {"NOUN", "ADP", "SCONJ"}
+    },
+    "DYNAMIC_INTENSIFIER_CONFIG": {
+        "amplification_factor": 1.5,
+        "dampening_factor": 0.7,
+    },
     "stopwords": {'a', 'an', 'the', 'person', 'and', 'to', 'use', 'very', 'truly', 'really', 'quite', 'so', 'yours', 'soul', 'mortal', 'individual'},
+    "intensifiers": {'repeatedly', 'constantly', 'deeply', 'harshly', 'openly', 'brutally', 'utterly', 'truly', 'really', 'very', 'incredibly', 'extremely', 'slightly', 'somewhat'},
     "cohesion_anchor_words": {
         "pos_nouns": ["wonderful", "kind", "honorable", "virtuous", "good"],
         "neg_nouns": ["terrible", "cruel", "selfish", "toxic", "bad"],
@@ -76,36 +95,96 @@ CONFIG = {
 }
 
 class SentimentAnalyzer:
-    def __init__(self, console: Console, hf_models: List[str]):
+    def __init__(self, console: Console, hf_models: List[str], logit_models_list: List[str], perplexity_model_name: str):
         self.console = console
         self.device = 0 if torch.cuda.is_available() else -1
         console.print("[bold cyan]Initializing sentiment models...[/bold cyan]")
         self.vader = SentimentIntensityAnalyzer()
         self.flair = TextClassifier.load('sentiment')
         self.pysentimiento = create_analyzer(task="sentiment", lang="en")
+        
         self.hf_pipelines = {}
         for model_name in hf_models:
-            console.print(f"  > Loading Hugging Face model: [bold magenta]{model_name}[/bold magenta]...")
+            console.print(f"  > Loading Hugging Face pipeline: [bold magenta]{model_name}[/bold magenta]...")
             try:
                 self.hf_pipelines[model_name] = pipeline("sentiment-analysis", model=model_name, device=self.device, top_k=None)
             except Exception as e:
                 console.print(f"[bold red]Failed to load model {model_name}: {e}[/bold red]")
+
+        self.logit_models = {}
+        for model_name in logit_models_list:
+            console.print(f"  > Loading Hugging Face model for logit extraction: [bold magenta]{model_name}[/bold magenta]...")
+            try:
+                model = AutoModelForSequenceClassification.from_pretrained(model_name).to(self.device if self.device != -1 else 'cpu')
+                tokenizer = AutoTokenizer.from_pretrained(model_name)
+                self.logit_models[model_name] = {'model': model, 'tokenizer': tokenizer}
+            except Exception as e:
+                console.print(f"[bold red]Failed to load model {model_name}: {e}[/bold red]")
+
+        console.print(f"  > Loading Perplexity model: [bold magenta]{perplexity_model_name}[/bold magenta]...")
+        try:
+            self.perplexity_model = AutoModelForCausalLM.from_pretrained(perplexity_model_name).to(self.device if self.device != -1 else 'cpu')
+            self.perplexity_tokenizer = AutoTokenizer.from_pretrained(perplexity_model_name)
+        except Exception as e:
+            console.print(f"[bold red]Failed to load perplexity model {perplexity_model_name}: {e}[/bold red]")
+            self.perplexity_model = None
         console.print("[bold green]All sentiment models initialized.[/bold green]")
 
-    def _get_hf_score(self, result: List[Dict[str, Any]], model_name: str) -> float:
+    def _get_hf_pipeline_score(self, result: List[Dict[str, Any]], model_name: str) -> float:
         score_map = {item['label'].lower().replace('pos', 'positive').replace('neg', 'negative').replace('neu', 'neutral'): item['score'] for item in result}
         if "nlptown" in model_name:
             score_val = int(re.search(r'\d+', result[0]['label']).group())
             return -1.0 + (2.0 * (score_val - 1) / 4.0)
-        elif "distilbert" in model_name:
-            sign = 1.0 if 'positive' in result[0]['label'].lower() else -1.0
-            return result[0]['score'] * sign
         else:
             return score_map.get('positive', 0.0) - score_map.get('negative', 0.0)
+    
+    def _get_hf_logit_score(self, text: str, model_info: Dict) -> float:
+        model = model_info['model']
+        tokenizer = model_info['tokenizer']
+        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(model.device)
+        with torch.no_grad():
+            logits = model(**inputs).logits
+        
+        id2label = model.config.id2label
+        neg_idx, pos_idx = -1, -1
+        for i, label in id2label.items():
+            if label.lower() in ['negative', 'neg']: neg_idx = i
+            if label.lower() in ['positive', 'pos']: pos_idx = i
+        
+        if pos_idx == -1 or neg_idx == -1: return 0.0
+
+        logit_diff = logits[0, pos_idx] - logits[0, neg_idx]
+        return torch.tanh(logit_diff).item()
+
+    def _get_perplexity(self, text: str) -> float:
+        if not self.perplexity_model or not text:
+            return 100000.0
+
+        encodings = self.perplexity_tokenizer(text, return_tensors='pt').to(self.perplexity_model.device)
+        max_length = self.perplexity_model.config.n_positions
+        stride = 512
+        seq_len = encodings.input_ids.size(1)
+
+        nlls = []
+        with torch.no_grad():
+            for i in range(0, seq_len, stride):
+                begin_loc = max(i + stride - max_length, 0)
+                end_loc = min(i + stride, seq_len)
+                trg_len = end_loc - i
+                input_ids = encodings.input_ids[:, begin_loc:end_loc]
+                target_ids = input_ids.clone()
+                target_ids[:, :-trg_len] = -100
+
+                outputs = self.perplexity_model(input_ids, labels=target_ids)
+                neg_log_likelihood = outputs.loss * trg_len
+                nlls.append(neg_log_likelihood)
+        
+        ppl = torch.exp(torch.stack(nlls).sum() / end_loc).item()
+        return ppl if not (math.isinf(ppl) or math.isnan(ppl)) else 100000.0
 
     def analyze(self, texts: List[str]) -> Dict[str, Dict[str, float]]:
         all_results = defaultdict(dict)
-        for text in tqdm(texts, desc="Analyzing (lightweight models)", leave=False, ncols=120):
+        for text in tqdm(texts, desc="Analyzing (lightweight models & perplexity)", leave=False, ncols=120):
             all_results[text]['vader'] = self.vader.polarity_scores(text)['compound']
             all_results[text]['textblob'] = TextBlob(text).sentiment.polarity
             flair_sentence = Sentence(text)
@@ -124,16 +203,28 @@ class SentimentAnalyzer:
                         neg += np.mean([s.neg_score() for s in synsets])
                         count += 1
                 all_results[text]['sentiwordnet'] = (pos - neg) / count if count > 0 else 0.0
-        
+            
+            all_results[text]['perplexity'] = self._get_perplexity(text)
+
         for model_name, pipe in self.hf_pipelines.items():
             model_short_name = model_name.split('/')[-1]
             try:
                 hf_outputs = pipe(texts, batch_size=32, truncation=True)
                 for text, result in zip(texts, hf_outputs):
-                    all_results[text][model_short_name] = self._get_hf_score(result, model_name)
+                    all_results[text][model_short_name] = self._get_hf_pipeline_score(result, model_name)
             except Exception as e:
                 self.console.print(f"[bold red]Error with {model_name}: {e}[/bold red]")
                 for text in texts: all_results[text][model_short_name] = 0.0
+
+        for model_name, model_info in self.logit_models.items():
+            model_short_name = model_name.split('/')[-1]
+            for text in tqdm(texts, desc=f"Analyzing ({model_short_name} logits)", leave=False, ncols=120):
+                try:
+                    all_results[text][model_short_name] = self._get_hf_logit_score(text, model_info)
+                except Exception as e:
+                    self.console.print(f"[bold red]Error with {model_name} logit scoring: {e}[/bold red]")
+                    all_results[text][model_short_name] = 0.0
+
         return all_results
 
 class LexiconOptimizer:
@@ -142,6 +233,7 @@ class LexiconOptimizer:
         self.analyzer = analyzer
         self.config = config
         self.anchor_docs = {cat: NLP(" ".join(words)) for cat, words in config["cohesion_anchor_words"].items()} if NLP else {}
+        self._baseline_ppl = None
 
     def _get_key_lemmas(self, text: str) -> Set[str]:
         if not NLP: return {w for w in re.findall(r'\b[a-zA-Z-]+\b', text.lower()) if w not in self.config["stopwords"]}
@@ -154,25 +246,35 @@ class LexiconOptimizer:
         if not words: return False
         return all(word_frequency(w, 'en') >= self.config["MIN_WORD_FREQUENCY"] for w in words if w not in self.config["stopwords"])
 
-    def _is_grammatically_valid(self, text: str, category_type: str) -> Tuple[bool, str]:
+    def _is_grammatically_valid(self, text: str, category_type: str, analyzer: SentimentAnalyzer) -> Tuple[bool, str]:
         if not NLP: return True, text
         
         if category_type == "verbs":
-            test_sentence = f"They {text} them."
-            doc = NLP(test_sentence)
-            verbs = [tok for tok in doc if tok.pos_ == "VERB"]
-            if not verbs: return False, text
-            root_verb = next((tok for tok in doc if tok.dep_ == "ROOT"), None)
-            if not root_verb or root_verb.pos_ != "VERB": return False, text
+            doc_phrase = NLP(text)
+            forbidden_pos = self.config["VALIDATION_CONFIG"]["verb_forbidden_pos"]
+            if any(token.pos_ in forbidden_pos for token in doc_phrase):
+                return False, text
+
+            test_sentence = f"Someone {text} someone."
+            if self._baseline_ppl is None:
+                self._baseline_ppl = analyzer._get_perplexity("Someone helped someone.")
             
-            # Simple past tense normalization
+            ppl = analyzer._get_perplexity(test_sentence)
+            threshold = self._baseline_ppl * self.config["VALIDATION_CONFIG"]["verb_ppl_threshold_multiplier"]
+            if ppl > threshold:
+                return False, text
+
+            doc = NLP(test_sentence)
+            root_verb = next((tok for tok in doc if tok.dep_ == "ROOT"), None)
+            if not root_verb or root_verb.pos_ != "VERB":
+                return False, text
+            
             if root_verb.tag_ != "VBD":
-                try: # Try TextBlob first
+                try:
                     past_tense_verb = TextBlob(root_verb.lemma_).words[0].lemmatize("v")
-                except: # Fallback to SpaCy lemma
+                except:
                     past_tense_verb = root_verb.lemma_
                 
-                # Reconstruct original phrase with past tense verb
                 original_doc = NLP(text)
                 original_verb = next((tok for tok in original_doc if tok.pos_ == "VERB"), None)
                 if original_verb:
@@ -199,46 +301,110 @@ class LexiconOptimizer:
         min_val, max_val = arr.min(), arr.max()
         return np.zeros_like(arr) if max_val == min_val else (arr - min_val) / (max_val - min_val)
 
+    def _calculate_dynamic_intensified_score(self, base_score, intensifier_score):
+        cfg = self.config["DYNAMIC_INTENSIFIER_CONFIG"]
+        if base_score * intensifier_score >= 0:
+            final_score = base_score * (1 + abs(intensifier_score) * cfg["amplification_factor"])
+        else:
+            final_score = base_score * (1 - abs(intensifier_score) * cfg["dampening_factor"])
+        return np.clip(final_score, -1.0, 1.0)
+
     def run(self) -> Dict[str, Any]:
         final_lexicons = defaultdict(lambda: defaultdict(list))
         global_used_lemmas = defaultdict(set)
         
-        all_unique_candidates = set()
+        phrases_to_analyze = set()
         processed_pools = {}
+        intensifiers = self.config.get("intensifiers", set())
+        phrases_to_analyze.update(intensifiers)
+
         for category, items in self.candidate_pools.items():
             category_type = category.split('_')[1]
             candidate_set = {item.strip() for item in items if item}
             
             valid_candidates = set()
             for cand in candidate_set:
-                is_valid, normalized_cand = self._is_grammatically_valid(cand, category_type)
+                is_valid, normalized_cand = self._is_grammatically_valid(cand, category_type, self.analyzer)
                 if is_valid and self._is_common_enough(normalized_cand):
                     valid_candidates.add(normalized_cand)
             processed_pools[category] = valid_candidates
-            all_unique_candidates.update(valid_candidates)
-        
-        unique_candidate_list = list(all_unique_candidates)
+            phrases_to_analyze.update(valid_candidates)
+
+        templates = {
+            "nouns": "This is about {}.",
+            "verbs": "They {} them.",
+            "desc": "The item was {}."
+        }
+        for category, cands in processed_pools.items():
+            cat_type = category.split('_')[1]
+            template = templates.get(cat_type)
+            if template:
+                for cand in cands:
+                    phrases_to_analyze.add(template.format(cand))
+
+        unique_candidate_list = list(phrases_to_analyze)
         if not unique_candidate_list:
             self.analyzer.console.print("[bold yellow]No valid candidates found to analyze.[/bold yellow]")
             return {}
             
-        self.analyzer.console.print(f"[yellow]Analyzing sentiment for [bold]{len(unique_candidate_list)}[/bold] unique, valid candidate phrases...[/yellow]")
+        self.analyzer.console.print(f"[yellow]Analyzing sentiment for [bold]{len(unique_candidate_list)}[/bold] total phrases...[/yellow]")
         master_scores_map = self.analyzer.analyze(unique_candidate_list)
         
         all_scored_candidates_by_cat = defaultdict(list)
         for category, candidate_set in processed_pools.items():
+            category_type = category.split('_')[1]
+            template = templates.get(category_type)
+
             for text in candidate_set:
-                scores_dict = master_scores_map.get(text)
-                if not scores_dict or not scores_dict.values(): continue
-                scores = list(scores_dict.values())
+                templated_text = template.format(text) if template else text
+                templated_scores_dict = master_scores_map.get(templated_text)
+                if not templated_scores_dict: continue
+
+                words = text.split()
+                intensifier_words = [word for word in words if word in intensifiers]
+                base_words = [word for word in words if word not in intensifiers]
+                
+                final_score = 0.0
+                if not base_words:
+                    base_text = text
+                else:
+                    base_text = " ".join(base_words)
+                
+                base_templated_text = template.format(base_text) if template else base_text
+                base_templated_scores_dict = master_scores_map.get(base_templated_text)
+                if not base_templated_scores_dict: continue
+                
+                base_scores = [v for k, v in base_templated_scores_dict.items() if k != 'perplexity']
+                if not base_scores: continue
+                base_score = np.mean([np.median(base_scores), np.mean(base_scores)])
+
+                if intensifier_words:
+                    intensifier_scores_list = []
+                    for intensifier in intensifier_words:
+                        intensifier_score_dict = master_scores_map.get(intensifier)
+                        if intensifier_score_dict:
+                            intensifier_all_scores = [v for k, v in intensifier_score_dict.items() if k != 'perplexity']
+                            if intensifier_all_scores:
+                                intensifier_scores_list.append(np.mean([np.median(intensifier_all_scores), np.mean(intensifier_all_scores)]))
+                    
+                    if intensifier_scores_list:
+                        avg_intensifier_score = np.mean(intensifier_scores_list)
+                        final_score = self._calculate_dynamic_intensified_score(base_score, avg_intensifier_score)
+                    else:
+                        final_score = base_score
+                else:
+                    final_score = base_score
+                
+                templated_scores = [v for k,v in templated_scores_dict.items() if k != 'perplexity']
                 all_scored_candidates_by_cat[category].append({
                     "text": text,
-                    "combined_score": np.mean([np.median(scores), np.mean(scores)]),
-                    "standard_deviation": np.std(scores),
+                    "combined_score": final_score,
+                    "standard_deviation": np.std(templated_scores) if templated_scores else 0.0,
+                    "perplexity": master_scores_map.get(text, {}).get('perplexity', 100000.0),
+                    "word_count": len(words)
                 })
         
         for category, scored_candidates in all_scored_candidates_by_cat.items():
-            category_type = category.split('_')[1]
             remaining_candidates = list(scored_candidates)
             target_polarity = 1.0 if 'pos' in category else -1.0
 
@@ -263,17 +429,29 @@ class LexiconOptimizer:
                     distances = [abs(c['combined_score'] - target_midpoint) for c in potential_pool]
                     stds = [c['standard_deviation'] for c in potential_pool]
                     cohesions = [self._get_cohesion_score(c['text'], category) for c in potential_pool]
+                    perplexities = [c.get('perplexity', 100000.0) for c in potential_pool]
+                    word_counts = [c.get('word_count', 10) for c in potential_pool]
                     
-                    norm_distances, norm_stds, norm_cohesions = self._normalize_values(distances), self._normalize_values(stds), self._normalize_values(cohesions)
+                    norm_distances = self._normalize_values(distances)
+                    norm_stds = self._normalize_values(stds)
+                    norm_cohesions = self._normalize_values(cohesions)
+                    norm_perplexities = self._normalize_values(perplexities)
+                    norm_brevity = self._normalize_values(word_counts)
                     
+                    weights = self.config["GOODNESS_WEIGHTS"]
                     for j, cand in enumerate(potential_pool):
-                        cand['goodness'] = (norm_distances[j] * 0.4) + (norm_stds[j] * 0.4) + ((1 - norm_cohesions[j]) * 0.2)
+                        cand['goodness'] = (norm_distances[j] * weights['distance']) + \
+                                           (norm_stds[j] * weights['std_dev']) + \
+                                           ((1 - norm_cohesions[j]) * weights['cohesion']) + \
+                                           (norm_perplexities[j] * weights['perplexity']) + \
+                                           (norm_brevity[j] * weights['brevity'])
                     
                     for cand in sorted(potential_pool, key=lambda x: x['goodness']):
                         if len(final_lexicons[category][level]) >= self.config["num_to_select"]: break
                         key_lemmas = self._get_key_lemmas(cand['text'])
                         if not key_lemmas: continue
                         
+                        category_type = category.split('_')[1]
                         if not any(k.intersection(global_used_lemmas[category_type]) for k in [key_lemmas]):
                             final_lexicons[category][level].append(cand)
                             global_used_lemmas[category_type].update(key_lemmas)
@@ -294,7 +472,10 @@ class LexiconOptimizer:
                     sorted_items = sorted(items, key=lambda x: x['combined_score'], reverse=not is_negative)
                     for item in sorted_items:
                         score, std = item['combined_score'], item['standard_deviation']
-                        output_str += f'        # Score: {score:.3f}, SD: {std:.3f}\n'
+                        ppl = item.get('perplexity', 'N/A')
+                        wc = item.get('word_count', '?')
+                        ppl_str = f"{ppl:.2f}" if isinstance(ppl, float) else str(ppl)
+                        output_str += f'        # Score: {score:.3f}, SD: {std:.3f}, PPL: {ppl_str}, WC: {wc}\n'
                         output_str += f'        "{item["text"]}",\n'
                 else:
                     output_str += '        # (No suitable candidates found)\n'
@@ -322,7 +503,7 @@ def load_candidate_pools(path: str, console: Console) -> Dict[str, List[str]]:
     return candidate_pools
 
 def save_results(lexicons: Dict, output_path: str):
-    lexicons_for_json = {cat: {level: [{k: v for k, v in item.items() if k in ['text', 'combined_score', 'standard_deviation']} for item in items] for level, items in levels.items()} for cat, levels in lexicons.items()}
+    lexicons_for_json = {cat: {level: [{k: v for k, v in item.items() if k in ['text', 'combined_score', 'standard_deviation', 'perplexity', 'word_count']} for item in items] for level, items in levels.items()} for cat, levels in lexicons.items()}
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f: json.dump(lexicons_for_json, f, indent=4)
     console.print(f"[bold green]Optimized lexicons saved to {output_path}[/bold green]")
@@ -338,8 +519,8 @@ def main():
         
     candidate_pools = load_candidate_pools(args.input, console)
     if not candidate_pools: return
-        
-    analyzer = SentimentAnalyzer(console, CONFIG["huggingface_models_to_load"])
+    
+    analyzer = SentimentAnalyzer(console, CONFIG["huggingface_models_to_load"], CONFIG["logit_based_models"], CONFIG["perplexity_model"])
     optimizer = LexiconOptimizer(candidate_pools, analyzer, CONFIG)
     optimized_lexicons = optimizer.run()
     
