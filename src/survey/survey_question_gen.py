@@ -71,12 +71,20 @@ names = [
 
 loaded_lexicons = json.load(open("src/sentiment/lexicons/optimized_lexicon.json", "r"))
 
-pos_nouns = loaded_lexicons["pos_nouns"]
-neg_nouns = loaded_lexicons["neg_nouns"]
-pos_verbs = loaded_lexicons["pos_verbs"]
-neg_verbs = loaded_lexicons["neg_verbs"]
-pos_desc = loaded_lexicons["pos_desc"]
-neg_desc = loaded_lexicons["neg_desc"]
+def extract_word_list(lexicon, key):
+    lexicon_key = lexicon.get(key, {})
+    return {
+        valence: [entry["text"] for entry in entries if isinstance(entry, dict) and "text" in entry]
+        for valence, entries in lexicon_key.items()
+        if isinstance(entries, list)
+    }
+
+pos_nouns = extract_word_list(loaded_lexicons, "pos_nouns")
+neg_nouns = extract_word_list(loaded_lexicons, "neg_nouns")
+pos_verbs = extract_word_list(loaded_lexicons, "pos_verbs")
+neg_verbs = extract_word_list(loaded_lexicons, "neg_verbs")
+pos_desc = extract_word_list(loaded_lexicons, "pos_desc")
+neg_desc = extract_word_list(loaded_lexicons, "neg_desc")
 
 neutral_actions_together = ['ate', 'talked', 'worked', 'walked']
 
