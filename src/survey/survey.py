@@ -97,50 +97,163 @@ def display_calibration_confirmation():
 
 def slider_view():
     st.markdown("""
-        <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: \"Source Serif Pro\", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-4</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
+        <style>
+        .slider-scale {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            font-family: "Source Serif Pro", serif;
+            font-size: 13px;
+            margin: 0.2em 0 1.2em 0;
+            border-top: 1px solid #DDD;
+            padding-top: 0.5em;
+            overflow: hidden;
+        }
+        .scale-item {
+            text-align: center;
+            min-width: 32px;
+            flex: 1;
+            max-width: 11%;
+        }
+        .scale-number {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .scale-label {
+            font-size: 10px;
+            line-height: 1.1;
+            margin-top: 2px;
+            word-wrap: break-word;
+            hyphens: auto;
+        }
+        .scale-divider {
+            border-left: 1px solid #AAA;
+            height: 32px;
+            margin: 0 0.1em;
+            flex-shrink: 0;
+        }
+        
+        /* Mobile responsive styles */
+        @media screen and (max-width: 768px) {
+            .slider-scale {
+                font-size: 11px;
+                padding-top: 0.3em;
+                margin: 0.1em 0 1em 0;
+            }
+            .scale-item {
+                min-width: 28px;
+                max-width: 10%;
+            }
+            .scale-number {
+                font-size: 11px;
+            }
+            .scale-label {
+                font-size: 8px;
+                line-height: 1.0;
+                margin-top: 1px;
+            }
+            .scale-divider {
+                height: 28px;
+                margin: 0 0.05em;
+            }
+        }
+        
+        @media screen and (max-width: 480px) {
+            .slider-scale {
+                font-size: 10px;
+                flex-wrap: wrap;
+                gap: 2px;
+            }
+            .scale-item {
+                min-width: 24px;
+                max-width: 9%;
+                flex-basis: calc(11.11% - 2px);
+            }
+            .scale-number {
+                font-size: 10px;
+            }
+            .scale-label {
+                font-size: 7px;
+                line-height: 0.9;
+                margin-top: 1px;
+            }
+            .scale-divider {
+                height: 24px;
+                margin: 0;
+                width: 1px;
+            }
+        }
+        
+        @media screen and (max-width: 320px) {
+            .slider-scale {
+                display: grid;
+                grid-template-columns: repeat(9, 1fr);
+                gap: 1px;
+                justify-items: center;
+                align-items: start;
+            }
+            .scale-item {
+                min-width: 20px;
+                max-width: none;
+                flex: none;
+            }
+            .scale-number {
+                font-size: 9px;
+            }
+            .scale-label {
+                font-size: 6px;
+                line-height: 0.8;
+            }
+            .scale-divider {
+                display: none;
+            }
+        }
+        </style>
+        
+        <div class='slider-scale'>
+            <div class='scale-item'>
+                <div class='scale-number'>-4</div>
+                <div class='scale-label'>Extremely<br>Negative</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-3</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>-3</div>
+                <div class='scale-label'>Negative</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-2</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>-2</div>
+                <div class='scale-label'>Somewhat<br>Negative</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-1</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>-1</div>
+                <div class='scale-label'>Slightly<br>Negative</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>0</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>0</div>
+                <div class='scale-label'>Neutral</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>1</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>1</div>
+                <div class='scale-label'>Slightly<br>Positive</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>2</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>2</div>
+                <div class='scale-label'>Somewhat<br>Positive</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>3</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>3</div>
+                <div class='scale-label'>Positive</div>
             </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>4</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
+            <div class='scale-divider'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>4</div>
+                <div class='scale-label'>Extremely<br>Positive</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
