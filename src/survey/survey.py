@@ -99,161 +99,265 @@ def slider_view():
     st.markdown("""
         <style>
         .slider-scale {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
             font-family: "Source Serif Pro", serif;
-            font-size: 13px;
             margin: 0.2em 0 1.2em 0;
             border-top: 1px solid #DDD;
             padding-top: 0.5em;
-            overflow: hidden;
         }
-        .scale-item {
+        
+        /* Desktop layout - horizontal */
+        .scale-desktop {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            font-size: 13px;
+        }
+        .scale-desktop .scale-item {
             text-align: center;
             min-width: 32px;
             flex: 1;
             max-width: 11%;
         }
-        .scale-number {
+        .scale-desktop .scale-number {
             font-weight: 600;
             font-size: 13px;
         }
-        .scale-label {
+        .scale-desktop .scale-label {
             font-size: 10px;
             line-height: 1.1;
             margin-top: 2px;
-            word-wrap: break-word;
-            hyphens: auto;
         }
-        .scale-divider {
+        .scale-desktop .scale-divider {
             border-left: 1px solid #AAA;
             height: 32px;
             margin: 0 0.1em;
             flex-shrink: 0;
         }
         
-        /* Mobile responsive styles */
+        /* Mobile layout - simplified horizontal list */
+        .scale-mobile {
+            display: none;
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 12px 8px;
+            margin: 8px 0;
+        }
+        .scale-mobile .scale-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+        .scale-mobile .scale-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 4px;
+        }
+        .scale-mobile .scale-compact-item {
+            text-align: center;
+            flex: 1;
+            min-width: 0;
+        }
+        .scale-mobile .scale-compact-number {
+            font-weight: 600;
+            font-size: 11px;
+            color: #333;
+        }
+        .scale-mobile .scale-compact-label {
+            font-size: 7px;
+            line-height: 1;
+            color: #666;
+            margin-top: 1px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* Very small mobile - vertical layout */
+        .scale-tiny {
+            display: none;
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 10px;
+            margin: 8px 0;
+        }
+        .scale-tiny .scale-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .scale-tiny .scale-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            text-align: center;
+        }
+        .scale-tiny .scale-tiny-item {
+            background: white;
+            border-radius: 4px;
+            padding: 6px 2px;
+            border: 1px solid #e0e0e0;
+        }
+        .scale-tiny .scale-tiny-number {
+            font-weight: 600;
+            font-size: 12px;
+            color: #333;
+        }
+        .scale-tiny .scale-tiny-label {
+            font-size: 8px;
+            line-height: 1.1;
+            color: #666;
+            margin-top: 2px;
+        }
+        
+        /* Media queries */
         @media screen and (max-width: 768px) {
-            .slider-scale {
-                font-size: 11px;
-                padding-top: 0.3em;
-                margin: 0.1em 0 1em 0;
-            }
-            .scale-item {
-                min-width: 28px;
-                max-width: 10%;
-            }
-            .scale-number {
-                font-size: 11px;
-            }
-            .scale-label {
-                font-size: 8px;
-                line-height: 1.0;
-                margin-top: 1px;
-            }
-            .scale-divider {
-                height: 28px;
-                margin: 0 0.05em;
-            }
+            .scale-desktop { display: none; }
+            .scale-mobile { display: block; }
         }
         
-        @media screen and (max-width: 480px) {
-            .slider-scale {
-                font-size: 10px;
-                flex-wrap: wrap;
-                gap: 2px;
-            }
-            .scale-item {
-                min-width: 24px;
-                max-width: 9%;
-                flex-basis: calc(11.11% - 2px);
-            }
-            .scale-number {
-                font-size: 10px;
-            }
-            .scale-label {
-                font-size: 7px;
-                line-height: 0.9;
-                margin-top: 1px;
-            }
-            .scale-divider {
-                height: 24px;
-                margin: 0;
-                width: 1px;
-            }
-        }
-        
-        @media screen and (max-width: 320px) {
-            .slider-scale {
-                display: grid;
-                grid-template-columns: repeat(9, 1fr);
-                gap: 1px;
-                justify-items: center;
-                align-items: start;
-            }
-            .scale-item {
-                min-width: 20px;
-                max-width: none;
-                flex: none;
-            }
-            .scale-number {
-                font-size: 9px;
-            }
-            .scale-label {
-                font-size: 6px;
-                line-height: 0.8;
-            }
-            .scale-divider {
-                display: none;
-            }
+        @media screen and (max-width: 380px) {
+            .scale-mobile { display: none; }
+            .scale-tiny { display: block; }
         }
         </style>
         
         <div class='slider-scale'>
-            <div class='scale-item'>
-                <div class='scale-number'>-4</div>
-                <div class='scale-label'>Extremely<br>Negative</div>
+            <!-- Desktop Layout -->
+            <div class='scale-desktop'>
+                <div class='scale-item'>
+                    <div class='scale-number'>-4</div>
+                    <div class='scale-label'>Extremely<br>Negative</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>-3</div>
+                    <div class='scale-label'>Negative</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>-2</div>
+                    <div class='scale-label'>Somewhat<br>Negative</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>-1</div>
+                    <div class='scale-label'>Slightly<br>Negative</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>0</div>
+                    <div class='scale-label'>Neutral</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>1</div>
+                    <div class='scale-label'>Slightly<br>Positive</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>2</div>
+                    <div class='scale-label'>Somewhat<br>Positive</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>3</div>
+                    <div class='scale-label'>Positive</div>
+                </div>
+                <div class='scale-divider'></div>
+                <div class='scale-item'>
+                    <div class='scale-number'>4</div>
+                    <div class='scale-label'>Extremely<br>Positive</div>
+                </div>
             </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>-3</div>
-                <div class='scale-label'>Negative</div>
+            
+            <!-- Mobile Layout -->
+            <div class='scale-mobile'>
+                <div class='scale-title'>Rating Scale</div>
+                <div class='scale-row'>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>-4</div>
+                        <div class='scale-compact-label'>Ext Neg</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>-3</div>
+                        <div class='scale-compact-label'>Negative</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>-2</div>
+                        <div class='scale-compact-label'>Som Neg</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>-1</div>
+                        <div class='scale-compact-label'>Sli Neg</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>0</div>
+                        <div class='scale-compact-label'>Neutral</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>1</div>
+                        <div class='scale-compact-label'>Sli Pos</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>2</div>
+                        <div class='scale-compact-label'>Som Pos</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>3</div>
+                        <div class='scale-compact-label'>Positive</div>
+                    </div>
+                    <div class='scale-compact-item'>
+                        <div class='scale-compact-number'>4</div>
+                        <div class='scale-compact-label'>Ext Pos</div>
+                    </div>
+                </div>
             </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>-2</div>
-                <div class='scale-label'>Somewhat<br>Negative</div>
-            </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>-1</div>
-                <div class='scale-label'>Slightly<br>Negative</div>
-            </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>0</div>
-                <div class='scale-label'>Neutral</div>
-            </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>1</div>
-                <div class='scale-label'>Slightly<br>Positive</div>
-            </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>2</div>
-                <div class='scale-label'>Somewhat<br>Positive</div>
-            </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>3</div>
-                <div class='scale-label'>Positive</div>
-            </div>
-            <div class='scale-divider'></div>
-            <div class='scale-item'>
-                <div class='scale-number'>4</div>
-                <div class='scale-label'>Extremely<br>Positive</div>
+            
+            <!-- Very Small Mobile Layout -->
+            <div class='scale-tiny'>
+                <div class='scale-title'>Rating Scale</div>
+                <div class='scale-grid'>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>-4</div>
+                        <div class='scale-tiny-label'>Extremely<br>Negative</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>-3</div>
+                        <div class='scale-tiny-label'>Negative</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>-2</div>
+                        <div class='scale-tiny-label'>Somewhat<br>Negative</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>-1</div>
+                        <div class='scale-tiny-label'>Slightly<br>Negative</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>0</div>
+                        <div class='scale-tiny-label'>Neutral</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>1</div>
+                        <div class='scale-tiny-label'>Slightly<br>Positive</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>2</div>
+                        <div class='scale-tiny-label'>Somewhat<br>Positive</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>3</div>
+                        <div class='scale-tiny-label'>Positive</div>
+                    </div>
+                    <div class='scale-tiny-item'>
+                        <div class='scale-tiny-number'>4</div>
+                        <div class='scale-tiny-label'>Extremely<br>Positive</div>
+                    </div>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
