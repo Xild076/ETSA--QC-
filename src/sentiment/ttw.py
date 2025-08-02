@@ -82,6 +82,11 @@ CONFIG = {
         "amplification_factor": 1.5,
         "dampening_factor": 0.7,
     },
+    "MODEL_FILTERING": {
+        "exclude_confidence_only_models": False,
+        "exclude_non_valence_models": False,
+        "confidence_to_valence_method": "linear_transform",
+    },
     "stopwords": {'a', 'an', 'the', 'person', 'and', 'to', 'use', 'very', 'truly', 'really', 'quite', 'so', 'yours', 'soul', 'mortal', 'individual'},
     "intensifiers": {'repeatedly', 'constantly', 'deeply', 'harshly', 'openly', 'brutally', 'utterly', 'truly', 'really', 'very', 'incredibly', 'extremely', 'slightly', 'somewhat'},
     "cohesion_anchor_words": {
@@ -95,19 +100,32 @@ CONFIG = {
 }
 
 class SentimentAnalyzer:
-    def __init__(self, console: Console, hf_models: List[str], logit_models_list: List[str], perplexity_model_name: str):
+    def __init__(self, console: Console, hf_models: List[str], logit_models_list: List[str], perplexity_model_name: str, config: Dict = None):
         self.console = console
         self.device = 0 if torch.cuda.is_available() else -1
+        self.config = config or CONFIG
+        
+        self.valence_models = set() 
+        self.confidence_only_models = set()
+        
         console.print("[bold cyan]Initializing sentiment models...[/bold cyan]")
         self.vader = SentimentIntensityAnalyzer()
         self.flair = TextClassifier.load('sentiment')
         self.pysentimiento = create_analyzer(task="sentiment", lang="en")
+        
+        self.valence_models.update(['vader', 'textblob', 'sentiwordnet', 'pysentimiento'])
+        self.confidence_only_models.update(['flair'])
         
         self.hf_pipelines = {}
         for model_name in hf_models:
             console.print(f"  > Loading Hugging Face pipeline: [bold magenta]{model_name}[/bold magenta]...")
             try:
                 self.hf_pipelines[model_name] = pipeline("sentiment-analysis", model=model_name, device=self.device, top_k=None)
+                model_short_name = model_name.split('/')[-1]
+                if "nlptown" in model_name or "finbert" in model_name.lower():
+                    self.valence_models.add(model_short_name)
+                else:
+                    self.confidence_only_models.add(model_short_name)
             except Exception as e:
                 console.print(f"[bold red]Failed to load model {model_name}: {e}[/bold red]")
 
@@ -118,6 +136,8 @@ class SentimentAnalyzer:
                 model = AutoModelForSequenceClassification.from_pretrained(model_name).to(self.device if self.device != -1 else 'cpu')
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
                 self.logit_models[model_name] = {'model': model, 'tokenizer': tokenizer}
+                model_short_name = model_name.split('/')[-1]
+                self.valence_models.add(model_short_name)
             except Exception as e:
                 console.print(f"[bold red]Failed to load model {model_name}: {e}[/bold red]")
 
@@ -129,14 +149,68 @@ class SentimentAnalyzer:
             console.print(f"[bold red]Failed to load perplexity model {perplexity_model_name}: {e}[/bold red]")
             self.perplexity_model = None
         console.print("[bold green]All sentiment models initialized.[/bold green]")
+        
+        if self.config["MODEL_FILTERING"]["exclude_confidence_only_models"]:
+            console.print(f"[yellow]Excluding confidence-only models: {', '.join(self.confidence_only_models)}[/yellow]")
+        if self.config["MODEL_FILTERING"]["exclude_non_valence_models"]:
+            console.print(f"[yellow]Excluding non-valence models: {', '.join(self.confidence_only_models)}[/yellow]")
+
+    def _convert_confidence_to_valence(self, confidence_score: float, prediction_label: str) -> float:
+        """
+        Convert confidence score to proper valence (-1 to 1 range).
+        
+        Args:
+            confidence_score: Confidence score (0-1)
+            prediction_label: Predicted label ('POSITIVE' or 'NEGATIVE')
+        
+        Returns:
+            Valence score in range [-1, 1]
+        """
+        method = self.config["MODEL_FILTERING"]["confidence_to_valence_method"]
+        
+        if prediction_label.upper() in ['NEGATIVE', 'NEG']:
+            confidence_score = -confidence_score
+        
+        if method == "linear_transform":
+            return confidence_score * 2 - 1 if confidence_score >= 0 else confidence_score * 2 + 1
+        
+        elif method == "log_odds":
+            if abs(confidence_score) >= 0.999: 
+                confidence_score = 0.999 * (1 if confidence_score > 0 else -1)
+            
+            log_odds = math.log(abs(confidence_score) / (1 - abs(confidence_score)))
+            valence = math.tanh(log_odds / 3.0)
+            return valence if confidence_score >= 0 else -valence
+        
+        elif method == "tanh_scaling":
+            scaled = confidence_score * 3.0 
+            return math.tanh(scaled)
+        
+        else:
+            return confidence_score * 2 - 1 if confidence_score >= 0 else confidence_score * 2 + 1
 
     def _get_hf_pipeline_score(self, result: List[Dict[str, Any]], model_name: str) -> float:
-        score_map = {item['label'].lower().replace('pos', 'positive').replace('neg', 'negative').replace('neu', 'neutral'): item['score'] for item in result}
-        if "nlptown" in model_name:
-            score_val = int(re.search(r'\d+', result[0]['label']).group())
-            return -1.0 + (2.0 * (score_val - 1) / 4.0)
+        model_short_name = model_name.split('/')[-1]
+        
+        if model_short_name in self.confidence_only_models:
+            if len(result) == 1:
+                item = result[0]
+                return self._convert_confidence_to_valence(item['score'], item['label'])
+            else:
+                score_map = {item['label'].lower().replace('pos', 'positive').replace('neg', 'negative').replace('neu', 'neutral'): item['score'] for item in result}
+                pos_conf = score_map.get('positive', 0.0)
+                neg_conf = score_map.get('negative', 0.0)
+                
+                conf_diff = pos_conf - neg_conf
+                return self._convert_confidence_to_valence(abs(conf_diff), 'POSITIVE' if conf_diff >= 0 else 'NEGATIVE')
+        
         else:
-            return score_map.get('positive', 0.0) - score_map.get('negative', 0.0)
+            score_map = {item['label'].lower().replace('pos', 'positive').replace('neg', 'negative').replace('neu', 'neutral'): item['score'] for item in result}
+            if "nlptown" in model_name:
+                score_val = int(re.search(r'\d+', result[0]['label']).group())
+                return -1.0 + (2.0 * (score_val - 1) / 4.0)
+            else:
+                return score_map.get('positive', 0.0) - score_map.get('negative', 0.0)
     
     def _get_hf_logit_score(self, text: str, model_info: Dict) -> float:
         model = model_info['model']
@@ -184,16 +258,30 @@ class SentimentAnalyzer:
 
     def analyze(self, texts: List[str]) -> Dict[str, Dict[str, float]]:
         all_results = defaultdict(dict)
+        exclude_confidence = self.config["MODEL_FILTERING"]["exclude_confidence_only_models"]
+        exclude_non_valence = self.config["MODEL_FILTERING"]["exclude_non_valence_models"]
+        
         for text in tqdm(texts, desc="Analyzing (lightweight models & perplexity)", leave=False, ncols=120):
-            all_results[text]['vader'] = self.vader.polarity_scores(text)['compound']
-            all_results[text]['textblob'] = TextBlob(text).sentiment.polarity
-            flair_sentence = Sentence(text)
-            self.flair.predict(flair_sentence)
-            flair_label = flair_sentence.labels[0]
-            all_results[text]['flair'] = flair_label.score if flair_label.value == 'POSITIVE' else -flair_label.score
-            pysent_result = self.pysentimiento.predict(text)
-            all_results[text]['pysentimiento'] = pysent_result.probas.get('POS', 0.0) - pysent_result.probas.get('NEG', 0.0)
-            if swn:
+            if not exclude_non_valence or 'vader' in self.valence_models:
+                all_results[text]['vader'] = self.vader.polarity_scores(text)['compound']
+            
+            if not exclude_non_valence or 'textblob' in self.valence_models:
+                all_results[text]['textblob'] = TextBlob(text).sentiment.polarity
+            
+            if not exclude_confidence and not exclude_non_valence:
+                flair_sentence = Sentence(text)
+                self.flair.predict(flair_sentence)
+                flair_label = flair_sentence.labels[0]
+                if 'flair' in self.confidence_only_models:
+                    all_results[text]['flair'] = self._convert_confidence_to_valence(flair_label.score, flair_label.value)
+                else:
+                    all_results[text]['flair'] = flair_label.score if flair_label.value == 'POSITIVE' else -flair_label.score
+            
+            if not exclude_non_valence or 'pysentimiento' in self.valence_models:
+                pysent_result = self.pysentimiento.predict(text)
+                all_results[text]['pysentimiento'] = pysent_result.probas.get('POS', 0.0) - pysent_result.probas.get('NEG', 0.0)
+            
+            if swn and (not exclude_non_valence or 'sentiwordnet' in self.valence_models):
                 tokens = re.findall(r'\b[a-zA-Z-]+\b', text.lower())
                 pos, neg, count = 0.0, 0.0, 0
                 for token in tokens:
@@ -208,6 +296,12 @@ class SentimentAnalyzer:
 
         for model_name, pipe in self.hf_pipelines.items():
             model_short_name = model_name.split('/')[-1]
+            
+            if exclude_confidence and model_short_name in self.confidence_only_models:
+                continue
+            if exclude_non_valence and model_short_name not in self.valence_models:
+                continue
+                
             try:
                 hf_outputs = pipe(texts, batch_size=32, truncation=True)
                 for text, result in zip(texts, hf_outputs):
@@ -218,6 +312,10 @@ class SentimentAnalyzer:
 
         for model_name, model_info in self.logit_models.items():
             model_short_name = model_name.split('/')[-1]
+            
+            if exclude_non_valence and model_short_name not in self.valence_models:
+                continue
+                
             for text in tqdm(texts, desc=f"Analyzing ({model_short_name} logits)", leave=False, ncols=120):
                 try:
                     all_results[text][model_short_name] = self._get_hf_logit_score(text, model_info)
@@ -512,7 +610,16 @@ def main():
     parser = argparse.ArgumentParser(description="Generate definitive sentiment lexicons from candidate word lists.")
     parser.add_argument("--input", "-i", type=str, default=CONFIG["word_options_dir"], help=f"Path to candidate .txt files/directory. Default: {CONFIG['word_options_dir']}")
     parser.add_argument("--output", "-o", type=str, default=os.path.join(CONFIG["output_dir"], CONFIG["output_filename"]), help=f"Path to save output JSON. Default: {os.path.join(CONFIG['output_dir'], CONFIG['output_filename'])}")
+    parser.add_argument("--exclude-confidence-only", action="store_true", help="Exclude models that only provide confidence scores (e.g., some Flair, HuggingFace models)")
+    parser.add_argument("--exclude-non-valence", action="store_true", help="Exclude models that don't provide proper valence scores")
+    parser.add_argument("--confidence-method", choices=["linear_transform", "log_odds", "tanh_scaling"], default="linear_transform", help="Method to convert confidence scores to valence scores")
     args = parser.parse_args()
+
+    if args.exclude_confidence_only:
+        CONFIG["MODEL_FILTERING"]["exclude_confidence_only_models"] = True
+    if args.exclude_non_valence:
+        CONFIG["MODEL_FILTERING"]["exclude_non_valence_models"] = True
+    CONFIG["MODEL_FILTERING"]["confidence_to_valence_method"] = args.confidence_method
 
     if any(x is None for x in [nltk, spacy, NLP, word_frequency]):
         CONFIG["enable_wordnet_expansion"] = False
@@ -520,7 +627,7 @@ def main():
     candidate_pools = load_candidate_pools(args.input, console)
     if not candidate_pools: return
     
-    analyzer = SentimentAnalyzer(console, CONFIG["huggingface_models_to_load"], CONFIG["logit_based_models"], CONFIG["perplexity_model"])
+    analyzer = SentimentAnalyzer(console, CONFIG["huggingface_models_to_load"], CONFIG["logit_based_models"], CONFIG["perplexity_model"], CONFIG)
     optimizer = LexiconOptimizer(candidate_pools, analyzer, CONFIG)
     optimized_lexicons = optimizer.run()
     

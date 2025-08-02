@@ -27,9 +27,9 @@ df = pd.read_csv(url)
 
 intensity_map_string = {
     'very': 0.85,
-    'medium': 0.6,
-    'somewhat': 0.4,
-    'slightly': 0.2,
+    'strong': 0.6,
+    'moderate': 0.4,
+    'slight': 0.2,
     'neutral': 0.0
 }
 

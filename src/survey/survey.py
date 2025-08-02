@@ -50,54 +50,7 @@ def display_calibration_questions():
         help="Rating scale: -4 (Extremely Negative) to 4 (Extremely Positive)",
         step=1
     )
-    st.markdown("""
-    <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: "Source Serif Pro", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-4</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-3</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-2</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-1</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>0</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>1</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>2</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>3</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>4</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    slider_view()
     st.markdown(f"You rated the sentiment as: <b>{pos_score} ({sentiment_scale[pos_score]})</b>", unsafe_allow_html=True)
 
     st.markdown(f"<div style='margin-top:2em; margin-bottom:0.5em;'><b>Example 2:</b> <i>{neg_text}</i></div>", unsafe_allow_html=True)
@@ -107,54 +60,7 @@ def display_calibration_questions():
         help="Rating scale: -4 (Extremely Negative) to 4 (Extremely Positive)",
         step=1
     )
-    st.markdown("""
-    <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: "Source Serif Pro", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-4</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-3</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-2</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-1</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>0</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>1</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>2</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>3</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>4</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    slider_view()
     st.markdown(f"You rated the sentiment as: <b>{neg_score} ({sentiment_scale[neg_score]})</b>", unsafe_allow_html=True)
     if st.button("Continue", key="calib_continue_btn", type="primary", use_container_width=True):
         st.session_state['calibration_pos_score'] = pos_score
@@ -188,6 +94,56 @@ def display_calibration_confirmation():
         st.session_state.pop('calib_neg_idx', None)
         st.rerun()
     st.stop()
+
+def slider_view():
+    st.markdown("""
+        <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: \"Source Serif Pro\", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-4</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-3</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-2</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>-1</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>0</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>1</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>2</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>3</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
+            </div>
+            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
+            <div style='text-align:center; min-width:32px;'>
+                <div style='font-weight:600; font-size:13px;'>4</div>
+                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 GOOGLE_SHEET_ID = "1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0"
 GOOGLE_CREDENTIALS_SECRET_KEY = "google_service_account_credentials"
@@ -285,6 +241,7 @@ def display_attention_check():
     </div>
     """, unsafe_allow_html=True)
     score = st.slider(label="Please select Somewhat Positive (2)", min_value=-4, max_value=4, value=0, format="%d", key="attention_check_slider", label_visibility="collapsed")
+    slider_view()
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     if st.button("Next", key="attention_check_next_btn", type="primary", use_container_width=True):
         st.session_state.attention_check_shown = True
@@ -468,54 +425,7 @@ def display_packet_question(sentence_item, actual_sentence_index):
         help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})",
         step=1,
     )
-    st.markdown("""
-    <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: "Source Serif Pro", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-4</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-3</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-2</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>-1</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>0</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>1</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>2</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>3</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
-        </div>
-        <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-        <div style='text-align:center; min-width:32px;'>
-            <div style='font-weight:600; font-size:13px;'>4</div>
-            <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    slider_view()
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     col_left, col_center, col_right = st.columns([1,2,1])
     confirm_key = f"confirm_packet_{item_id}_{current_sentence_idx}"
@@ -562,54 +472,7 @@ def display_regular_question(sentence_item, actual_sentence_index):
         slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('"','_')}"
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
         score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
-        st.markdown("""
-        <div style='display: flex; justify-content: space-between; align-items: flex-start; font-family: \"Source Serif Pro\", serif; font-size: 13px; margin: 0.2em 0 1.2em 0; border-top: 1px solid #DDD; padding-top: 0.5em;'>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-4</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Negative</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-3</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Negative</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-2</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Negative</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>-1</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Negative</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>0</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Neutral</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>1</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Slightly<br>Positive</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>2</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Somewhat<br>Positive</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>3</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Positive</div>
-            </div>
-            <div style='border-left:1px solid #AAA; height:32px; margin:0 0.1em;'></div>
-            <div style='text-align:center; min-width:32px;'>
-                <div style='font-weight:600; font-size:13px;'>4</div>
-                <div style='font-size:10px; line-height:1.1; margin-top:2px;'>Extremely<br>Positive</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        slider_view()
         slider_scores[entity] = score
         st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
         st.markdown("---")
