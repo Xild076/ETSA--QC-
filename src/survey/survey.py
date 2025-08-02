@@ -146,7 +146,8 @@ def slider_view():
                 font-size: 7px;
             }
             .scale-separator {
-                display: none;
+                margin: 0 0.02em;
+                height: 24px;
             }
         }
         </style>
