@@ -4,6 +4,8 @@ from afinn import Afinn
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import json
 import ssl
+import os
+from pathlib import Path
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -25,7 +27,6 @@ def get_sentiment(text):
     polarity_score = sia.polarity_scores(text)['compound']
     return (afn_score + polarity_score) / 2
 
-# Gender neutral names to avoid gender bias
 names = [
     "Addison",
     "Alex",
@@ -69,7 +70,29 @@ names = [
     "Taylor",
 ]
 
-loaded_lexicons = json.load(open("src/sentiment/lexicons/optimized_lexicon.json", "r"))
+current_file = Path(__file__)
+project_root = current_file.parent.parent.parent 
+lexicon_path = project_root / "src" / "sentiment" / "lexicons" / "optimized_lexicon.json"
+
+fallback_paths = [
+    "src/sentiment/lexicons/optimized_lexicon.json",
+    "../sentiment/lexicons/optimized_lexicon.json", 
+    "../../sentiment/lexicons/optimized_lexicon.json"
+]
+
+lexicon_file = None
+if lexicon_path.exists():
+    lexicon_file = str(lexicon_path)
+else:
+    for fallback in fallback_paths:
+        if os.path.exists(fallback):
+            lexicon_file = fallback
+            break
+
+if lexicon_file is None:
+    raise FileNotFoundError("Could not find optimized_lexicon.json file")
+
+loaded_lexicons = json.load(open(lexicon_file, "r"))
 
 def extract_word_list(lexicon, key):
     lexicon_key = lexicon.get(key, {})

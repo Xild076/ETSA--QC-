@@ -19,6 +19,17 @@ from scipy.optimize import OptimizeWarning
 from matplotlib.widgets import Slider
 import matplotlib.gridspec as gridspec
 import json
+import os
+import sys
+from pathlib import Path
+
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+
+try:
+    from formulas import SentimentFormula
+except ImportError:
+    from .formulas import SentimentFormula
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -338,7 +349,7 @@ def actor_formula_v2(X, w_actor, w_driver, b):
     return np.tanh(s_new)
 
 def determine_actor_parameters(action_model_df: pd.DataFrame,
-                                function,
+                                function: SentimentFormula,
                                 remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                 splits: Literal['none', 'driver', 'action_target'] = 'none',
                                 print_process=False) -> pd.DataFrame:
@@ -356,38 +367,38 @@ def determine_actor_parameters(action_model_df: pd.DataFrame,
         if not pos_driver_df.empty:
             X = pos_driver_df[['s_init_actor', 'driver']].to_numpy().T
             y = pos_driver_df['s_user_actor'].to_numpy()
-            pos_driver_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_driver_params'] = pos_driver_params
         if not neg_driver_df.empty:
             X = neg_driver_df[['s_init_actor', 'driver']].to_numpy().T
             y = neg_driver_df['s_user_actor'].to_numpy()
-            neg_driver_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_driver_params'] = neg_driver_params
     elif splits == 'action_target':
         if not pos_action_pos_action_model.empty:
             X = pos_action_pos_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = pos_action_pos_action_model['s_user_actor'].to_numpy()
-            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_pos_params'] = pos_pos_params
         if not pos_action_neg_action_model.empty:
             X = pos_action_neg_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = pos_action_neg_action_model['s_user_actor'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_action_pos_action_model.empty:
             X = neg_action_pos_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = neg_action_pos_action_model['s_user_actor'].to_numpy()
-            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_pos_params'] = neg_pos_params
         if not neg_action_neg_action_model.empty:
             X = neg_action_neg_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = neg_action_neg_action_model['s_user_actor'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
     else:
         X = action_model_df[['s_init_actor', 'driver']].to_numpy().T
         y = action_model_df['s_user_actor'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -398,7 +409,8 @@ def determine_actor_parameters(action_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    return output
+    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
+    return output, function
 
 def target_formula_v1(X, lambda_target, w, b):
     s_init_target, s_action = X
@@ -411,7 +423,7 @@ def target_formula_v2(X, w_target, w_action, b):
     return np.tanh(s_new)
 
 def determine_target_parameters(action_model_df: pd.DataFrame,
-                                function,
+                                function: SentimentFormula,
                                 remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                 splits: Literal['none', 'driver', 'action_target'] = 'none',
                                 print_process=False) -> pd.DataFrame:
@@ -423,17 +435,17 @@ def determine_target_parameters(action_model_df: pd.DataFrame,
         if not pos_action_df.empty:
             X = pos_action_df[['s_init_target', 's_init_action']].to_numpy().T
             y = pos_action_df['s_user_target'].to_numpy()
-            pos_driver_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_driver_params'] = pos_driver_params
         if not neg_action_df.empty:
             X = neg_action_df[['s_init_target', 's_init_action']].to_numpy().T
             y = neg_action_df['s_user_target'].to_numpy()
-            neg_driver_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_driver_params'] = neg_driver_params
     else:
         X = action_model_df[['s_init_target', 's_init_action']].to_numpy().T
         y = action_model_df['s_user_target'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -444,7 +456,8 @@ def determine_target_parameters(action_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    return output
+    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
+    return output, function
 
 
 def assoc_formula_v1(X, lambda_val, w, b):
@@ -458,67 +471,68 @@ def assoc_formula_v2(X, w_entity, w_other, b):
     return np.tanh(s_new)
 
 def determine_association_parameters(association_model_df: pd.DataFrame,
-                                        function,
+                                        function: SentimentFormula,
                                         remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                         splits: Literal['none', 'other', 'entity_other'] = 'none',
                                         print_process=False) -> pd.DataFrame:
-        pos_entity_df = association_model_df[association_model_df['s_init_other'] > 0]
-        neg_entity_df = association_model_df[association_model_df['s_init_other'] <= 0]
+    pos_entity_df = association_model_df[association_model_df['s_init_other'] > 0]
+    neg_entity_df = association_model_df[association_model_df['s_init_other'] <= 0]
 
-        pos_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] > 0) & (association_model_df['s_init_other'] > 0)]
-        pos_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] > 0) & (association_model_df['s_init_other'] <= 0)]
-        neg_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] <= 0)]
-        neg_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] > 0)]
+    pos_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] > 0) & (association_model_df['s_init_other'] > 0)]
+    pos_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] > 0) & (association_model_df['s_init_other'] <= 0)]
+    neg_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] <= 0)]
+    neg_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] > 0)]
 
 
-        output = {}
-        if splits == 'other':
-            if not pos_entity_df.empty:
-                X = pos_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
-                y = pos_entity_df['s_user_entity'].to_numpy()
-                pos_params = fit_compound(function, X, y, remove_outlier_method)
-                output['pos_params'] = pos_params
-            if not neg_entity_df.empty:
-                X = neg_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
-                y = neg_entity_df['s_user_entity'].to_numpy()
-                neg_params = fit_compound(function, X, y, remove_outlier_method)
-                output['neg_params'] = neg_params
-        elif splits == 'entity_other':
-            if not pos_entity_pos_other_df.empty:
-                X = pos_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-                y = pos_entity_pos_other_df['s_user_entity'].to_numpy()
-                pos_params = fit_compound(function, X, y, remove_outlier_method)
-                output['pos_params'] = pos_params
-            if not neg_entity_pos_other_df.empty:
-                X = neg_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-                y = neg_entity_pos_other_df['s_user_entity'].to_numpy()
-                neg_params = fit_compound(function, X, y, remove_outlier_method)
-                output['neg_params'] = neg_params
-            if not pos_entity_neg_other_df.empty:
-                X = pos_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-                y = pos_entity_neg_other_df['s_user_entity'].to_numpy()
-                pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
-                output['pos_neg_params'] = pos_neg_params
-            if not neg_entity_neg_other_df.empty:
-                X = neg_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-                y = neg_entity_neg_other_df['s_user_entity'].to_numpy()
-                neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
-                output['neg_neg_params'] = neg_neg_params
-        else:
-            X = association_model_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = association_model_df['s_user_entity'].to_numpy()
-            output['params'] = fit_compound(function, X, y, remove_outlier_method)
-        if print_process:
-            for key, value in output.items():
-                if value is not None:
-                    print(f"--- {key}: ---")
-                    print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
-                    print(f"MSE: {value['mse']}")
-                    print(f"Soft L1 Loss: {value['soft_l1_loss']}")
-                    print(f"R2 Loss: {value['r2_loss']}")
-                else:
-                    print(f"{key}: No data available")
-        return output
+    output = {}
+    if splits == 'other':
+        if not pos_entity_df.empty:
+            X = pos_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
+            y = pos_entity_df['s_user_entity'].to_numpy()
+            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            output['pos_params'] = pos_params
+        if not neg_entity_df.empty:
+            X = neg_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
+            y = neg_entity_df['s_user_entity'].to_numpy()
+            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            output['neg_params'] = neg_params
+    elif splits == 'entity_other':
+        if not pos_entity_pos_other_df.empty:
+            X = pos_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
+            y = pos_entity_pos_other_df['s_user_entity'].to_numpy()
+            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            output['pos_params'] = pos_params
+        if not neg_entity_pos_other_df.empty:
+            X = neg_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
+            y = neg_entity_pos_other_df['s_user_entity'].to_numpy()
+            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            output['neg_params'] = neg_params
+        if not pos_entity_neg_other_df.empty:
+            X = pos_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
+            y = pos_entity_neg_other_df['s_user_entity'].to_numpy()
+            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            output['pos_neg_params'] = pos_neg_params
+        if not neg_entity_neg_other_df.empty:
+            X = neg_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
+            y = neg_entity_neg_other_df['s_user_entity'].to_numpy()
+            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            output['neg_neg_params'] = neg_neg_params
+    else:
+        X = association_model_df[['s_init_entity', 's_init_other']].to_numpy().T
+        y = association_model_df['s_user_entity'].to_numpy()
+        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
+    if print_process:
+        for key, value in output.items():
+            if value is not None:
+                print(f"--- {key}: ---")
+                print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
+                print(f"MSE: {value['mse']}")
+                print(f"Soft L1 Loss: {value['soft_l1_loss']}")
+                print(f"R2 Loss: {value['r2_loss']}")
+            else:
+                print(f"{key}: No data available")
+    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
+    return output, function
 
 
 def belong_formula_v1(X, lambda_parent, w, b):
@@ -532,7 +546,7 @@ def belong_formula_v2(X, w_parent, w_child, b):
     return np.tanh(s_new)
 
 def determine_parent_parameters(belonging_model_df: pd.DataFrame,
-                                    function,
+                                    function: SentimentFormula,
                                     remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                     splits: Literal['none', 'parent_child', 'child'] = 'none',
                                     print_process=False) -> pd.DataFrame:
@@ -549,38 +563,38 @@ def determine_parent_parameters(belonging_model_df: pd.DataFrame,
         if not pos_parent_df.empty:
             X = pos_parent_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = pos_parent_df['s_user_parent'].to_numpy()
-            pos_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_params'] = pos_params
         if not neg_parent_df.empty:
             X = neg_parent_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = neg_parent_df['s_user_parent'].to_numpy()
-            neg_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_params'] = neg_params
     elif splits == 'parent_child':
         if not pos_parent_neg_child_df.empty:
             X = pos_parent_neg_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = pos_parent_neg_child_df['s_user_parent'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_parent_neg_child_df.empty:
             X = neg_parent_neg_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = neg_parent_neg_child_df['s_user_parent'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
         if not pos_parent_pos_child_df.empty:
             X = pos_parent_pos_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = pos_parent_pos_child_df['s_user_parent'].to_numpy()
-            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_pos_params'] = pos_pos_params
         if not neg_parent_pos_child_df.empty:
             X = neg_parent_pos_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = neg_parent_pos_child_df['s_user_parent'].to_numpy()
-            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_pos_params'] = neg_pos_params
     else:
         X = belonging_model_df[['s_init_parent', 's_init_child']].to_numpy().T
         y = belonging_model_df['s_user_parent'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -591,10 +605,11 @@ def determine_parent_parameters(belonging_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    return output
+    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
+    return output, function
 
 def determine_child_parameters(belonging_model_df: pd.DataFrame,
-                                    function,
+                                    function: SentimentFormula,
                                     remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                     splits: Literal['none', 'parent_child', 'parent'] = 'none',
                                     print_process=False) -> pd.DataFrame:
@@ -611,38 +626,38 @@ def determine_child_parameters(belonging_model_df: pd.DataFrame,
         if not pos_child_df.empty:
             X = pos_child_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = pos_child_df['s_user_child'].to_numpy()
-            pos_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_params'] = pos_params
         if not neg_child_df.empty:
             X = neg_child_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = neg_child_df['s_user_child'].to_numpy()
-            neg_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_params'] = neg_params
     elif splits == 'parent_child':
         if not pos_child_neg_parent_df.empty:
             X = pos_child_neg_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = pos_child_neg_parent_df['s_user_child'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_child_neg_parent_df.empty:
             X = neg_child_neg_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = neg_child_neg_parent_df['s_user_child'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
         if not pos_child_pos_parent_df.empty:
             X = pos_child_pos_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = pos_child_pos_parent_df['s_user_child'].to_numpy()
-            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
+            pos_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['pos_pos_params'] = pos_pos_params
         if not neg_child_pos_parent_df.empty:
             X = neg_child_pos_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = neg_child_pos_parent_df['s_user_child'].to_numpy()
-            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
+            neg_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
             output['neg_pos_params'] = neg_pos_params
     else:
         X = belonging_model_df[['s_init_child', 's_init_parent']].to_numpy().T
         y = belonging_model_df['s_user_child'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -653,7 +668,8 @@ def determine_child_parameters(belonging_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    return output
+    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
+    return output, function
 
 
 def calculate_weights(n, alpha, beta):
@@ -684,8 +700,9 @@ def aggregate_formula_dynamic(s_inits, params):
     predicted_sentiment = np.sum(weights * np.array(s_inits))
     return predicted_sentiment
 
-def aggregate_formula_logistic(N, s_inits, params):
+def aggregate_formula_logistic(s_inits, params):
     L_a, k_a, N0_a, b_a, L_b, k_b, N0_b, b_b = params
+    N = len(s_inits)
     alpha = logistic_function(N, L_a, k_a, N0_a, b_a)
     beta = logistic_function(N, L_b, k_b, N0_b, b_b)
     weights = calculate_weights(N, alpha, beta)
@@ -729,14 +746,14 @@ def aggregate_error_dynamic_softl1(params, data):
 def aggregate_error_logistic_mse(params, data):
     total_error = 0
     for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula_logistic(row['N'], row['s_inits'], params)
+        s_user_predicted = aggregate_formula_logistic(row['s_inits'], params)
         total_error += _calculate_error(s_user_predicted, row['s_user'], 'mse')
     return total_error
 
 def aggregate_error_logistic_softl1(params, data):
     total_error = 0
     for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula_logistic(row['N'], row['s_inits'], params)
+        s_user_predicted = aggregate_formula_logistic(row['s_inits'], params)
         total_error += _calculate_error(s_user_predicted, row['s_user'], 'softl1')
     return total_error
 
@@ -799,10 +816,21 @@ def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
             print("Aggregate parameter optimization failed.")
             print(result.message)
 
+    if "logistic" in loss_name:
+        func = aggregate_formula_logistic
+        model_type = "logistic"
+    elif "dynamic" in loss_name:
+        func = aggregate_formula_dynamic
+        model_type = "dynamic"
+    else:
+        func = aggregate_formula
+        model_type = "normal"
+
     return {
         'params': result.x,
         'loss': result.fun / len(aggregate_df),
-        'success': result.success
+        'success': result.success,
+        'function': SentimentFormula(f"aggregate_{model_type}", "aggregate", func, result.x.tolist())
     }
 
 
@@ -851,13 +879,13 @@ def test_all_parameterizations():
                             with warnings.catch_warnings():
                                 warnings.simplefilter("error", OptimizeWarning)
                                 try:
-                                    results_group = determiner(data_dfs[model_type], func, method, split)
+                                    results_group, formula = determiner(data_dfs[model_type], SentimentFormula(func_name, model_type, func), method, split)
                                     valid_fits = {k: v for k, v in results_group.items() if v is not None}
                                     if not valid_fits:
                                         fitting_errors.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split': split, 'error': 'All sub-models failed to fit.'})
                                         continue
                                     avg_r2, avg_mse = np.mean([r['r2_loss'] for r in valid_fits.values()]), np.mean([r['mse'] for r in valid_fits.values()])
-                                    all_results.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split_type': split, 'avg_r2': avg_r2, 'avg_mse': avg_mse, 'sub_models': valid_fits})
+                                    all_results.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split_type': split, 'avg_r2': avg_r2, 'avg_mse': avg_mse, 'sub_models': valid_fits, 'formulas': {k: SentimentFormula(f"{func_name}_{k}", model_type, func, v['params']) for k, v in valid_fits.items()}})
                                 except (ValueError, OptimizeWarning, RuntimeError) as e:
                                     fitting_errors.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split': split, 'error': str(e)})
             status.update(f"Processing: Aggregate on {score_key}")
@@ -906,7 +934,7 @@ def test_all_parameterizations():
             score_key, loss_name, params = result['score_key'], result['loss_function'], result['params']
             df_agg = create_aggregate_df(score_key)
             formula_type = "Normal" if 'dynamic' not in loss_name and 'logistic' not in loss_name else ("Dynamic" if 'dynamic' in loss_name else "Logistic")
-            df_agg['s_user_pred'] = df_agg.apply(lambda row: (aggregate_formula_dynamic(row['s_inits'], params) if formula_type == "Dynamic" else (aggregate_formula_logistic(row['N'], row['s_inits'], params) if formula_type == "Logistic" else aggregate_formula(row['s_inits'], params))), axis=1)
+            df_agg['s_user_pred'] = df_agg.apply(lambda row: (aggregate_formula_dynamic(row['s_inits'], params) if formula_type == "Dynamic" else (aggregate_formula_logistic(row['s_inits'], params) if formula_type == "Logistic" else aggregate_formula(row['s_inits'], params))), axis=1)
 
             if formula_type == 'Normal':
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
@@ -963,6 +991,45 @@ def test_all_parameterizations():
         for err in fitting_errors:
             error_table.add_row(err['model_type'], err['score_key'], err['function'], err['outlier_method'], err['split'], err['error'])
         console.print(error_table)
+    
+    print("\n[yellow]Saving results to 'survey_question_optimizer_results.txt'...[/yellow]")
+    with open('survey_question_optimizer_results.txt', 'w') as f:
+        for res in all_results:
+            f.write(f"Model Type: {res['model_type']}, Score Key: {res['score_key']}, Function: {res.get('function', 'N/A')}, Outlier Method: {res.get('outlier_method', 'N/A')}, Split Type: {res.get('split_type', 'N/A')}, Avg MSE: {res.get('avg_mse', 'N/A')}, Avg R²: {res.get('avg_r2', 'N/A')}\n")
+            if 'sub_models' in res:
+                for context, details in res['sub_models'].items():
+                    f.write(f"  Context: {context}, Params: {details['params']}, MSE: {details['mse']}\n")
+            if 'params' in res:
+                f.write(f"  Parameters: {res['params']}\n")
+        f.write("\nFitting Errors:\n")
+        for err in fitting_errors:
+            f.write(f"  Model Type: {err['model_type']}, Score Key: {err['score_key']}, Function: {err['function']}, Outlier Method: {err['outlier_method']}, Split: {err['split']}, Error Message: {err['error']}\n")
+
+    os.makedirs('src/survey/optimal_formulas', exist_ok=True)
+    
+    for model_type in model_param_determiners.keys():
+        results = sorted([r for r in all_results if r['model_type'] == model_type], key=lambda x: x.get('avg_mse', float('inf')))
+        if results:
+            best_model = results[0]
+            if 'formulas' in best_model:
+                for context, formula in best_model['formulas'].items():
+                    formula.save(f"src/survey/optimal_formulas/{model_type}_{context}_{best_model['score_key']}_{best_model['function']}.json")
+    
+    agg_results = [r for r in all_results if r['model_type'] == 'Aggregate']
+    if agg_results:
+        best_agg_models = []
+        for key in ['normal', 'dynamic', 'logistic']:
+            models = [r for r in agg_results if (('dynamic' not in r['loss_function'] and 'logistic' not in r['loss_function']) if key == 'normal' else key in r['loss_function'])]
+            if models: 
+                best = sorted(models, key=lambda x: x['loss'])[0]
+                best['function'].save(f"src/survey/optimal_formulas/Aggregate_{key}_{best['score_key']}.json")
+                best_agg_models.append(best)
+        table = Table(title="[bold]Top Aggregate Models by Formula Type (Lowest Loss)[/bold]", show_header=True, header_style="bold magenta")
+        table.add_column("Formula Type"), table.add_column("Score Key"), table.add_column("Loss Function"), table.add_column("Final Loss", justify="right"), table.add_column("Parameters")
+        for res in best_agg_models:
+            formula_type = "Normal" if 'dynamic' not in res['loss_function'] and 'logistic' not in res['loss_function'] else ("Dynamic" if 'dynamic' in res['loss_function'] else "Logistic")
+            table.add_row(formula_type, res['score_key'], res['loss_function'], f"{res['loss']:.4f}", str(np.round(res['params'], 4)))
+        console.print(table)
 
 if __name__ == '__main__':
     test_all_parameterizations()

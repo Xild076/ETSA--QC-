@@ -1,0 +1,11 @@
+{
+  "name": "aggregate_dynamic",
+  "model_type": "aggregate",
+  "function": "\u0080\u0004\u0095*\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u008c\b__main__\u0094\u008c\u0019aggregate_formula_dynamic\u0094\u0093\u0094.",
+  "params": [
+    2.028554340513281,
+    -4.921002351764253,
+    1.881458670303733,
+    -5.0
+  ]
+}

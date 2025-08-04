@@ -258,6 +258,8 @@ def initialize_session_state():
         .metric-card { background: linear-gradient(135deg, #34495E 0%, #2C3E50 100%); padding: 15px; border-radius: 3px; color: white; text-align: center; margin: 8px 0; }
         .stButton > button { background-color: #34495E !important; color: white !important; border: 1px solid #2C3E50 !important; border-radius: 3px !important; font-family: 'Source Serif Pro', serif !important; font-size: 16px !important; }
         .stButton > button:hover { background-color: #2C3E50 !important; border-color: #1A252F !important; }
+        .stButton > button:disabled { background-color: #CCCCCC !important; color: #666666 !important; border: 1px solid #AAAAAA !important; cursor: not-allowed !important; }
+        .stButton > button:disabled:hover { background-color: #CCCCCC !important; border-color: #AAAAAA !important; }
         .stSlider, .stCheckbox, .stSelectbox, .stTextInput, .stTextArea, .stNumberInput { font-family: 'Source Serif Pro', serif !important; }
         .stSlider label, .stCheckbox label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput label { font-family: 'Source Serif Pro', serif !important; }
         .stDataFrame, .stSuccess, .stError, .stWarning, .stInfo { font-family: 'Source Serif Pro', serif !important; }
@@ -271,6 +273,8 @@ def initialize_session_state():
         body[data-theme="light"] .academic-paper { background: white; border: 1px solid #E8E8E8; color: #2C3E50; }
         body[data-theme="light"] .stSlider label, body[data-theme="light"] .stCheckbox label, body[data-theme="light"] .stSelectbox label, body[data-theme="light"] .stTextInput label, body[data-theme="light"] .stTextArea label, body[data-theme="light"] .stNumberInput label { color: #2C3E50 !important; }
         body[data-theme="light"] .text-content { background-color: white !important; color: #2C3E50 !important; }
+        body[data-theme="light"] .stButton > button:disabled { background-color: #CCCCCC !important; color: #666666 !important; border: 1px solid #AAAAAA !important; }
+        body[data-theme="light"] .stButton > button:disabled:hover { background-color: #CCCCCC !important; border-color: #AAAAAA !important; }
         body[data-theme="dark"] .main { background-color: #0E1117; }
         body[data-theme="dark"] .stMarkdown, body[data-theme="dark"] .stMarkdown p, body[data-theme="dark"] .stMarkdown div, body[data-theme="dark"] .stMarkdown span { color: #FAFAFA !important; }
         body[data-theme="dark"] .stMarkdown h1 { color: #FFFFFF !important; border-bottom: 2px solid #FAFAFA !important; }
@@ -280,6 +284,8 @@ def initialize_session_state():
         body[data-theme="dark"] .academic-paper { background: #262730; border: 1px solid #404040; color: #FAFAFA; }
         body[data-theme="dark"] .stSlider label, body[data-theme="dark"] .stCheckbox label, body[data-theme="dark"] .stSelectbox label, body[data-theme="dark"] .stTextInput label, body[data-theme="dark"] .stTextArea label, body[data-theme="dark"] .stNumberInput label { color: #FAFAFA !important; }
         body[data-theme="dark"] .text-content { background-color: #262730 !important; color: #FAFAFA !important; }
+        body[data-theme="dark"] .stButton > button:disabled { background-color: #404040 !important; color: #888888 !important; border: 1px solid #555555 !important; }
+        body[data-theme="dark"] .stButton > button:disabled:hover { background-color: #404040 !important; border-color: #555555 !important; }
     </style>
     <script>
         function detectTheme() {
@@ -363,6 +369,7 @@ We will ask you to, given a text, to read the text and give each highlighted ent
     with st.expander("More Information", expanded=False):
         st.markdown("""
 <div class="academic-paper">
+
 **Risks and discomforts:**
 
 We do not anticipate any significant risks from participating in this research. The given sample text may describe mildly intense situations, but they are brief and fictional. We believe that the risk of discomfort is minimal.
