@@ -1007,13 +1007,15 @@ def test_all_parameterizations():
 
     os.makedirs('src/survey/optimal_formulas', exist_ok=True)
     
+    all_params = {}
     for model_type in model_param_determiners.keys():
         results = sorted([r for r in all_results if r['model_type'] == model_type], key=lambda x: x.get('avg_mse', float('inf')))
         if results:
             best_model = results[0]
-            if 'formulas' in best_model:
-                for context, formula in best_model['formulas'].items():
-                    formula.save(f"src/survey/optimal_formulas/{model_type}_{context}_{best_model['score_key']}_{best_model['function']}.json")
+            all_params[model_type] = best_model
+            # if 'formulas' in best_model:
+            #     for context, formula in best_model['formulas'].items():
+            #         formula.save(f"src/survey/optimal_formulas/{model_type}_{context}_{best_model['score_key']}_{best_model['function']}.json")
     
     agg_results = [r for r in all_results if r['model_type'] == 'Aggregate']
     if agg_results:
@@ -1022,14 +1024,18 @@ def test_all_parameterizations():
             models = [r for r in agg_results if (('dynamic' not in r['loss_function'] and 'logistic' not in r['loss_function']) if key == 'normal' else key in r['loss_function'])]
             if models: 
                 best = sorted(models, key=lambda x: x['loss'])[0]
-                best['function'].save(f"src/survey/optimal_formulas/Aggregate_{key}_{best['score_key']}.json")
+                # best['function'].save(f"src/survey/optimal_formulas/Aggregate_{key}_{best['score_key']}.json")
                 best_agg_models.append(best)
+                all_params[f"Aggregate_{key}"] = best
         table = Table(title="[bold]Top Aggregate Models by Formula Type (Lowest Loss)[/bold]", show_header=True, header_style="bold magenta")
         table.add_column("Formula Type"), table.add_column("Score Key"), table.add_column("Loss Function"), table.add_column("Final Loss", justify="right"), table.add_column("Parameters")
         for res in best_agg_models:
             formula_type = "Normal" if 'dynamic' not in res['loss_function'] and 'logistic' not in res['loss_function'] else ("Dynamic" if 'dynamic' in res['loss_function'] else "Logistic")
             table.add_row(formula_type, res['score_key'], res['loss_function'], f"{res['loss']:.4f}", str(np.round(res['params'], 4)))
         console.print(table)
+    
+    with open('src/survey/optimal_formulas/all_optimal_parameters.json', 'w') as f:
+        json.dump(all_params, f, indent=2, default=str)
 
 if __name__ == '__main__':
     test_all_parameterizations()

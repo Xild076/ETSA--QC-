@@ -286,6 +286,11 @@ def initialize_session_state():
         body[data-theme="dark"] .text-content { background-color: #262730 !important; color: #FAFAFA !important; }
         body[data-theme="dark"] .stButton > button:disabled { background-color: #404040 !important; color: #888888 !important; border: 1px solid #555555 !important; }
         body[data-theme="dark"] .stButton > button:disabled:hover { background-color: #404040 !important; border-color: #555555 !important; }
+        body[data-theme="dark"] * { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stForm, body[data-theme="dark"] .stFormSubmitButton, body[data-theme="dark"] .stCheckbox div, body[data-theme="dark"] .stCheckbox span { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stWarning, body[data-theme="dark"] .stSuccess, body[data-theme="dark"] .stError, body[data-theme="dark"] .stInfo { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stAlert { color: #FAFAFA !important; background-color: #262730 !important; }
+        body[data-theme="dark"] p, body[data-theme="dark"] div, body[data-theme="dark"] span, body[data-theme="dark"] label, body[data-theme="dark"] strong, body[data-theme="dark"] b, body[data-theme="dark"] i, body[data-theme="dark"] em { color: #FAFAFA !important; }
     </style>
     <script>
         function detectTheme() {

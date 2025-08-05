@@ -1,0 +1,199 @@
+{
+  "Actor": {
+    "model_type": "Actor",
+    "score_key": "user_sentiment_score_mapped",
+    "function": "actor_formula_v2",
+    "outlier_method": "lsquares",
+    "split_type": "action_target",
+    "avg_r2": 0.6527775729651047,
+    "avg_mse": 0.0005273515264811816,
+    "sub_models": {
+      "pos_pos_params": {
+        "params": "[ 0.18372893  5.         -0.26333308]",
+        "mse": 0.001582054579443542,
+        "soft_l1_loss": 0.001582054579443542,
+        "r2_loss": 0.9583327188953141
+      },
+      "pos_neg_params": {
+        "params": "[ 0.80240251 -1.14029831  0.17833546]",
+        "mse": 1.7126193631804146e-18,
+        "soft_l1_loss": 1.7126193631804146e-18,
+        "r2_loss": 0.0
+      },
+      "neg_pos_params": {
+        "params": "[0.38696038 1.34519321 0.03022338]",
+        "mse": 7.847772016184772e-19,
+        "soft_l1_loss": 7.847772016184772e-19,
+        "r2_loss": 1.0
+      }
+    },
+    "formulas": {
+      "pos_pos_params": "<formulas.SentimentFormula object at 0x13cd45a30>",
+      "pos_neg_params": "<formulas.SentimentFormula object at 0x13cd7bfb0>",
+      "neg_pos_params": "<formulas.SentimentFormula object at 0x13cd788f0>"
+    }
+  },
+  "Target": {
+    "model_type": "Target",
+    "score_key": "user_sentiment_score_mapped",
+    "function": "target_formula_v2",
+    "outlier_method": "lsquares",
+    "split_type": "driver",
+    "avg_r2": 0.9507617633826528,
+    "avg_mse": 0.014397260386912187,
+    "sub_models": {
+      "pos_driver_params": {
+        "params": "[ 1.         -1.37854923  0.61526692]",
+        "mse": 0.028794520773824335,
+        "soft_l1_loss": 0.028794520773824335,
+        "r2_loss": 0.9015235267653067
+      },
+      "neg_driver_params": {
+        "params": "[ 0.54531337 -0.45671904 -0.29175028]",
+        "mse": 3.920446076541071e-17,
+        "soft_l1_loss": 3.920446076541071e-17,
+        "r2_loss": 0.999999999999999
+      }
+    },
+    "formulas": {
+      "pos_driver_params": "<formulas.SentimentFormula object at 0x13cd0aae0>",
+      "neg_driver_params": "<formulas.SentimentFormula object at 0x13cd083e0>"
+    }
+  },
+  "Association": {
+    "model_type": "Association",
+    "score_key": "user_normalized_sentiment_scores",
+    "function": "assoc_formula_v2",
+    "outlier_method": "none",
+    "split_type": "entity_other",
+    "avg_r2": 0.4993779742110252,
+    "avg_mse": 0.04458336788295339,
+    "sub_models": {
+      "pos_params": {
+        "params": "[ 1.          1.35938422 -0.77648765]",
+        "mse": 0.033502509916508466,
+        "soft_l1_loss": 0.033502509916508466,
+        "r2_loss": 0.582667696541763
+      },
+      "neg_neg_params": {
+        "params": "[ 1.         -0.68460155  0.22890645]",
+        "mse": 0.05566422584939831,
+        "soft_l1_loss": 0.05566422584939831,
+        "r2_loss": 0.4160882518802874
+      }
+    },
+    "formulas": {
+      "pos_params": "<formulas.SentimentFormula object at 0x13cd28740>",
+      "neg_neg_params": "<formulas.SentimentFormula object at 0x13cd2b710>"
+    }
+  },
+  "Belonging Parent": {
+    "model_type": "Belonging Parent",
+    "score_key": "user_normalized_sentiment_scores",
+    "function": "belong_formula_v2",
+    "outlier_method": "lsquares",
+    "split_type": "parent_child",
+    "avg_r2": 0.7499999999999911,
+    "avg_mse": 1.5223535846270115e-15,
+    "sub_models": {
+      "pos_neg_params": {
+        "params": "[ 0.672502   -1.35989275 -1.72753555]",
+        "mse": 1.8285768689329245e-16,
+        "soft_l1_loss": 1.8285768689329245e-16,
+        "r2_loss": 0.9999999999999977
+      },
+      "neg_neg_params": {
+        "params": "[ 0.50015683 -0.09383614  0.02027065]",
+        "mse": 6.76131279014634e-18,
+        "soft_l1_loss": 6.76131279014634e-18,
+        "r2_loss": 0.0
+      },
+      "pos_pos_params": {
+        "params": "[ 0.96609891 -2.24689658  1.15491817]",
+        "mse": 8.937266019746808e-17,
+        "soft_l1_loss": 8.937266019746808e-17,
+        "r2_loss": 0.9999999999999989
+      },
+      "neg_pos_params": {
+        "params": "[ 0.9689719  -3.1316074   0.82011589]",
+        "mse": 5.810422678627139e-15,
+        "soft_l1_loss": 5.810422678627139e-15,
+        "r2_loss": 0.9999999999999678
+      }
+    },
+    "formulas": {
+      "pos_neg_params": "<formulas.SentimentFormula object at 0x13cd0bf50>",
+      "neg_neg_params": "<formulas.SentimentFormula object at 0x13cd4e210>",
+      "pos_pos_params": "<formulas.SentimentFormula object at 0x13cd4e2d0>",
+      "neg_pos_params": "<formulas.SentimentFormula object at 0x13cd4ec90>"
+    }
+  },
+  "Belonging Child": {
+    "model_type": "Belonging Child",
+    "score_key": "user_sentiment_score_mapped",
+    "function": "belong_formula_v2",
+    "outlier_method": "lsquares",
+    "split_type": "parent_child",
+    "avg_r2": 0.5,
+    "avg_mse": 2.2785887442393356e-17,
+    "sub_models": {
+      "pos_neg_params": {
+        "params": "[ 0.50956893 -0.46700204 -0.39804675]",
+        "mse": 4.441420878008769e-18,
+        "soft_l1_loss": 4.441420878008769e-18,
+        "r2_loss": 0.9999999999999999
+      },
+      "neg_neg_params": {
+        "params": "[ 0.52712155  2.69037178 -0.27002514]",
+        "mse": 7.211757867204547e-23,
+        "soft_l1_loss": 7.211757867204547e-23,
+        "r2_loss": 0.0
+      },
+      "pos_pos_params": {
+        "params": "[0.32737257 0.32737246 0.1617509 ]",
+        "mse": 8.662364751577516e-17,
+        "soft_l1_loss": 8.662364751577516e-17,
+        "r2_loss": 0.0
+      },
+      "neg_pos_params": {
+        "params": "[ 0.55925543 -1.68014639  1.21034437]",
+        "mse": 7.840925821082793e-20,
+        "soft_l1_loss": 7.840925821082793e-20,
+        "r2_loss": 1.0
+      }
+    },
+    "formulas": {
+      "pos_neg_params": "<formulas.SentimentFormula object at 0x13cd0b020>",
+      "neg_neg_params": "<formulas.SentimentFormula object at 0x13cd8c0b0>",
+      "pos_pos_params": "<formulas.SentimentFormula object at 0x13cd8d430>",
+      "neg_pos_params": "<formulas.SentimentFormula object at 0x13cd8e630>"
+    }
+  },
+  "Aggregate_normal": {
+    "model_type": "Aggregate",
+    "score_key": "user_sentiment_score_mapped",
+    "loss_function": "aggregate_error_softl1",
+    "params": "[ 2.020923   -1.59931692]",
+    "loss": 0.09875614559295098,
+    "success": true,
+    "function": "<formulas.SentimentFormula object at 0x13cd28800>"
+  },
+  "Aggregate_dynamic": {
+    "model_type": "Aggregate",
+    "score_key": "user_normalized_sentiment_scores",
+    "loss_function": "aggregate_error_dynamic_softl1",
+    "params": "[ 2.02855434 -4.92100235  1.88145867 -5.        ]",
+    "loss": 0.09002666087451074,
+    "success": true,
+    "function": "<formulas.SentimentFormula object at 0x13cd29af0>"
+  },
+  "Aggregate_logistic": {
+    "model_type": "Aggregate",
+    "score_key": "user_normalized_sentiment_scores",
+    "loss_function": "aggregate_error_logistic_mse",
+    "params": "[20.          5.          4.39777962  1.80271967 20.          4.47011343\n  4.82792573  1.66087606]",
+    "loss": 0.07530105969919156,
+    "success": true,
+    "function": "<formulas.SentimentFormula object at 0x13cd7aed0>"
+  }
+}
