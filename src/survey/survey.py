@@ -334,7 +334,7 @@ def initialize_session_state():
 def display_attention_check():
     st.markdown("""
     <div class=\"academic-paper\">
-    <h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Attention Check</h3>
+    <h3 style='font-family: \"Source Serif Pro\", serif;'>Attention Check</h3>
     <p style='font-size: 17px;'>
     To ensure data quality, please select <b>Somewhat Positive (2)</b> as your answer for this question.
     </p>
@@ -342,7 +342,7 @@ def display_attention_check():
     """, unsafe_allow_html=True)
     score = st.slider(label="Please select Somewhat Positive (2)", min_value=-4, max_value=4, value=0, format="%d", key="attention_check_slider", label_visibility="collapsed")
     slider_view()
-    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     if st.button("Next", key="attention_check_next_btn", type="primary", use_container_width=True):
         st.session_state.attention_check_shown = True
         st.session_state.current_question_index += 1
@@ -505,14 +505,14 @@ def display_packet_question(sentence_item, actual_sentence_index):
         st.session_state.packet_sentiment_history = []
         return True
     cumulative_text = " ".join(sentences[:current_sentence_idx + 1])
-    st.markdown(f"<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Step {current_sentence_idx + 1} of {total_sentences}:</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='font-family: \"Source Serif Pro\", serif;'>Step {current_sentence_idx + 1} of {total_sentences}:</h3>", unsafe_allow_html=True)
     entities_to_highlight = get_entities_to_highlight(entity, cumulative_text)
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(cumulative_text, entities_to_highlight)
     st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
-    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Current Rating:</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Evaluate the sentiment conveyed about the entity in the sentence.</p>", unsafe_allow_html=True)
+    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif;'>Current Rating:</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='font-family: \"Source Serif Pro\", serif;'>Evaluate the sentiment conveyed about the entity in the sentence.</p>", unsafe_allow_html=True)
     display_color = entity_color_map.get(entity, ENTITY_COLORS[0])
-    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
     slider_key = f"packet_slider_{item_id}_{current_sentence_idx}"
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
     score = st.slider(
@@ -527,7 +527,7 @@ def display_packet_question(sentence_item, actual_sentence_index):
         step=1,
     )
     slider_view()
-    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     col_left, col_center, col_right = st.columns([1,2,1])
     confirm_key = f"confirm_packet_{item_id}_{current_sentence_idx}"
     if confirm_key not in st.session_state:
@@ -557,12 +557,12 @@ def display_regular_question(sentence_item, actual_sentence_index):
     item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
     sentences = sentence_item.get('sentences', [])
     combined_text = " ".join(sentences)
-    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentence:</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif;'>Sentence:</h3>", unsafe_allow_html=True)
     scorable_entities = get_scorable_entities(sentence_item)
     highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(combined_text, scorable_entities)
     st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
-    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>For each highlighted entity, evaluate the sentiment conveyed about it in the sentence.</p>", unsafe_allow_html=True)
+    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='font-family: \"Source Serif Pro\", serif;'>For each highlighted entity, evaluate the sentiment conveyed about it in the sentence.</p>", unsafe_allow_html=True)
 
     confirm_key = f"confirm_regular_{item_id}"
     if confirm_key not in st.session_state:
@@ -575,7 +575,7 @@ def display_regular_question(sentence_item, actual_sentence_index):
         score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
         slider_view()
         slider_scores[entity] = score
-        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
         st.markdown("---")
 
     if st.button("Next Question", key=f"next_btn_{item_id}", type="primary", use_container_width=True):
@@ -607,7 +607,7 @@ def display_question():
     )
 
     progress_total = total_questions + (1 if not st.session_state.attention_check_shown else 0)
-    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: #2C3E50; text-align: center; margin-bottom: 10px;'><strong>Question {current_q_idx + 1} of {progress_total}</strong></p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; text-align: center; margin-bottom: 10px;'><strong>Question {current_q_idx + 1} of {progress_total}</strong></p>", unsafe_allow_html=True)
     st.progress((current_q_idx + 1) / progress_total if progress_total > 0 else 0)
 
     if is_attention_check:
