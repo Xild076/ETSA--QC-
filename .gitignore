@@ -6,3 +6,4 @@ data/dataset.csv
 /research
 /src/tests
 /data/dataset
+.env

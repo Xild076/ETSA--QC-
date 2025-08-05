@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import google.generativeai as genai
 
-API_KEY = "AIzaSyDj_4JDDNFWt-d09beeggjaU-KKweXRoqo"
+API_KEY = os.getenv("GOOGLE_API_KEY")
 
 class GemmaRelationExtractor:
     def __init__(self, api_key: str = None):
@@ -36,7 +36,6 @@ class GemmaRelationExtractor:
             result["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             result["user"] = "Xild076"
             
-            # Post-process to clean up and validate relations
             result = self._post_process_relations(result)
             
             return result
