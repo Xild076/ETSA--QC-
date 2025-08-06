@@ -727,12 +727,6 @@ If you have any questions or concerns, please feel free to reach out to us at:
 
 ---
 
-**Looking at the data:**
-
-You can take a look at all the data we've collected so far at this Google Sheet link: [Google Sheet Link](https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/edit?usp=sharing)
-
----
-
 **Project:**
 
 You can take a look at the project page here: [Project Page](https://github.com/Xild076/ETSA--QC-)
@@ -756,8 +750,6 @@ You can take a look at the project page here: [Project Page](https://github.com/
             and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
         ):
             export_to_google_sheets(df)
-        elif GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
-            st.warning("Automatic Google Sheet Export is not configured by the admin (GOOGLE_SHEET_ID is missing or is a placeholder). Your data has not been automatically uploaded.")
         elif not st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
             st.warning(f"Automatic Google Sheet Export is not configured by the admin (the '{GOOGLE_CREDENTIALS_SECRET_KEY}' secret is missing). Your data has not been automatically uploaded.")
         csv = df.to_csv(index=False).encode('utf-8')
