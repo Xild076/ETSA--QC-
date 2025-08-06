@@ -195,18 +195,15 @@ def build_graph(text: str, action_function: Callable, association_function: Call
     return graph, results
 
 if __name__ == '__main__':
-    # Original working text
     text = "The angry man hit the innocent child. The frightened child was very sad."
     final_graph, aggregate_results = build_graph_with_optimal_functions(text)
     print("\n--- Aggregate Sentiments Over the Entire Story ---")
     for name, sentiment in aggregate_results.items():
         print(f"{name}: {sentiment:.4f}")
     
-    # Demonstrate that belonging function is now properly implemented
     print("\n--- Testing Belonging Function ---")
     _, _, _, _, belonging_func = load_optimal_models()
     
-    # Test the belonging function with sample parent-child sentiment pairs
     test_cases = [
         (0.5, -0.3, "positive parent, negative child"),
         (-0.2, 0.4, "negative parent, positive child"),  
