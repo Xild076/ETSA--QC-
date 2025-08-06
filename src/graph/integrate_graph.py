@@ -1,5 +1,5 @@
 from typing import Callable, List, Dict, Any
-from graph import RelationGraph, VADERSentimentAnalyzer, EnsembleSentimentAnalyzer, WeightedEnsembleSentimentAnalyzer
+from graph import RelationGraph,  EnsembleSentimentAnalyzer, VADERSentimentAnalyzer, TextBlobSentimentAnalyzer, SWNSentimentAnalyzer, NLPTownSentimentAnalyzer, FiniteAutomataSentimentAnalyzer, DistilBERTLogitSentimentAnalyzer, ProsusAISentimentAnalyzer, PysentimientoSentimentAnalyzer
 
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -8,114 +8,7 @@ from e_c.coref import resolve
 from survey.formulas import SentimentFormula
 import json
 import numpy as np
-
-def load_optimal_functions():
-    try:
-        current_dir = os.path.dirname(__file__)
-        project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
-        file_path = os.path.join(project_root, 'src', 'survey', 'optimal_formulas', 'all_optimal_parameters.json')
-        with open(file_path, 'r') as f:
-            params = json.load(f)
-        return params
-    except Exception as e:
-        print(f"Could not load optimal functions: {e}")
-        return {}
-
-def create_optimal_sentiment_functions():
-    optimal_funcs = load_optimal_functions()
-    
-    def action_func(actor_s, action_s, target_s):
-        if 'Actor' in optimal_funcs and 'Target' in optimal_funcs:
-            actor_data = optimal_funcs['Actor']
-            target_data = optimal_funcs['Target']
-            
-            actor_result = actor_s
-            target_result = target_s
-            
-            if actor_data.get('split_type') == 'action_target':
-                if action_s > 0 and target_s > 0 and 'pos_pos_params' in actor_data.get('sub_models', {}):
-                    params = np.fromstring(actor_data['sub_models']['pos_pos_params']['params'].strip('[]'), sep=' ')
-                    driver = action_s * target_s
-                    if actor_data.get('function') == 'actor_formula_v2':
-                        actor_result = np.tanh(params[0] * actor_s + params[1] * driver + params[2])
-                elif action_s > 0 and target_s <= 0 and 'pos_neg_params' in actor_data.get('sub_models', {}):
-                    params = np.fromstring(actor_data['sub_models']['pos_neg_params']['params'].strip('[]'), sep=' ')
-                    driver = action_s * target_s
-                    if actor_data.get('function') == 'actor_formula_v2':
-                        actor_result = np.tanh(params[0] * actor_s + params[1] * driver + params[2])
-                elif action_s <= 0 and target_s > 0 and 'neg_pos_params' in actor_data.get('sub_models', {}):
-                    params = np.fromstring(actor_data['sub_models']['neg_pos_params']['params'].strip('[]'), sep=' ')
-                    driver = action_s * target_s
-                    if actor_data.get('function') == 'actor_formula_v2':
-                        actor_result = np.tanh(params[0] * actor_s + params[1] * driver + params[2])
-            
-            if target_data.get('split_type') == 'driver':
-                driver = action_s * target_s
-                if driver > 0 and 'pos_driver_params' in target_data.get('sub_models', {}):
-                    params = np.fromstring(target_data['sub_models']['pos_driver_params']['params'].strip('[]'), sep=' ')
-                    if target_data.get('function') == 'target_formula_v2':
-                        target_result = np.tanh(params[0] * target_s + params[1] * action_s + params[2])
-                elif driver <= 0 and 'neg_driver_params' in target_data.get('sub_models', {}):
-                    params = np.fromstring(target_data['sub_models']['neg_driver_params']['params'].strip('[]'), sep=' ')
-                    if target_data.get('function') == 'target_formula_v2':
-                        target_result = np.tanh(params[0] * target_s + params[1] * action_s + params[2])
-            
-            return (actor_result, target_result)
-        return (actor_s + action_s, target_s + action_s)
-    
-    def association_func(e1_s, e2_s):
-        if 'Association' in optimal_funcs:
-            assoc_data = optimal_funcs['Association']
-            if assoc_data.get('split_type') == 'entity_other':
-                if e1_s > 0 and 'pos_params' in assoc_data.get('sub_models', {}):
-                    params = np.fromstring(assoc_data['sub_models']['pos_params']['params'].strip('[]'), sep=' ')
-                    if assoc_data.get('function') == 'assoc_formula_v2':
-                        e1_result = np.tanh(params[0] * e1_s + params[1] * e2_s + params[2])
-                        e2_result = np.tanh(params[0] * e2_s + params[1] * e1_s + params[2])
-                        return (e1_result, e2_result)
-                elif e1_s <= 0 and e2_s <= 0 and 'neg_neg_params' in assoc_data.get('sub_models', {}):
-                    params = np.fromstring(assoc_data['sub_models']['neg_neg_params']['params'].strip('[]'), sep=' ')
-                    if assoc_data.get('function') == 'assoc_formula_v2':
-                        e1_result = np.tanh(params[0] * e1_s + params[1] * e2_s + params[2])
-                        e2_result = np.tanh(params[0] * e2_s + params[1] * e1_s + params[2])
-                        return (e1_result, e2_result)
-        return ((e1_s + e2_s) / 2, (e1_s + e2_s) / 2)
-    
-    def belonging_func(parent_s, child_s):
-        if 'Belonging Parent' in optimal_funcs:
-            belong_data = optimal_funcs['Belonging Parent']
-            if belong_data.get('split_type') == 'parent_child':
-                if parent_s > 0 and child_s <= 0 and 'pos_neg_params' in belong_data.get('sub_models', {}):
-                    params = np.fromstring(belong_data['sub_models']['pos_neg_params']['params'].strip('[]'), sep=' ')
-                    if belong_data.get('function') == 'belong_formula_v2':
-                        parent_result = np.tanh(params[0] * parent_s + params[1] * child_s + params[2])
-                        child_result = np.tanh(params[0] * child_s + params[1] * parent_s + params[2])
-                        return (parent_result, child_result)
-        return ((parent_s + child_s) / 2, (parent_s + child_s) / 2)
-    
-    def aggregate_func(sentiments: List[float]):
-        if not sentiments:
-            return 0.0
-        for key in ['normal', 'dynamic', 'logistic']:
-            agg_key = f'Aggregate_{key}'
-            if agg_key in optimal_funcs:
-                agg_data = optimal_funcs[agg_key]
-                if 'function' in agg_data:
-                    func_name = agg_data['function']
-                    if 'params' in agg_data:
-                        params = np.fromstring(agg_data['params'].strip('[]'), sep=' ') if isinstance(agg_data['params'], str) else agg_data['params']
-                        if func_name == 'aggregate_normal':
-                            return np.mean(sentiments) * params[0] + params[1]
-                        elif func_name == 'aggregate_dynamic':
-                            mean_val = np.mean(sentiments)
-                            return params[0] * mean_val + params[1] * np.exp(params[2] * mean_val) + params[3]
-                        elif func_name == 'aggregate_logistic':
-                            mean_val = np.mean(sentiments)
-                            return params[0] / (1 + np.exp(-params[1] * (mean_val - params[2]))) + params[3]
-                break
-        return sum(sentiments) / len(sentiments)
-    
-    return action_func, association_func, belonging_func, aggregate_func
+from survey.survey_question_optimizer import load_optimal_models
 
 def extract_entity_modifiers(sentence: str, entity: str) -> List[str]:
     try:
@@ -188,11 +81,24 @@ def find_cluster_id_for_headword(clusters: Dict, sent_map_entities: List[tuple],
     return -1
 
 def build_graph_with_optimal_functions(text: str) -> tuple[RelationGraph, dict]:
-    action_func, association_func, belonging_func, aggregate_func = create_optimal_sentiment_functions()
-    return build_graph(text, action_func, association_func, belonging_func, aggregate_func)
+    actor_func, target_func, association_func, aggregate_func, belonging_func = load_optimal_models()
+    
+    def compound_action_func(actor_sentiment_init, action_sentiment_init, target_sentiment_init):
+        actor_compound = actor_func(actor_sentiment_init, action_sentiment_init)
+        target_compound = target_func(target_sentiment_init, action_sentiment_init)
+        return actor_compound, target_compound
+    
+    return build_graph(text, compound_action_func, association_func, belonging_func, aggregate_func)
 
 def build_graph(text: str, action_function: Callable, association_function: Callable, belonging_function: Callable, aggregate_function: Callable) -> tuple[RelationGraph, dict]:
-    vader_analyzer = WeightedEnsembleSentimentAnalyzer()
+    vader_analyzer = EnsembleSentimentAnalyzer([VADERSentimentAnalyzer(),
+                                                TextBlobSentimentAnalyzer(),
+                                                SWNSentimentAnalyzer(),
+                                                NLPTownSentimentAnalyzer(),
+                                                FiniteAutomataSentimentAnalyzer(),
+                                                DistilBERTLogitSentimentAnalyzer(),
+                                                ProsusAISentimentAnalyzer(),
+                                                PysentimientoSentimentAnalyzer()])
     graph = RelationGraph(text, sentiment_analyzer_system=vader_analyzer)
     clusters, sent_map = resolve(text)
     print("--- Coref Output ---")
@@ -289,11 +195,29 @@ def build_graph(text: str, action_function: Callable, association_function: Call
     return graph, results
 
 if __name__ == '__main__':
+    # Original working text
     text = "The angry man hit the innocent child. The frightened child was very sad."
     final_graph, aggregate_results = build_graph_with_optimal_functions(text)
     print("\n--- Aggregate Sentiments Over the Entire Story ---")
     for name, sentiment in aggregate_results.items():
         print(f"{name}: {sentiment:.4f}")
+    
+    # Demonstrate that belonging function is now properly implemented
+    print("\n--- Testing Belonging Function ---")
+    _, _, _, _, belonging_func = load_optimal_models()
+    
+    # Test the belonging function with sample parent-child sentiment pairs
+    test_cases = [
+        (0.5, -0.3, "positive parent, negative child"),
+        (-0.2, 0.4, "negative parent, positive child"),  
+        (0.7, 0.8, "positive parent, positive child"),
+        (-0.6, -0.4, "negative parent, negative child")
+    ]
+    
+    for parent_sent, child_sent, description in test_cases:
+        parent_result, child_result = belonging_func(parent_sent, child_sent)
+        print(f"{description}: parent {parent_sent:.3f} → {parent_result:.3f}, child {child_sent:.3f} → {child_result:.3f}")
+    
     from graph import GraphVisualizer
     visualizer = GraphVisualizer(final_graph)
     visualizer.draw_graph(save_path="integrated_graph.html")

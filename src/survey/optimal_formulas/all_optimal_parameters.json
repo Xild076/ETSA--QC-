@@ -28,9 +28,9 @@
       }
     },
     "formulas": {
-      "pos_pos_params": "<formulas.SentimentFormula object at 0x13cd45a30>",
-      "pos_neg_params": "<formulas.SentimentFormula object at 0x13cd7bfb0>",
-      "neg_pos_params": "<formulas.SentimentFormula object at 0x13cd788f0>"
+      "pos_pos_params": "<formulas.SentimentFormula object at 0x12d24d370>",
+      "pos_neg_params": "<formulas.SentimentFormula object at 0x12d24c4d0>",
+      "neg_pos_params": "<formulas.SentimentFormula object at 0x12d24cb00>"
     }
   },
   "Target": {
@@ -56,8 +56,8 @@
       }
     },
     "formulas": {
-      "pos_driver_params": "<formulas.SentimentFormula object at 0x13cd0aae0>",
-      "neg_driver_params": "<formulas.SentimentFormula object at 0x13cd083e0>"
+      "pos_driver_params": "<formulas.SentimentFormula object at 0x12c1856d0>",
+      "neg_driver_params": "<formulas.SentimentFormula object at 0x12d24e9f0>"
     }
   },
   "Association": {
@@ -83,8 +83,8 @@
       }
     },
     "formulas": {
-      "pos_params": "<formulas.SentimentFormula object at 0x13cd28740>",
-      "neg_neg_params": "<formulas.SentimentFormula object at 0x13cd2b710>"
+      "pos_params": "<formulas.SentimentFormula object at 0x12d24f8c0>",
+      "neg_neg_params": "<formulas.SentimentFormula object at 0x12d24f890>"
     }
   },
   "Belonging Parent": {
@@ -122,10 +122,10 @@
       }
     },
     "formulas": {
-      "pos_neg_params": "<formulas.SentimentFormula object at 0x13cd0bf50>",
-      "neg_neg_params": "<formulas.SentimentFormula object at 0x13cd4e210>",
-      "pos_pos_params": "<formulas.SentimentFormula object at 0x13cd4e2d0>",
-      "neg_pos_params": "<formulas.SentimentFormula object at 0x13cd4ec90>"
+      "pos_neg_params": "<formulas.SentimentFormula object at 0x12d2763f0>",
+      "neg_neg_params": "<formulas.SentimentFormula object at 0x12d274f20>",
+      "pos_pos_params": "<formulas.SentimentFormula object at 0x12d277ce0>",
+      "neg_pos_params": "<formulas.SentimentFormula object at 0x12d274b60>"
     }
   },
   "Belonging Child": {
@@ -163,37 +163,20 @@
       }
     },
     "formulas": {
-      "pos_neg_params": "<formulas.SentimentFormula object at 0x13cd0b020>",
-      "neg_neg_params": "<formulas.SentimentFormula object at 0x13cd8c0b0>",
-      "pos_pos_params": "<formulas.SentimentFormula object at 0x13cd8d430>",
-      "neg_pos_params": "<formulas.SentimentFormula object at 0x13cd8e630>"
+      "pos_neg_params": "<formulas.SentimentFormula object at 0x12d2294f0>",
+      "neg_neg_params": "<formulas.SentimentFormula object at 0x12d24d3a0>",
+      "pos_pos_params": "<formulas.SentimentFormula object at 0x12d24fce0>",
+      "neg_pos_params": "<formulas.SentimentFormula object at 0x12d24ddc0>"
     }
   },
-  "Aggregate_normal": {
-    "model_type": "Aggregate",
-    "score_key": "user_sentiment_score_mapped",
-    "loss_function": "aggregate_error_softl1",
-    "params": "[ 2.020923   -1.59931692]",
-    "loss": 0.09875614559295098,
-    "success": true,
-    "function": "<formulas.SentimentFormula object at 0x13cd28800>"
-  },
-  "Aggregate_dynamic": {
-    "model_type": "Aggregate",
-    "score_key": "user_normalized_sentiment_scores",
-    "loss_function": "aggregate_error_dynamic_softl1",
-    "params": "[ 2.02855434 -4.92100235  1.88145867 -5.        ]",
-    "loss": 0.09002666087451074,
-    "success": true,
-    "function": "<formulas.SentimentFormula object at 0x13cd29af0>"
-  },
-  "Aggregate_logistic": {
+  "Aggregate": {
     "model_type": "Aggregate",
     "score_key": "user_normalized_sentiment_scores",
     "loss_function": "aggregate_error_logistic_mse",
     "params": "[20.          5.          4.39777962  1.80271967 20.          4.47011343\n  4.82792573  1.66087606]",
     "loss": 0.07530105969919156,
     "success": true,
-    "function": "<formulas.SentimentFormula object at 0x13cd7aed0>"
+    "function": "<formulas.SentimentFormula object at 0x12d23c350>",
+    "function_save_location": "src/survey/optimal_formulas/Aggregate/user_normalized_sentiment_scores_aggregate_error_logistic_mse.json"
   }
 }

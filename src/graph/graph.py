@@ -4,6 +4,19 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from transformers import pipeline
+from pathlib import Path
+import sys
+
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir.parent))
+
+try:
+    from sentiment.sentiment import get_vader_sentiment, get_textblob_sentiment, get_swn_sentiment, get_nlptown_sentiment, get_flair_sentiment, get_finiteautomata_sentiment, get_distilbert_logit_sentiment, get_ProsusAI_sentiment, get_pysentimiento_sentiment
+except ImportError:
+    sys.path.insert(0, str(current_dir.parent.parent))
+    from src.sentiment.sentiment import get_vader_sentiment, get_textblob_sentiment, get_swn_sentiment, get_nlptown_sentiment, get_flair_sentiment, get_finiteautomata_sentiment, get_distilbert_logit_sentiment, get_ProsusAI_sentiment, get_pysentimiento_sentiment
+
+
 import plotly.graph_objects as go
 
 class SentimentAnalyzerSystem:
@@ -15,111 +28,77 @@ class SentimentAnalyzerSystem:
 
 class VADERSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        self.analyzer = SentimentIntensityAnalyzer()
+        pass
 
     def analyze_sentiment(self, text):
-        return self.analyzer.polarity_scores(text)['compound'] if text else 0.0
+        return get_vader_sentiment(text) if text else 0.0
 
-class AFINNSentimentAnalyzer(SentimentAnalyzerSystem):
+class TextBlobSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        import afinn
-        self.afinn = afinn.Afinn()
+        pass
 
     def analyze_sentiment(self, text):
-        return self.afinn.score(text) / 5.0 if text else 0.0
+        return get_textblob_sentiment(text) if text else 0.0
 
-class SpacyENCOREWEBSMSentimentAnalyzer(SentimentAnalyzerSystem):
+class SWNSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        import spacy
-        self.nlp = spacy.load("en_core_web_sm")
+        pass
 
     def analyze_sentiment(self, text):
-        doc = self.nlp(text)
-        return sum(token.sentiment for token in doc) / len(doc) if doc else 0.0
+        return get_swn_sentiment(text) if text else 0.0
 
-class HFPipelineSentimentAnalyzer(SentimentAnalyzerSystem):
+class NLPTownSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis")
+        pass
 
     def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        return result['score'] if result['label'] == 'POSITIVE' else -result['score']
+        return get_nlptown_sentiment(text) if text else 0.0
 
-class DistilBERTSentimentAnalyzer(SentimentAnalyzerSystem):
+class FlairSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+        pass
 
     def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        return result['score'] if result['label'] == 'POSITIVE' else -result['score']
+        return get_flair_sentiment(text) if text else 0.0        
 
-class RoBERTaSentimentAnalyzer(SentimentAnalyzerSystem):
+class FiniteAutomataSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment-latest")
+        pass
 
     def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        scores = {r['label']: r['score'] for r in result if isinstance(result, list)}
-        if isinstance(result, dict):
-            scores = {result['label']: result['score']}
-        pos_score = scores.get('LABEL_2', scores.get('POSITIVE', 0))
-        neg_score = scores.get('LABEL_0', scores.get('NEGATIVE', 0))
-        return pos_score - neg_score
+        return get_finiteautomata_sentiment(text) if text else 0.0
 
-class FinBERTSentimentAnalyzer(SentimentAnalyzerSystem):
+class DistilBERTLogitSentimentAnalyzer(SentimentAnalyzerSystem):
     def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+        pass
 
     def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        return result['score'] if result['label'] == 'positive' else -result['score']
+        return get_distilbert_logit_sentiment(text) if text else 0.0
+
+class ProsusAISentimentAnalyzer(SentimentAnalyzerSystem):
+    def __init__(self):
+        pass
+
+    def analyze_sentiment(self, text):
+        return get_ProsusAI_sentiment(text) if text else 0.0
+
+class PysentimientoSentimentAnalyzer(SentimentAnalyzerSystem):
+    def __init__(self):
+        pass
+
+    def analyze_sentiment(self, text):
+        return get_pysentimiento_sentiment(text) if text else 0.0
 
 class EnsembleSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self, analyzers=None):
-        if analyzers is None:
-            self.analyzers = [
-                VADERSentimentAnalyzer(),
-                HFPipelineSentimentAnalyzer(),
-                DistilBERTSentimentAnalyzer()
-            ]
-        else:
-            self.analyzers = analyzers
+    def __init__(self, analyzers: List[SentimentAnalyzerSystem]):
+        self.analyzers = analyzers
 
     def analyze_sentiment(self, text):
-        if not text:
+        if not text or not text.strip():
             return 0.0
-        scores = [analyzer.analyze_sentiment(text) for analyzer in self.analyzers]
-        return sum(scores) / len(scores)
+        sentiments = [analyzer.analyze_sentiment(text) for analyzer in self.analyzers]
+        return sum(sentiments) / len(sentiments) if sentiments else 0.0
 
-class WeightedEnsembleSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self, analyzers=None, weights=None):
-        if analyzers is None:
-            self.analyzers = [
-                VADERSentimentAnalyzer(),
-                HFPipelineSentimentAnalyzer(),
-                DistilBERTSentimentAnalyzer()
-            ]
-        else:
-            self.analyzers = analyzers
-        
-        if weights is None:
-            self.weights = [1.0] * len(self.analyzers)
-        else:
-            self.weights = weights
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        scores = [analyzer.analyze_sentiment(text) * weight for analyzer, weight in zip(self.analyzers, self.weights)]
-        return sum(scores) / sum(self.weights)
 
 ENTITY_ROLES = {
     "actor": {"description": "Initiates an action"},

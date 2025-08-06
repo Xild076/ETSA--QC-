@@ -1,3 +1,12 @@
+from pathlib import Path
+try:
+    from dotenv import load_dotenv
+    dotenv_path = Path(__file__).parent.parent.parent / '.env'
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path)
+except ImportError:
+    pass
+
 import json
 import os
 from typing import List, Dict, Any, Tuple

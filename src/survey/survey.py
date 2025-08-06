@@ -361,6 +361,11 @@ We thank you for participating in a research study titled "Quantum Criticism—E
 
 ---
 
+**Important Disclaimer:**
+<span style='color:#b94a48; font-weight:bold;'>Some survey items may contain language describing intense, negative, or violent actions or emotions. These are included for research purposes only and do not reflect the views of the researchers. If you feel uncomfortable at any point, you may withdraw from the survey at any time.</span>
+
+---
+
 **Purpose:**
 
 The purpose of this research is to collect ground truth data on peoples' emotional response towards entities or characters within a text, depending on factors such as how the text is formatted, the intensity of the language, and how the entities/characters interact with each other. The ultimate goal is to use this data in order to develop tools to quantify this phenomenon.

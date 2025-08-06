@@ -1,4 +1,4 @@
-from typing import Literal, Callable
+from typing import Literal, Callable, List
 import pandas as pd
 import ssl
 import ast
@@ -20,21 +20,55 @@ from matplotlib.widgets import Slider
 import matplotlib.gridspec as gridspec
 import json
 import os
+import inspect
 import sys
 from pathlib import Path
+import pickle
+
+CONFIG = {
+    'test_train_split': 0.2,
+    'random_seed': 42,
+    'test_data_save_location': 'src/survey/test_data/',
+    'enable_test_split': True
+}
 
 current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir))
 
 try:
-    from formulas import SentimentFormula
+    from formulas import SentimentFormula, actor_formula_v2, target_formula_v2, assoc_formula_v2, belong_formula_v2
 except ImportError:
-    from .formulas import SentimentFormula
+    from .formulas import SentimentFormula, actor_formula_v2, target_formula_v2, assoc_formula_v2, belong_formula_v2
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
 url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/export?format=csv&gid=0'
 df = pd.read_csv(url)
+
+def create_test_train_split(dataframe):
+    if not CONFIG['enable_test_split']:
+        return dataframe, pd.DataFrame()
+    
+    np.random.seed(CONFIG['random_seed'])
+    
+    test_size = int(len(dataframe) * CONFIG['test_train_split'])
+    indices = np.random.permutation(len(dataframe))
+    test_indices = indices[:test_size]
+    train_indices = indices[test_size:]
+    
+    test_df = dataframe.iloc[test_indices].copy()
+    train_df = dataframe.iloc[train_indices].copy()
+    
+    os.makedirs(CONFIG['test_data_save_location'], exist_ok=True)
+    test_df.to_csv(os.path.join(CONFIG['test_data_save_location'], 'test_data.csv'), index=False)
+    
+    print(f"Data split: {len(train_df)} training samples, {len(test_df)} test samples")
+    print(f"Test data saved to: {CONFIG['test_data_save_location']}")
+    
+    return train_df, test_df
+
+df_train, df_test = create_test_train_split(df)
+df = df_train
 
 intensity_map_string = {
     'very': 0.85,
@@ -1013,10 +1047,11 @@ def test_all_parameterizations():
         if results:
             best_model = results[0]
             all_params[model_type] = best_model
-            # if 'formulas' in best_model:
-            #     for context, formula in best_model['formulas'].items():
-            #         formula.save(f"src/survey/optimal_formulas/{model_type}_{context}_{best_model['score_key']}_{best_model['function']}.json")
-    
+            if 'formulas' in best_model:
+                os.makedirs(f'src/survey/optimal_formulas/{model_type}', exist_ok=True)
+                for context, formula in best_model['formulas'].items():
+                    formula.save(f"src/survey/optimal_formulas/{model_type}/{context}_{best_model['score_key']}_{best_model['function']}.json")
+
     agg_results = [r for r in all_results if r['model_type'] == 'Aggregate']
     if agg_results:
         best_agg_models = []
@@ -1024,9 +1059,14 @@ def test_all_parameterizations():
             models = [r for r in agg_results if (('dynamic' not in r['loss_function'] and 'logistic' not in r['loss_function']) if key == 'normal' else key in r['loss_function'])]
             if models: 
                 best = sorted(models, key=lambda x: x['loss'])[0]
-                # best['function'].save(f"src/survey/optimal_formulas/Aggregate_{key}_{best['score_key']}.json")
                 best_agg_models.append(best)
-                all_params[f"Aggregate_{key}"] = best
+        best_agg_models = sorted(best_agg_models, key=lambda x: x['loss'])
+        all_params['Aggregate'] = best_agg_models[0]
+        if 'formulas' in best_agg_models[0]:
+            os.makedirs('src/survey/optimal_formulas/Aggregate', exist_ok=True)
+            for context, formula in best_agg_models[0]['formulas'].items():
+                formula.save(f"src/survey/optimal_formulas/Aggregate/{context}_{best_agg_models[0]['score_key']}_{best_agg_models[0]['loss_function']}.json")
+        all_params['Aggregate']['function_save_location'] = f"src/survey/optimal_formulas/Aggregate/{best_agg_models[0]['score_key']}_{best_agg_models[0]['loss_function']}.json"
         table = Table(title="[bold]Top Aggregate Models by Formula Type (Lowest Loss)[/bold]", show_header=True, header_style="bold magenta")
         table.add_column("Formula Type"), table.add_column("Score Key"), table.add_column("Loss Function"), table.add_column("Final Loss", justify="right"), table.add_column("Parameters")
         for res in best_agg_models:
@@ -1037,5 +1077,351 @@ def test_all_parameterizations():
     with open('src/survey/optimal_formulas/all_optimal_parameters.json', 'w') as f:
         json.dump(all_params, f, indent=2, default=str)
 
-if __name__ == '__main__':
-    test_all_parameterizations()
+def load_optimal_models():
+    try:
+        with open('src/survey/optimal_formulas/all_optimal_parameters.json', 'r') as f:
+            all_params = json.load(f)
+    except FileNotFoundError:
+        print("No optimal parameters found. Please run the analysis first.")
+        return None, None, None, None
+
+    def load_formula_from_path(path):
+        if os.path.exists(path):
+            try:
+                formula = SentimentFormula.load_from_file(path)
+                return formula
+            except:
+                pass
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+
+                def get_function_by_name(name, namespace=None):
+                    if namespace is None:
+                        frame = inspect.currentframe().f_back
+                        namespace = {}
+                        namespace.update(frame.f_globals)
+                        namespace.update(frame.f_locals)
+                    return namespace.get(name)
+                
+                name = data.get('name', '')
+                function = get_function_by_name(name)
+                if function is None:
+                    if "actor" in name:
+                        function = actor_formula_v1 if "v1" in name else actor_formula_v2
+                    elif "target" in name:
+                        function = target_formula_v1 if "v1" in name else target_formula_v2
+                    elif "assoc" in name:
+                        function = assoc_formula_v1 if "v1" in name else assoc_formula_v2
+                    elif "belong" in name:
+                        function = belong_formula_v1 if "v1" in name else belong_formula_v2
+                    else:
+                        function = None
+                
+                params = data.get('params', [])
+                if isinstance(params, list) and len(params) > 0:
+                    params = np.array(params)
+                
+                return SentimentFormula(
+                    name=data.get('name', 'fallback_formula'),
+                    model_type=data.get('model_type', 'unknown'),
+                    function=function,
+                    params=params
+                )
+            except:
+                pass
+        return None
+
+    actor_params = all_params.get('Actor', {})
+    actor_split = actor_params.get('split_type', 'none')
+    actor_formulas = actor_params.get('formulas', {})
+    def actor_func(s_init_actor, driver, split_context=None):
+        from rich import print as print
+        ctx = split_context
+        if actor_split == 'driver':
+            ctx = 'pos_driver_params' if driver > 0 else 'neg_driver_params'
+        elif actor_split == 'action_target':
+            if driver > 0:
+                ctx = 'pos_pos_params' if s_init_actor > 0 else 'neg_pos_params'
+            else:
+                ctx = 'pos_neg_params' if s_init_actor > 0 else 'neg_neg_params'
+        if actor_split != 'none' and ctx in actor_formulas:
+            try:
+                formula = load_formula_from_path(f"src/survey/optimal_formulas/Actor/{ctx}_{actor_params['score_key']}_{actor_params['function']}.json")
+                if formula is None:
+                    if isinstance(actor_formulas.get(ctx), str):
+                        formula = None
+                    else:
+                        formula = actor_formulas[ctx]
+            except (AttributeError, KeyError):
+                if isinstance(actor_formulas.get(ctx), str):
+                    formula = None
+                elif ctx in actor_formulas:
+                    formula = actor_formulas[ctx]
+                else:
+                    formula = None
+            print(f"[bold cyan]Actor split:[/] {actor_split} | context: {ctx} | s_init_actor: {s_init_actor} | driver: {driver}")
+            if formula:
+                return formula([s_init_actor, driver])
+        else:
+            try:
+                formula = load_formula_from_path(f"src/survey/optimal_formulas/Actor/default_{actor_params['score_key']}_{actor_params['function']}.json")
+                if formula is None and 'default' in actor_formulas:
+                    if isinstance(actor_formulas.get('default'), str):
+                        formula = None
+                    else:
+                        formula = actor_formulas['default']
+                elif not actor_formulas:
+                    raise RuntimeError("No actor formula found.")
+                else:
+                    for key, val in actor_formulas.items():
+                        if not isinstance(val, str):
+                            formula = val
+                            break
+                    else:
+                        raise RuntimeError("No valid actor formula found.")
+            except (AttributeError, KeyError):
+                if actor_formulas:
+                    for key, val in actor_formulas.items():
+                        if not isinstance(val, str):
+                            formula = val
+                            break
+                    else:
+                        raise RuntimeError("No valid actor formula found.")
+                else:
+                    raise RuntimeError("No actor formula found.")
+            print(f"[bold cyan]Actor default used | s_init_actor: {s_init_actor} | driver: {driver}")
+            if formula:
+                return formula([s_init_actor, driver])
+
+    target_params = all_params.get('Target', {})
+    target_split = target_params.get('split_type', 'none')
+    target_formulas = target_params.get('formulas', {})
+    def target_func(s_init_target, s_action, split_context=None):
+        from rich import print as print
+        ctx = split_context
+        if target_split == 'driver':
+            ctx = 'pos_driver_params' if s_action > 0 else 'neg_driver_params'
+        elif target_split == 'action_target':
+            if s_action > 0:
+                ctx = 'pos_pos_params' if s_init_target > 0 else 'neg_pos_params'
+            else:
+                ctx = 'pos_neg_params' if s_init_target > 0 else 'neg_neg_params'
+        if target_split != 'none' and ctx in target_formulas:
+            try:
+                formula = load_formula_from_path(f"src/survey/optimal_formulas/Target/{ctx}_{target_params['score_key']}_{target_params['function']}.json")
+                if formula is None:
+                    if isinstance(target_formulas.get(ctx), str):
+                        formula = None
+                    else:
+                        formula = target_formulas[ctx]
+            except (AttributeError, KeyError):
+                if isinstance(target_formulas.get(ctx), str):
+                    formula = None
+                elif ctx in target_formulas:
+                    formula = target_formulas[ctx]
+                else:
+                    formula = None
+            print(f"[bold cyan]Target split:[/] {target_split} | context: {ctx} | s_init_target: {s_init_target} | s_action: {s_action}")
+            if formula:
+                return formula([s_init_target, s_action])
+        else:
+            try:
+                formula = load_formula_from_path(f"src/survey/optimal_formulas/Target/default_{target_params['score_key']}_{target_params['function']}.json")
+                if formula is None and 'default' in target_formulas:
+                    if isinstance(target_formulas.get('default'), str):
+                        formula = None
+                    else:
+                        formula = target_formulas['default']
+                elif not target_formulas:
+                    raise RuntimeError("No target formula found.")
+                else:
+                    for key, val in target_formulas.items():
+                        if not isinstance(val, str):
+                            formula = val
+                            break
+                    else:
+                        raise RuntimeError("No valid target formula found.")
+            except (AttributeError, KeyError):
+                if target_formulas:
+                    for key, val in target_formulas.items():
+                        if not isinstance(val, str):
+                            formula = val
+                            break
+                    else:
+                        raise RuntimeError("No valid target formula found.")
+                else:
+                    raise RuntimeError("No target formula found.")
+            print(f"[bold cyan]Target default used | s_init_target: {s_init_target} | s_action: {s_action}")
+            if formula:
+                return formula([s_init_target, s_action])
+
+    assoc_params = all_params.get('Association', {})
+    assoc_split = assoc_params.get('split_type', 'none')
+    assoc_formulas = assoc_params.get('formulas', {})
+    def association_func(s_init_entity, s_init_other, split_context=None):
+        ctx = split_context
+        if assoc_split == 'other':
+            ctx = 'pos_params' if s_init_other > 0 else 'neg_params'
+        elif assoc_split == 'entity_other':
+            if s_init_entity > 0 and s_init_other > 0:
+                ctx = 'pos_params'
+            elif s_init_entity > 0 and s_init_other <= 0:
+                ctx = 'pos_neg_params'
+            elif s_init_entity <= 0 and s_init_other > 0:
+                ctx = 'neg_pos_params'
+            else:
+                ctx = 'neg_neg_params'
+        if assoc_split != 'none' and ctx in assoc_formulas:
+            try:
+                formula = load_formula_from_path(f"src/survey/optimal_formulas/Association/{ctx}_{assoc_params['score_key']}_{assoc_params['function']}.json")
+                if formula is None:
+                    if isinstance(assoc_formulas.get(ctx), str):
+                        formula = None
+                    else:
+                        formula = assoc_formulas[ctx]
+            except (AttributeError, pickle.PickleError):
+                if isinstance(assoc_formulas.get(ctx), str):
+                    formula = None
+                elif ctx in assoc_formulas:
+                    formula = assoc_formulas[ctx]
+                else:
+                    formula = None
+            print(f"[bold cyan]Association split:[/] {assoc_split} | context: {ctx} | s_init_entity: {s_init_entity} | s_init_other: {s_init_other}")
+            if formula:
+                return formula([s_init_entity, s_init_other])
+        else:
+            try:
+                formula = load_formula_from_path(f"src/survey/optimal_formulas/Association/default_{assoc_params['score_key']}_{assoc_params['function']}.json")
+                if formula is None and 'default' in assoc_formulas:
+                    if isinstance(assoc_formulas.get('default'), str):
+                        formula = None
+                    else:
+                        formula = assoc_formulas['default']
+                elif not assoc_formulas:
+                    raise RuntimeError("No association formula found.")
+                else:
+                    for key, val in assoc_formulas.items():
+                        if not isinstance(val, str):
+                            formula = val
+                            break
+                    else:
+                        raise RuntimeError("No valid association formula found.")
+            except (AttributeError, pickle.PickleError):
+                if assoc_formulas:
+                    for key, val in assoc_formulas.items():
+                        if not isinstance(val, str):
+                            formula = val
+                            break
+                    else:
+                        raise RuntimeError("No valid association formula found.")
+                else:
+                    raise RuntimeError("No association formula found.")
+            print(f"[bold cyan]Association default used | s_init_entity: {s_init_entity} | s_init_other: {s_init_other}")
+            if formula:
+                return formula([s_init_entity, s_init_other])
+
+    agg_params = all_params.get('Aggregate', {})
+    agg_formula_path = agg_params.get('function_save_location', None)
+    agg_formula = None
+    if agg_formula_path:
+        agg_formula = load_formula_from_path(agg_formula_path)
+    def aggregate_func(s_inits, split_context=None):
+        if agg_formula is not None:
+            return agg_formula(s_inits)
+        import numpy as np
+        return np.mean(s_inits) if s_inits else 0.0
+
+    parent_params = all_params.get('Belonging Parent', {})
+    parent_split = parent_params.get('split_type', 'none')
+    parent_formulas = parent_params.get('formulas', {})
+    
+    child_params = all_params.get('Belonging Child', {})
+    child_split = child_params.get('split_type', 'none')
+    child_formulas = child_params.get('formulas', {})
+    
+    def belonging_func(parent_sentiment_init, child_sentiment_init, split_context=None):
+        ctx = split_context
+        
+        parent_ctx = None
+        if parent_split == 'parent_child':
+            if parent_sentiment_init > 0 and child_sentiment_init > 0:
+                parent_ctx = 'pos_pos_params'
+            elif parent_sentiment_init > 0 and child_sentiment_init <= 0:
+                parent_ctx = 'pos_neg_params'
+            elif parent_sentiment_init <= 0 and child_sentiment_init > 0:
+                parent_ctx = 'neg_pos_params'
+            else:
+                parent_ctx = 'neg_neg_params'
+        elif parent_split == 'child':
+            parent_ctx = 'pos_child_params' if child_sentiment_init > 0 else 'neg_child_params'
+        
+        child_ctx = None
+        if child_split == 'parent_child':
+            if parent_sentiment_init > 0 and child_sentiment_init > 0:
+                child_ctx = 'pos_pos_params'
+            elif parent_sentiment_init > 0 and child_sentiment_init <= 0:
+                child_ctx = 'pos_neg_params'
+            elif parent_sentiment_init <= 0 and child_sentiment_init > 0:
+                child_ctx = 'neg_pos_params'
+            else:
+                child_ctx = 'neg_neg_params'
+        elif child_split == 'parent':
+            child_ctx = 'pos_parent_params' if parent_sentiment_init > 0 else 'neg_parent_params'
+        
+        parent_formula = None
+        if parent_split != 'none' and parent_ctx in parent_formulas:
+            try:
+                parent_formula = load_formula_from_path(f"src/survey/optimal_formulas/Belonging Parent/{parent_ctx}_{parent_params['score_key']}_{parent_params['function']}.json")
+                if parent_formula is None:
+                    if not isinstance(parent_formulas.get(parent_ctx), str):
+                        parent_formula = parent_formulas[parent_ctx]
+            except (AttributeError, pickle.PickleError):
+                if not isinstance(parent_formulas.get(parent_ctx), str):
+                    parent_formula = parent_formulas[parent_ctx]
+        else:
+            try:
+                parent_formula = load_formula_from_path(f"src/survey/optimal_formulas/Belonging Parent/default_{parent_params['score_key']}_{parent_params['function']}.json")
+                if parent_formula is None:
+                    for key, val in parent_formulas.items():
+                        if not isinstance(val, str):
+                            parent_formula = val
+                            break
+            except (AttributeError, pickle.PickleError):
+                for key, val in parent_formulas.items():
+                    if not isinstance(val, str):
+                        parent_formula = val
+                        break
+        
+        child_formula = None
+        if child_split != 'none' and child_ctx in child_formulas:
+            try:
+                child_formula = load_formula_from_path(f"src/survey/optimal_formulas/Belonging Child/{child_ctx}_{child_params['score_key']}_{child_params['function']}.json")
+                if child_formula is None:
+                    if not isinstance(child_formulas.get(child_ctx), str):
+                        child_formula = child_formulas[child_ctx]
+            except (AttributeError, pickle.PickleError):
+                if not isinstance(child_formulas.get(child_ctx), str):
+                    child_formula = child_formulas[child_ctx]
+        else:
+            try:
+                child_formula = load_formula_from_path(f"src/survey/optimal_formulas/Belonging Child/default_{child_params['score_key']}_{child_params['function']}.json")
+                if child_formula is None:
+                    for key, val in child_formulas.items():
+                        if not isinstance(val, str):
+                            child_formula = val
+                            break
+            except (AttributeError, pickle.PickleError):
+                for key, val in child_formulas.items():
+                    if not isinstance(val, str):
+                        child_formula = val
+                        break
+        
+        parent_compound = parent_formula([parent_sentiment_init, child_sentiment_init]) if parent_formula else parent_sentiment_init
+        child_compound = child_formula([parent_sentiment_init, child_sentiment_init]) if child_formula else child_sentiment_init
+        
+        print(f"[bold magenta]Belonging[/] parent: {parent_sentiment_init:.4f} -> {parent_compound:.4f} | child: {child_sentiment_init:.4f} -> {child_compound:.4f}")
+        return parent_compound, child_compound
+
+    return actor_func, target_func, association_func, aggregate_func, belonging_func
+
