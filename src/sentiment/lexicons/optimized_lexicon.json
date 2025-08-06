@@ -290,13 +290,6 @@
                 "perplexity": 235.9174346923828,
                 "word_count": 2
             },
-            {
-                "text": "ducked",
-                "combined_score": -0.44472611716224086,
-                "standard_deviation": 0.444905427103323,
-                "perplexity": 396.3514404296875,
-                "word_count": 1
-            }
         ]
     },
     "pos_nouns": {
