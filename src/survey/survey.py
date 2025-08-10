@@ -375,7 +375,6 @@ def display_attention_check():
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     if st.button("Next", key="attention_check_next_btn", type="primary", use_container_width=True):
         st.session_state.attention_check_shown = True
-        st.session_state.current_question_index += 1
         st.session_state.attention_check_passed = (score == 2)
         st.rerun()
     return False
