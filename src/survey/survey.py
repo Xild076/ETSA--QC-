@@ -68,19 +68,54 @@ def display_calibration_confirmation():
     if st.button("Yes, continue to survey", key="calib_confirm_final_btn", type="primary", use_container_width=True):
         st.session_state['calibration_confirmed'] = True
         calibration = st.session_state.get('calibration_questions', {})
-        response_data = {
-            'item_id': 'calibration',
-            'positive_text': pos_text,
-            'positive_user_score': pos_score,
-            'positive_intensity': calibration.get('positive', {}).get('intensity'),
-            'positive_user_label': sentiment_scale.get(pos_score, pos_score),
-            'positive_code_key': calibration.get('positive', {}).get('code_key'),
-            'negative_text': neg_text,
-            'negative_user_score': neg_score,
-            'negative_user_label': sentiment_scale.get(neg_score, neg_score),
-            'negative_code_key': calibration.get('negative', {}).get('code_key'),
+        pos_meta = calibration.get('positive', {})
+        neg_meta = calibration.get('negative', {})
+        pos_row = {
+            'item_id': 'calibration_positive',
+            'item_type': 'calibration',
+            'description': 'practice positive',
+            'sentences': json.dumps([pos_text]),
+            'combined_text': pos_text,
+            'code_key': pos_meta.get('code_key', ''),
+            'entity': pos_text,
+            'seed': st.session_state.get('seed', ''),
+            'descriptor': json.dumps(['positive']),
+            'intensity': json.dumps([pos_meta.get('intensity', '')]),
+            'all_entities': json.dumps([pos_text]),
+            'packet_step': '',
+            'user_sentiment_score': pos_score,
+            'user_sentiment_label': sentiment_scale.get(pos_score, pos_score),
+            'sentence_at_step': '',
+            'new_sentence_for_step': '',
+            'descriptor_for_step': '',
+            'intensity_for_step': '',
+            'mark': '',
+            'marks': ''
         }
-        st.session_state.user_responses.append(response_data)
+        neg_row = {
+            'item_id': 'calibration_negative',
+            'item_type': 'calibration',
+            'description': 'practice negative',
+            'sentences': json.dumps([neg_text]),
+            'combined_text': neg_text,
+            'code_key': neg_meta.get('code_key', ''),
+            'entity': neg_text,
+            'seed': st.session_state.get('seed', ''),
+            'descriptor': json.dumps(['negative']),
+            'intensity': json.dumps([neg_meta.get('intensity', '')]),
+            'all_entities': json.dumps([neg_text]),
+            'packet_step': '',
+            'user_sentiment_score': neg_score,
+            'user_sentiment_label': sentiment_scale.get(neg_score, neg_score),
+            'sentence_at_step': '',
+            'new_sentence_for_step': '',
+            'descriptor_for_step': '',
+            'intensity_for_step': '',
+            'mark': '',
+            'marks': ''
+        }
+        st.session_state.user_responses.append(pos_row)
+        st.session_state.user_responses.append(neg_row)
         st.rerun()
     if st.button("No, redo practice questions", key="calib_redo_btn", use_container_width=True):
         st.session_state['calibration_complete'] = False
