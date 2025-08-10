@@ -18,9 +18,10 @@ def display_calibration_questions():
     <p>Before you begin the main survey, please answer two quick practice questions. This will help you get familiar with the rating scale. Each practice question shows a single phrase. Rate the sentiment the phrase conveys, from -4 (Extremely Negative) to 4 (Extremely Positive).</p>
     </div>
     """, unsafe_allow_html=True)
-    pos_calibration = st.session_state.get('calibration_questions', {}).get('positive', [])
-    neg_calibration = st.session_state.get('calibration_questions', {}).get('negative', [])
-    st.markdown(f"<div style='margin-top:1.5em; margin-bottom:0.5em;'><b>Example 1:</b> <i>{pos_calibration['text']}</i></div>", unsafe_allow_html=True)
+    pos_calibration = st.session_state.get('calibration_questions', {}).get('positive', {})
+    neg_calibration = st.session_state.get('calibration_questions', {}).get('negative', {})
+    pos_text = pos_calibration.get('word') or pos_calibration.get('text') or ''
+    st.markdown(f"<div style='margin-top:1.5em; margin-bottom:0.5em;'><b>Example 1:</b> <i>{pos_text}</i></div>", unsafe_allow_html=True)
     pos_score = st.slider(
         label="How would you rate the sentiment of this phrase?",
         min_value=-4, max_value=4, value=0, format="%d", key="calib_pos_slider",
@@ -30,7 +31,8 @@ def display_calibration_questions():
     slider_view()
     st.markdown(f"You rated the sentiment as: <b>{pos_score} ({sentiment_scale[pos_score]})</b>", unsafe_allow_html=True)
 
-    st.markdown(f"<div style='margin-top:2em; margin-bottom:0.5em;'><b>Example 2:</b> <i>{neg_calibration['text']}</i></div>", unsafe_allow_html=True)
+    neg_text = neg_calibration.get('word') or neg_calibration.get('text') or ''
+    st.markdown(f"<div style='margin-top:2em; margin-bottom:0.5em;'><b>Example 2:</b> <i>{neg_text}</i></div>", unsafe_allow_html=True)
     neg_score = st.slider(
         label="How would you rate the sentiment of this phrase?",
         min_value=-4, max_value=4, value=0, format="%d", key="calib_neg_slider",
@@ -49,7 +51,8 @@ def display_calibration_questions():
 def display_calibration_confirmation():
     pos_score = st.session_state.get('calibration_pos_score', None)
     neg_score = st.session_state.get('calibration_neg_score', None)
-    pos_text, neg_text = st.session_state.get('calibration_questions', {}).get('positive', {}).get('text', ''), st.session_state.get('calibration_questions', {}).get('negative', {}).get('text', '')
+    pos_text = st.session_state.get('calibration_questions', {}).get('positive', {}).get('word') or st.session_state.get('calibration_questions', {}).get('positive', {}).get('text', '')
+    neg_text = st.session_state.get('calibration_questions', {}).get('negative', {}).get('word') or st.session_state.get('calibration_questions', {}).get('negative', {}).get('text', '')
     if isinstance(pos_text, (list, tuple)):
         pos_text = random.choice(pos_text)
     if isinstance(neg_text, (list, tuple)):
@@ -64,17 +67,18 @@ def display_calibration_confirmation():
     """, unsafe_allow_html=True)
     if st.button("Yes, continue to survey", key="calib_confirm_final_btn", type="primary", use_container_width=True):
         st.session_state['calibration_confirmed'] = True
+        calibration = st.session_state.get('calibration_questions', {})
         response_data = {
             'item_id': 'calibration',
             'positive_text': pos_text,
             'positive_user_score': pos_score,
-            'positive_intensity': st.session_state.get('positive', None).get('intensity', None),
+            'positive_intensity': calibration.get('positive', {}).get('intensity'),
             'positive_user_label': sentiment_scale.get(pos_score, pos_score),
-            'positive_code_key': st.session_state.get('positive', None).get('code_key', None),
+            'positive_code_key': calibration.get('positive', {}).get('code_key'),
             'negative_text': neg_text,
             'negative_user_score': neg_score,
             'negative_user_label': sentiment_scale.get(neg_score, neg_score),
-            'negative_code_key': st.session_state.get('negative', None).get('code_key', None),
+            'negative_code_key': calibration.get('negative', {}).get('code_key'),
         }
         st.session_state.user_responses.append(response_data)
         st.rerun()

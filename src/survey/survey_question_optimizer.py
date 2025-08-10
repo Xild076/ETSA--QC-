@@ -46,7 +46,10 @@ except ImportError:
 ssl._create_default_https_context = ssl._create_unverified_context
 
 url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/export?format=csv&gid=0'
-df = pd.read_csv(url)
+try:
+    df = pd.read_csv(url)
+except Exception as e:
+    print(f"Error reading CSV from {url}: {e}")
 
 intensity_map_string = {
     'very': 0.85,
@@ -232,9 +235,10 @@ def fit_compound(formula, X, y, remove_outliers_method:Literal['lsquares', 'drop
     bounds = ([0] + [-5] * (num_params - 1), [1] + [5] * (num_params - 1))
     return fit(formula, X, y, bounds, remove_outliers_method)
 
-
-df, _ = add_score_interpretations(df)
-
+try:
+    df, _ = add_score_interpretations(df)
+except:
+    print("Error adding score interpretations")
 
 def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
     action_df = df[df['item_type'] == 'compound_action'].copy()
@@ -1396,11 +1400,11 @@ def test_all_parameterizations() -> dict:
     save_optimal_parameters(all_results)
     return all_results
 
-if __name__ == '__main__':
+"""if __name__ == '__main__':
     out = test_all_parameterizations()
     print("\nSummary:")
     for sk, summary in out.items():
         print(f"score_key={sk}")
         for k, v in summary.items():
             if v and "best" in v:
-                print(f"- {k}: MSE={v['best']['mse']:.4f} | model={v['best']['model']} | split={v['best']['split']} | outliers={v['best'].get('remove_outliers','none')}")
+                print(f"- {k}: MSE={v['best']['mse']:.4f} | model={v['best']['model']} | split={v['best']['split']} | outliers={v['best'].get('remove_outliers','none')}")"""
