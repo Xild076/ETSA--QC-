@@ -11,26 +11,6 @@ import re
 from survey_question_gen import survey_gen
 from survey_question_gen import calibration_gen
 
-def get_calibration_examples():
-    seed = st.session_state.get('seed', None)
-    used_words = set()
-    for item in st.session_state.get('sentences_data', []):
-        for k in ['sentences', 'description']:
-            v = item.get(k, [])
-            if isinstance(v, list):
-                used_words.update(v)
-            elif isinstance(v, str):
-                used_words.add(v)
-    for item in st.session_state.get('packet_data', []):
-        for k in ['sentences', 'description']:
-            v = item.get(k, [])
-            if isinstance(v, list):
-                used_words.update(v)
-            elif isinstance(v, str):
-                used_words.add(v)
-    pos_word, neg_word, _, _ = calibration_gen(seed=seed, used_words=used_words)
-    return pos_word, neg_word
-
 def display_calibration_questions():
     st.markdown("""
     <div class="academic-paper">
@@ -38,11 +18,9 @@ def display_calibration_questions():
     <p>Before you begin the main survey, please answer two quick practice questions. This will help you get familiar with the rating scale. Each practice question shows a single phrase. Rate the sentiment the phrase conveys, from -4 (Extremely Negative) to 4 (Extremely Positive).</p>
     </div>
     """, unsafe_allow_html=True)
-    pos_text, neg_text = get_calibration_examples()
-    if isinstance(pos_text, (list, tuple)):
-        pos_text = random.choice(pos_text)
-    if isinstance(neg_text, (list, tuple)):
-        neg_text = random.choice(neg_text)
+    pos_calibration = st.session_state.get('calibration_questions', {}).get('positive', {})
+    neg_calibration = st.session_state.get('calibration_questions', {}).get('negative', {})
+    pos_text = pos_calibration.get('word') or pos_calibration.get('text') or ''
     st.markdown(f"<div style='margin-top:1.5em; margin-bottom:0.5em;'><b>Example 1:</b> <i>{pos_text}</i></div>", unsafe_allow_html=True)
     pos_score = st.slider(
         label="How would you rate the sentiment of this phrase?",
@@ -53,6 +31,7 @@ def display_calibration_questions():
     slider_view()
     st.markdown(f"You rated the sentiment as: <b>{pos_score} ({sentiment_scale[pos_score]})</b>", unsafe_allow_html=True)
 
+    neg_text = neg_calibration.get('word') or neg_calibration.get('text') or ''
     st.markdown(f"<div style='margin-top:2em; margin-bottom:0.5em;'><b>Example 2:</b> <i>{neg_text}</i></div>", unsafe_allow_html=True)
     neg_score = st.slider(
         label="How would you rate the sentiment of this phrase?",
@@ -72,7 +51,8 @@ def display_calibration_questions():
 def display_calibration_confirmation():
     pos_score = st.session_state.get('calibration_pos_score', None)
     neg_score = st.session_state.get('calibration_neg_score', None)
-    pos_text, neg_text = get_calibration_examples()
+    pos_text = st.session_state.get('calibration_questions', {}).get('positive', {}).get('word') or st.session_state.get('calibration_questions', {}).get('positive', {}).get('text', '')
+    neg_text = st.session_state.get('calibration_questions', {}).get('negative', {}).get('word') or st.session_state.get('calibration_questions', {}).get('negative', {}).get('text', '')
     if isinstance(pos_text, (list, tuple)):
         pos_text = random.choice(pos_text)
     if isinstance(neg_text, (list, tuple)):
@@ -87,6 +67,55 @@ def display_calibration_confirmation():
     """, unsafe_allow_html=True)
     if st.button("Yes, continue to survey", key="calib_confirm_final_btn", type="primary", use_container_width=True):
         st.session_state['calibration_confirmed'] = True
+        calibration = st.session_state.get('calibration_questions', {})
+        pos_meta = calibration.get('positive', {})
+        neg_meta = calibration.get('negative', {})
+        pos_row = {
+            'item_id': 'calibration_positive',
+            'item_type': 'calibration',
+            'description': 'practice positive',
+            'sentences': json.dumps([pos_text]),
+            'combined_text': pos_text,
+            'code_key': pos_meta.get('code_key', ''),
+            'entity': pos_text,
+            'seed': st.session_state.get('seed', ''),
+            'descriptor': json.dumps(['positive']),
+            'intensity': json.dumps([pos_meta.get('intensity', '')]),
+            'all_entities': json.dumps([pos_text]),
+            'packet_step': '',
+            'user_sentiment_score': pos_score,
+            'user_sentiment_label': sentiment_scale.get(pos_score, pos_score),
+            'sentence_at_step': '',
+            'new_sentence_for_step': '',
+            'descriptor_for_step': '',
+            'intensity_for_step': '',
+            'mark': '',
+            'marks': ''
+        }
+        neg_row = {
+            'item_id': 'calibration_negative',
+            'item_type': 'calibration',
+            'description': 'practice negative',
+            'sentences': json.dumps([neg_text]),
+            'combined_text': neg_text,
+            'code_key': neg_meta.get('code_key', ''),
+            'entity': neg_text,
+            'seed': st.session_state.get('seed', ''),
+            'descriptor': json.dumps(['negative']),
+            'intensity': json.dumps([neg_meta.get('intensity', '')]),
+            'all_entities': json.dumps([neg_text]),
+            'packet_step': '',
+            'user_sentiment_score': neg_score,
+            'user_sentiment_label': sentiment_scale.get(neg_score, neg_score),
+            'sentence_at_step': '',
+            'new_sentence_for_step': '',
+            'descriptor_for_step': '',
+            'intensity_for_step': '',
+            'mark': '',
+            'marks': ''
+        }
+        st.session_state.user_responses.append(pos_row)
+        st.session_state.user_responses.append(neg_row)
         st.rerun()
     if st.button("No, redo practice questions", key="calib_redo_btn", use_container_width=True):
         st.session_state['calibration_complete'] = False
@@ -331,6 +360,7 @@ def initialize_session_state():
     if 'packet_sentiment_history' not in st.session_state: st.session_state.packet_sentiment_history = []
     if 'attention_check_shown' not in st.session_state: st.session_state.attention_check_shown = False
     if 'attention_check_passed' not in st.session_state: st.session_state.attention_check_passed = True
+
 def display_attention_check():
     st.markdown("""
     <div class=\"academic-paper\">
@@ -391,7 +421,7 @@ There are no incentives for participation.
 
 **Privacy/Confidentiality/Data Security:**
 
-The responses are anonymous. We do not collect any personally identifiable information (ex: name, email, or IP address).
+The responses are anonymous. We do not collect any personally identifiable information (ex: name, email, or IP address). There is an optional field at the end of the survey to provide your email address if you wish to receive a summary of the results, but this is not required. If you choose to provide your email, it will be stored separately from your responses and will not be linked to your survey data.
 
 Please note that the survey is being hosted by Streamlit, a company not affiliated with USFCA and with its own privacy and security policies that you can find at its website, https://streamlit.io/. We anticipate that your participation in this survey presents no greater risk than everyday use of the Internet.
 
@@ -428,6 +458,7 @@ Please check the following boxes to consent to this survey.
         st.session_state.consent_given = True
         question_data = survey_gen()
         st.session_state.seed = question_data.get('seed', None)
+        st.session_state.calibration_questions = question_data.get('calibration', {})
         st.session_state.sentences_data = question_data.get('items', [])
         st.session_state.packet_data = question_data.get('packets', [])
         all_data = st.session_state.sentences_data + st.session_state.packet_data
@@ -695,7 +726,7 @@ def display_demographic_section():
     st.markdown("""
     <div class="academic-paper" style="background:#fffbe6; border:1px solid #ffe58f;">
     <h3>Optional Demographic Questions</h3>
-    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer.</p>
+    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>.</p>
     </div>
     """, unsafe_allow_html=True)
     with st.form("demographic_form", clear_on_submit=False):
@@ -750,6 +781,8 @@ You can take a look at the project page here: [Project Page](https://github.com/
             and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
         ):
             export_to_google_sheets(df)
+        elif GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
+            st.warning("Automatic Google Sheet Export is not configured by the admin (GOOGLE_SHEET_ID is missing or is a placeholder). Your data has not been automatically uploaded.")
         elif not st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
             st.warning(f"Automatic Google Sheet Export is not configured by the admin (the '{GOOGLE_CREDENTIALS_SECRET_KEY}' secret is missing). Your data has not been automatically uploaded.")
         csv = df.to_csv(index=False).encode('utf-8')
