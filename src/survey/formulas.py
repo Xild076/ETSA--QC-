@@ -1,5 +1,13 @@
 import numpy as np
 
+def null_identity(X):
+    return X[0]
+
+def null_avg(X):
+    return np.mean(X)
+
+def null_linear(X, w1, w2, b):
+    return w1 * X[0] + w2 * X[1] + b
 
 def actor_formula_v1(X, lambda_actor, w, b):
     s_init_actor, driver = X

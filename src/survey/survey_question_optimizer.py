@@ -30,19 +30,6 @@ from pathlib import Path
 current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir))
 
-try:
-    from formulas import SentimentFormula
-except ImportError:
-    try:
-        from .formulas import SentimentFormula
-    except Exception:
-        class SentimentFormula:
-            def __init__(self, name, category, func, params):
-                self.name = name
-                self.category = category
-                self.func = func
-                self.params = params
-
 ssl._create_default_https_context = ssl._create_unverified_context
 
 url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/export?format=csv&gid=0'
@@ -138,100 +125,86 @@ def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'dropt
     }
 
 def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """FIXFIXFIX"""
-    intensity_map = {'very': 0.85, 'strong': 0.6, 'moderate': 0.4, 'slight': 0.2, 'neutral': 0.0}
-    polarity_map = {'positive': 1, 'negative': -1, 'neutral': 0}
+    """
+    Normalizes user sentiment scores based on their individual responses to baseline questions.
+    This creates a more robust mapping from a user's personal scale (-4 to 4) to the
+    theoretical sentiment scale (-1 to 1).
+    """
+    intensity_map = {'very': 0.85, 'strong': 0.6, 'moderate': 0.4, 'slight': 0.2}
+    polarity_map = {'positive': 1, 'negative': -1}
 
-    def compute_sentiment_from_row(row):
+    def get_ground_truth_sentiment(row):
         try:
             desc_list = ast.literal_eval(row.get('descriptor', '[]'))
             intens_list = ast.literal_eval(row.get('intensity', '[]'))
-            if isinstance(desc_list, list) and len(desc_list) > 0 and isinstance(intens_list, list) and len(intens_list) > 0:
-                return polarity_map.get(desc_list[0], 0) * intensity_map.get(intens_list[0], 0.0)
-        except Exception:
+            if desc_list and intens_list:
+                desc = desc_list[0] if isinstance(desc_list, list) else desc_list
+                intens = intens_list[0] if isinstance(intens_list, list) else intens_list
+                return polarity_map.get(desc, 0) * intensity_map.get(intens, 0.0)
+        except (ValueError, SyntaxError, TypeError):
             pass
-        return None
+        return 0.0
 
-    reference_df = df[df.get('packet_step', pd.Series(dtype=float)) == 1].copy()
-    reference_df['ground_truth_stimulus_sentiment'] = reference_df.apply(lambda r: (compute_sentiment_from_row(r) if compute_sentiment_from_row(r) is not None else 0.0), axis=1)
+    user_final_normalizers = {}
+    unique_seeds = df['seed'].dropna().unique()
 
-    calib_mask = (
-        (df.get('item_id', pd.Series([''] * len(df))) == 'calibration') |
-        (df.get('code_key', pd.Series([''] * len(df))).isin(['calibration_positive', 'calibration_negative']))
-    )
-    calibration_df = df[calib_mask].copy()
+    for seed in unique_seeds:
+        user_df = df[df['seed'] == seed]
+        baseline_points = []
 
-    user_final_normalizers: dict = {}
-    for seed in pd.Series(df.get('seed')).dropna().unique():
-        cal_m, cal_c = None, None
-        user_cal = calibration_df[calibration_df['seed'] == seed]
+        calib_df = user_df[user_df['item_type'] == 'calibration']
+        for _, row in calib_df.iterrows():
+            x = row['user_sentiment_score']
+            y = get_ground_truth_sentiment(row)
+            baseline_points.append((x, y))
 
-        pos = user_cal[user_cal.get('code_key', pd.Series([''] * len(user_cal))) == 'calibration_positive']
-        neg = user_cal[user_cal.get('code_key', pd.Series([''] * len(user_cal))) == 'calibration_negative']
-
-        if pos.empty and neg.empty and 'item_id' in user_cal.columns:
-            sorted_user_cal = user_cal.sort_values(by=['submission_timestamp_utc']) if 'submission_timestamp_utc' in user_cal.columns else user_cal
-            if len(sorted_user_cal) >= 2:
-                pos = sorted_user_cal.head(1)
-                neg = sorted_user_cal.tail(1)
-
-        def extract_xy(sdf: pd.DataFrame):
-            if sdf.empty:
-                return None, None
-            row = sdf.iloc[0]
-            x = row['user_sentiment_score'] if 'user_sentiment_score' in row else None
-            y = None
-            if 'description' in row and isinstance(row['description'], str):
+        packet_step1_df = user_df[user_df['packet_step'] == 1]
+        for _, row in packet_step1_df.iterrows():
+            x = row['user_sentiment_score']
+            y = get_ground_truth_sentiment(row)
+            baseline_points.append((x, y))
+        unique_baseline_points = sorted(list(set(baseline_points)))
+        
+        m, c = 0.25, 0.0
+        
+        if len(unique_baseline_points) >= 2:
+            X_points = np.array([p[0] for p in unique_baseline_points]).reshape(-1, 1)
+            y_points = np.array([p[1] for p in unique_baseline_points])
+            
+            if np.std(X_points) > 0:
                 try:
-                    desc_obj = json.loads(row['description'])
-                    if isinstance(desc_obj, dict) and 'ground_truth' in desc_obj:
-                        y = desc_obj['ground_truth']
+                    model = LinearRegression().fit(X_points, y_points)
+                    m, c = model.coef_[0], model.intercept_
                 except Exception:
                     pass
-            if y is None:
-                y = compute_sentiment_from_row(row)
-            return x, y
-
-        x1, y1 = extract_xy(pos)
-        x2, y2 = extract_xy(neg)
-
-        if x1 is not None and x2 is not None and y1 is not None and y2 is not None and x1 != x2:
-            cal_m = (y2 - y1) / (x2 - x1)
-            cal_c = y1 - cal_m * x1
-
-        ref_m, ref_c = None, None
-        user_ref = reference_df[reference_df['seed'] == seed]
-        if len(user_ref) >= 2 and 'user_sentiment_score' in user_ref.columns and 'ground_truth_stimulus_sentiment' in user_ref.columns:
-            try:
-                model = LinearRegression().fit(user_ref[['user_sentiment_score']], user_ref['ground_truth_stimulus_sentiment'])
-                ref_m, ref_c = float(model.coef_[0]), float(model.intercept_)
-            except Exception:
-                ref_m, ref_c = None, None
-
-        if cal_m is not None and cal_c is not None:
-            user_final_normalizers[seed] = (cal_m, cal_c)
-        elif ref_m is not None and ref_c is not None:
-            user_final_normalizers[seed] = (ref_m, ref_c)
-        else:
-            user_final_normalizers[seed] = (0.25, 0.0)
+        user_final_normalizers[seed] = (m, c)
 
     def apply_norm(row):
+        if pd.isna(row['seed']) or pd.isna(row['user_sentiment_score']):
+            return np.nan
         m, c = user_final_normalizers.get(row['seed'], (0.25, 0.0))
-        x = row['user_sentiment_score'] if 'user_sentiment_score' in row else None
-        try:
-            return m * float(x) + c if x is not None else None
-        except Exception:
-            return None
+        return m * float(row['user_sentiment_score']) + c
 
     df['user_normalized_sentiment_scores'] = df.apply(apply_norm, axis=1)
+    
     if 'user_sentiment_score_mapped' not in df.columns:
-        df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(associate_sentiment_integer)
+        df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(
+            lambda x: associate_sentiment_integer(x) if pd.notna(x) else np.nan
+        )
+        
     return df, user_final_normalizers
 
 def fit_compound(formula, X, y, remove_outliers_method:Literal['lsquares', 'droptop', 'none']='none'):
     sig = inspect.signature(formula)
     params = sig.parameters
     num_params = len(params) - 1
+    if num_params <= 0:
+        y_pred = np.array([formula((X[0, i], X[1, i])) for i in range(X.shape[1])], dtype=float)
+        mse = mean_squared_error(y.astype(float), y_pred)
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        r2_loss = 1 - (ss_res / ss_tot) if ss_tot > 0 else (1.0 if ss_res == 0 else 0.0)
+        return {'params': np.array([]), 'mse': mse, 'soft_l1_loss': np.sum(np.square(y - y_pred)) / len(y), 'r2_loss': r2_loss}
     bounds = ([0] + [-5] * (num_params - 1), [1] + [5] * (num_params - 1))
     return fit(formula, X, y, bounds, remove_outliers_method)
 
@@ -930,7 +903,8 @@ def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
         'params': result.x,
         'loss': result.fun / len(aggregate_df),
         'success': result.success,
-        'function': SentimentFormula(f"aggregate_{model_type}", "aggregate", func, result.x.tolist())
+        'function': func,
+        'model_type': model_type
     }
 
 def aggregate_skeleton_formula(s_inits, formula, params):
@@ -950,7 +924,7 @@ def _safe_mse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_actor_parameters")
-    from formulas import actor_formula_v1, actor_formula_v2
+    from formulas import actor_formula_v1, actor_formula_v2, null_identity, null_avg, null_linear
 
     action_df = create_action_df(score_key)
     if action_df.empty:
@@ -965,6 +939,9 @@ def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dic
     candidates = [
         {"function": actor_formula_v1},
         {"function": actor_formula_v2},
+        {"function": null_identity},
+        {"function": null_avg},
+        {"function": null_linear},
     ]
     remove_outliers = ["none", "lsquares", "droptop"]
     splits = ["none", "driver", "action_target"]
@@ -999,7 +976,7 @@ def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dic
 
 def test_target_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_target_parameters")
-    from formulas import target_formula_v1, target_formula_v2
+    from formulas import target_formula_v1, target_formula_v2, null_identity, null_avg, null_linear
 
     action_df = create_action_df(score_key)
     if action_df.empty:
@@ -1014,6 +991,9 @@ def test_target_parameters(score_key: str = 'user_sentiment_score_mapped') -> di
     candidates = [
         {"function": target_formula_v1},
         {"function": target_formula_v2},
+        {"function": null_identity},
+        {"function": null_avg},
+        {"function": null_linear},
     ]
     remove_outliers = ["none", "lsquares", "droptop"]
     splits = ["none", "action"]
@@ -1048,7 +1028,7 @@ def test_target_parameters(score_key: str = 'user_sentiment_score_mapped') -> di
 
 def test_association_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_association_parameters")
-    from formulas import assoc_formula_v1, assoc_formula_v2
+    from formulas import assoc_formula_v1, assoc_formula_v2, null_identity, null_avg, null_linear
 
     assoc_df = create_association_df(score_key)
     if assoc_df.empty:
@@ -1063,6 +1043,9 @@ def test_association_parameters(score_key: str = 'user_sentiment_score_mapped') 
     candidates = [
         {"function": assoc_formula_v1},
         {"function": assoc_formula_v2},
+        {"function": null_identity},
+        {"function": null_avg},
+        {"function": null_linear},
     ]
     remove_outliers = ["none", "lsquares", "droptop"]
     splits = ["none", "other", "entity_other"]
@@ -1097,7 +1080,7 @@ def test_association_parameters(score_key: str = 'user_sentiment_score_mapped') 
 
 def test_parent_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_parent_parameters")
-    from formulas import belong_formula_v1, belong_formula_v2
+    from formulas import belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
 
     bel_df = create_belonging_df(score_key)
     if bel_df.empty:
@@ -1112,6 +1095,9 @@ def test_parent_parameters(score_key: str = 'user_sentiment_score_mapped') -> di
     candidates = [
         {"function": belong_formula_v1},
         {"function": belong_formula_v2},
+        {"function": null_identity},
+        {"function": null_avg},
+        {"function": null_linear},
     ]
     remove_outliers = ["none", "lsquares", "droptop"]
     splits = ["none", "child", "parent_child"]
@@ -1146,7 +1132,7 @@ def test_parent_parameters(score_key: str = 'user_sentiment_score_mapped') -> di
 
 def test_child_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_child_parameters")
-    from formulas import belong_formula_v1, belong_formula_v2
+    from formulas import belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
 
     bel_df = create_belonging_df(score_key)
     if bel_df.empty:
@@ -1161,6 +1147,9 @@ def test_child_parameters(score_key: str = 'user_sentiment_score_mapped') -> dic
     candidates = [
         {"function": belong_formula_v1},
         {"function": belong_formula_v2},
+        {"function": null_identity},
+        {"function": null_avg},
+        {"function": null_linear},
     ]
     remove_outliers = ["none", "lsquares", "droptop"]
     splits = ["none", "parent", "parent_child"]
@@ -1205,9 +1194,25 @@ def test_aggregate_parameters(score_key: str = 'user_sentiment_score_mapped') ->
     test_df = agg_df.iloc[n_train:].copy()
     losses = [aggregate_error_mse, aggregate_error_softl1, aggregate_error_dynamic_mse, aggregate_error_dynamic_softl1, aggregate_error_logistic_mse, aggregate_error_logistic_softl1]
     results = []
+    null_avg_name = 'aggregate_null_average'
+    if not agg_df.empty:
+        preds = []
+        for _, r in test_df.iterrows():
+            preds.append(np.mean(r['s_inits']))
+        preds = np.array(preds, dtype=float)
+        mse = _safe_mse(test_df['s_user'].to_numpy(dtype=float), preds)
+        results.append({
+            "model": null_avg_name,
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": mse,
+            "score_key": score_key,
+            "params": [],
+        })
+        print(f"aggregate | {null_avg_name} | MSE={mse:.4f}")
     for loss_fn in losses:
         fitted = determine_aggregate_parameters(train_df, loss_fn, print_process=False)
-        name = fitted['function'].name if isinstance(fitted.get('function'), SentimentFormula) else loss_fn.__name__
+        name = loss_fn.__name__
         if 'dynamic' in loss_fn.__name__:
             func = aggregate_formula_dynamic
         elif 'logistic' in loss_fn.__name__:
@@ -1290,7 +1295,7 @@ def load_optimal_parameters(in_path: str = "src/survey/optimal_formulas/all_opti
     return out
 
 def _formula_by_name(name: str) -> Callable:
-    from formulas import actor_formula_v1, actor_formula_v2, target_formula_v1, target_formula_v2, assoc_formula_v1, assoc_formula_v2, belong_formula_v1, belong_formula_v2
+    from formulas import actor_formula_v1, actor_formula_v2, target_formula_v1, target_formula_v2, assoc_formula_v1, assoc_formula_v2, belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
     m = {
         'actor_formula_v1': actor_formula_v1,
         'actor_formula_v2': actor_formula_v2,
@@ -1303,6 +1308,10 @@ def _formula_by_name(name: str) -> Callable:
         'aggregate_normal': aggregate_formula,
         'aggregate_dynamic': aggregate_formula_dynamic,
         'aggregate_logistic': aggregate_formula_logistic,
+        'null_identity': null_identity,
+        'null_avg': null_avg,
+        'null_linear': null_linear,
+        'aggregate_null_average': lambda s_inits, _: float(np.mean(s_inits)) if len(s_inits) else 0.0,
     }
     return m.get(name)
 
