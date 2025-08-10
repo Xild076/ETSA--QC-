@@ -1,0 +1,1 @@
+Be aware that there is a high likelyhood that we will not be able to "benchmark" out tool in the traditional sense. We will likely just use the survey results as reference for the validation of the full model and add to future work that a proper validation dataset needs to be made. Maybe we will make a mock dataset of 100 paragraphs to test too.

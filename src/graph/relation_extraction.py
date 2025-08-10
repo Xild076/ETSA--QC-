@@ -3,11 +3,21 @@ import os
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import google.generativeai as genai
-
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(), override=False)
+except Exception:
+    pass
 API_KEY = os.getenv("GOOGLE_API_KEY")
+
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class GemmaRelationExtractor:
     def __init__(self, api_key: str = None):
+        logger.info("Initializing GemmaRelationExtractor...")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable or pass api_key parameter.")
@@ -16,6 +26,7 @@ class GemmaRelationExtractor:
         self.model = genai.GenerativeModel("gemma-3-27b-it")
         
     def extract_relations(self, sentence: str, entities: List[str]) -> Dict[str, Any]:
+        logger.info("Extracting relations...")
         if not sentence or not entities:
             return {
                 "sentence": sentence,
@@ -60,11 +71,9 @@ class GemmaRelationExtractor:
         seen_relations = set()
         
         for relation in result["relations"]:
-            # Skip malformed relations
             if not self._is_valid_relation(relation):
                 continue
                 
-            # Create a signature to avoid duplicates
             signature = (
                 relation["subject"]["head"].lower(),
                 relation["relation"]["type"].lower(),
@@ -73,7 +82,6 @@ class GemmaRelationExtractor:
             )
             
             if signature not in seen_relations:
-                # Clean up modifiers (remove empty strings and duplicates)
                 if "modifiers" in relation["subject"]:
                     relation["subject"]["modifiers"] = list(filter(None, set(relation["subject"]["modifiers"])))
                 if "modifiers" in relation["object"]:
@@ -91,7 +99,7 @@ class GemmaRelationExtractor:
                 "subject" in relation and "head" in relation["subject"] and relation["subject"]["head"] and
                 "object" in relation and "head" in relation["object"] and relation["object"]["head"] and
                 "relation" in relation and "type" in relation["relation"] and relation["relation"]["type"] and
-                relation["subject"]["head"] != relation["object"]["head"]  # No self-relations
+                relation["subject"]["head"] != relation["object"]["head"]
             )
         except (KeyError, TypeError):
             return False
@@ -281,16 +289,77 @@ IMPORTANT: Extract meaningful directional relations. Avoid creating symmetric re
                 return True
         return False
 
+def extract_entity_modifiers(sentence: str, entity: str) -> List[str]:
+    logger.info(f"Extracting modifiers for entity '{entity}' in sentence: {sentence}")
+    try:
+        extractor = GemmaRelationExtractor(api_key=API_KEY)
+        prompt = f"""You are an expert at extracting descriptive modifiers for entities. 
+
+SENTENCE: "{sentence}"
+TARGET ENTITY: "{entity}"
+
+Extract ONLY meaningful descriptive modifiers (adjectives, colors, sizes, states, conditions, emotions) that describe the target entity. 
+
+DO NOT include:
+- Articles (a, an, the)
+- Pronouns (his, her, its)
+- Generic words
+- Empty strings
+
+Examples:
+- "The angry red dog barked" → entity: dog → ["angry", "red"]
+- "John's expensive car is fast" → entity: car → ["expensive", "fast"] 
+- "The child was very sad" → entity: child → ["very sad"]
+- "The man hit the child" → entity: man → []
+- "A big house" → entity: house → ["big"]
+
+Return ONLY a JSON array of meaningful modifier strings:
+["modifier1", "modifier2", ...]
+
+If no meaningful modifiers found, return: []"""
+
+        response = extractor._query_gemma(prompt)
+        
+        response_clean = response.strip()
+        if response_clean.startswith("```json"):
+            response_clean = response_clean[7:]
+        elif response_clean.startswith("```"):
+            response_clean = response_clean[3:]
+        if response_clean.endswith("```"):
+            response_clean = response_clean[:-3]
+        response_clean = response_clean.strip()
+        
+        start = response_clean.find('[')
+        end = response_clean.rfind(']') + 1
+        if start != -1 and end > start:
+            json_str = response_clean[start:end]
+            import json
+            modifiers = json.loads(json_str)
+            filtered_modifiers = []
+            skip_words = {'', 'the', 'a', 'an', 'his', 'her', 'its', 'their', 'my', 'your', 'our'}
+            for mod in modifiers:
+                if isinstance(mod, str) and mod.strip().lower() not in skip_words and len(mod.strip()) > 0:
+                    filtered_modifiers.append(mod.strip())
+            return filtered_modifiers
+        
+        return []
+        
+    except Exception as e:
+        print(f"Error extracting modifiers for {entity}: {e}")
+        return []
+
 def re_api(sentence: str, entities: List[str], api_key: str = API_KEY) -> Dict[str, Any]:
-    extractor = GemmaRelationExtractor(api_key)
-    return extractor.extract_relations(sentence, entities)
+    logger.info(f"Extracting relations for sentence: {sentence} with entities: {entities}")
+    try:
+        extractor = GemmaRelationExtractor(api_key)
+        return extractor.extract_relations(sentence, entities)
+    except Exception as e:
+        logger.error(f"Error extracting relations: {e}")
+        return {"sentence": sentence, "entities": entities, "relations": [], "error": str(e), "approach_used": "none"}
 
 def test_gemma_relation_extraction():
-    print("=== GEMMA 27B RELATION EXTRACTION TESTING ===")
-    print(f"Current Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
-    print(f"User: Xild076")
-    print(f"Model: Gemma 27B via Google AI Studio\n")
-    
+    logger.info("=== GEMMA 27B RELATION EXTRACTION TESTING ===")
+
     action_tests = [
         ("The man hit the child.", ["man", "child"]),
         ("The red car crashed into the blue truck.", ["car", "truck"]),

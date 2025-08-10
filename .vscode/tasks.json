@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "run unit tests",
+			"type": "shell",
+			"command": "pytest -q",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest-stylish"
+			],
+			"group": "build"
+		}
+	]
+}

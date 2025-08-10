@@ -39,6 +39,11 @@ from flair.data import Sentence
 from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer, AutoModelForSequenceClassification
 from pysentimiento import create_analyzer
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 CONFIG = {
     "num_to_select": 5,
     "word_options_dir": "src/sentiment/word_options",
@@ -101,6 +106,7 @@ CONFIG = {
 
 class SentimentAnalyzer:
     def __init__(self, console: Console, hf_models: List[str], logit_models_list: List[str], perplexity_model_name: str, config: Dict = None):
+        logger.info("Initializing SentimentAnalyzer...")
         self.console = console
         self.device = 0 if torch.cuda.is_available() else -1
         self.config = config or CONFIG
@@ -156,16 +162,7 @@ class SentimentAnalyzer:
             console.print(f"[yellow]Excluding non-valence models: {', '.join(self.confidence_only_models)}[/yellow]")
 
     def _convert_confidence_to_valence(self, confidence_score: float, prediction_label: str) -> float:
-        """
-        Convert confidence score to proper valence (-1 to 1 range).
-        
-        Args:
-            confidence_score: Confidence score (0-1)
-            prediction_label: Predicted label ('POSITIVE' or 'NEGATIVE')
-        
-        Returns:
-            Valence score in range [-1, 1]
-        """
+        logger.info(f"Converting confidence score {confidence_score} for label {prediction_label} to valence...")
         method = self.config["MODEL_FILTERING"]["confidence_to_valence_method"]
         
         if prediction_label.upper() in ['NEGATIVE', 'NEG']:
@@ -190,6 +187,7 @@ class SentimentAnalyzer:
             return confidence_score * 2 - 1 if confidence_score >= 0 else confidence_score * 2 + 1
 
     def _get_hf_pipeline_score(self, result: List[Dict[str, Any]], model_name: str) -> float:
+        logger.info(f"Extracting score from Hugging Face pipeline result for model: {model_name}")
         model_short_name = model_name.split('/')[-1]
         
         if model_short_name in self.confidence_only_models:
@@ -213,6 +211,7 @@ class SentimentAnalyzer:
                 return score_map.get('positive', 0.0) - score_map.get('negative', 0.0)
     
     def _get_hf_logit_score(self, text: str, model_info: Dict) -> float:
+        logger.info(f"Extracting logit score for text: {text} using model: {model_info['model']}")
         model = model_info['model']
         tokenizer = model_info['tokenizer']
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(model.device)
@@ -231,6 +230,7 @@ class SentimentAnalyzer:
         return torch.tanh(logit_diff).item()
 
     def _get_perplexity(self, text: str) -> float:
+        logger.info(f"Calculating perplexity for text: {text}")
         if not self.perplexity_model or not text:
             return 100000.0
 
@@ -257,6 +257,7 @@ class SentimentAnalyzer:
         return ppl if not (math.isinf(ppl) or math.isnan(ppl)) else 100000.0
 
     def analyze(self, texts: List[str]) -> Dict[str, Dict[str, float]]:
+        logger.info("Starting sentiment analysis for multiple texts...")
         all_results = defaultdict(dict)
         exclude_confidence = self.config["MODEL_FILTERING"]["exclude_confidence_only_models"]
         exclude_non_valence = self.config["MODEL_FILTERING"]["exclude_non_valence_models"]
@@ -408,6 +409,7 @@ class LexiconOptimizer:
         return np.clip(final_score, -1.0, 1.0)
 
     def run(self) -> Dict[str, Any]:
+        logger.info("Starting lexicon optimization process...")
         final_lexicons = defaultdict(lambda: defaultdict(list))
         global_used_lemmas = defaultdict(set)
         
@@ -558,6 +560,7 @@ class LexiconOptimizer:
         return final_lexicons
 
     def format_output(self, optimized_lexicons: Dict, source_name: str) -> str:
+        logger.info("Formatting output for optimized lexicons...")
         num_select = self.config['num_to_select']
         output_str = f"# DEFINITIVE SENTIMENT LEXICONS (Top {num_select} - Complete)\n# Source: {source_name}\n"
         for category, levels in sorted(optimized_lexicons.items()):
@@ -582,6 +585,7 @@ class LexiconOptimizer:
         return output_str
 
 def load_candidate_pools(path: str, console: Console) -> Dict[str, List[str]]:
+    logger.info(f"Loading candidate pools from: {path}")
     candidate_pools = {}
     if not os.path.exists(path):
         console.print(f"[bold red]Error: Input path not found -> '{path}'[/bold red]"); sys.exit(1)
@@ -601,6 +605,7 @@ def load_candidate_pools(path: str, console: Console) -> Dict[str, List[str]]:
     return candidate_pools
 
 def save_results(lexicons: Dict, output_path: str):
+    logger.info(f"Saving optimized lexicons to: {output_path}")
     lexicons_for_json = {cat: {level: [{k: v for k, v in item.items() if k in ['text', 'combined_score', 'standard_deviation', 'perplexity', 'word_count']} for item in items] for level, items in levels.items()} for cat, levels in lexicons.items()}
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f: json.dump(lexicons_for_json, f, indent=4)

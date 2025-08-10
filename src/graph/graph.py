@@ -1,125 +1,9 @@
 from typing import Callable, List
-from enum import Enum
 import networkx as nx
-import matplotlib.pyplot as plt
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from transformers import pipeline
 import plotly.graph_objects as go
-
-class SentimentAnalyzerSystem:
-    def __init__(self):
-        pass
-
-    def analyze_sentiment(self, text):
-        raise NotImplementedError("This method should be overridden by subclasses")
-
-class VADERSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        self.analyzer = SentimentIntensityAnalyzer()
-
-    def analyze_sentiment(self, text):
-        return self.analyzer.polarity_scores(text)['compound'] if text else 0.0
-
-class AFINNSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        import afinn
-        self.afinn = afinn.Afinn()
-
-    def analyze_sentiment(self, text):
-        return self.afinn.score(text) / 5.0 if text else 0.0
-
-class SpacyENCOREWEBSMSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        import spacy
-        self.nlp = spacy.load("en_core_web_sm")
-
-    def analyze_sentiment(self, text):
-        doc = self.nlp(text)
-        return sum(token.sentiment for token in doc) / len(doc) if doc else 0.0
-
-class HFPipelineSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis")
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        return result['score'] if result['label'] == 'POSITIVE' else -result['score']
-
-class DistilBERTSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        return result['score'] if result['label'] == 'POSITIVE' else -result['score']
-
-class RoBERTaSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis", model="cardiffnlp/twitter-roberta-base-sentiment-latest")
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        scores = {r['label']: r['score'] for r in result if isinstance(result, list)}
-        if isinstance(result, dict):
-            scores = {result['label']: result['score']}
-        pos_score = scores.get('LABEL_2', scores.get('POSITIVE', 0))
-        neg_score = scores.get('LABEL_0', scores.get('NEGATIVE', 0))
-        return pos_score - neg_score
-
-class FinBERTSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self):
-        self.pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        result = self.pipeline(text)[0]
-        return result['score'] if result['label'] == 'positive' else -result['score']
-
-class EnsembleSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self, analyzers=None):
-        if analyzers is None:
-            self.analyzers = [
-                VADERSentimentAnalyzer(),
-                HFPipelineSentimentAnalyzer(),
-                DistilBERTSentimentAnalyzer()
-            ]
-        else:
-            self.analyzers = analyzers
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        scores = [analyzer.analyze_sentiment(text) for analyzer in self.analyzers]
-        return sum(scores) / len(scores)
-
-class WeightedEnsembleSentimentAnalyzer(SentimentAnalyzerSystem):
-    def __init__(self, analyzers=None, weights=None):
-        if analyzers is None:
-            self.analyzers = [
-                VADERSentimentAnalyzer(),
-                HFPipelineSentimentAnalyzer(),
-                DistilBERTSentimentAnalyzer()
-            ]
-        else:
-            self.analyzers = analyzers
-        
-        if weights is None:
-            self.weights = [1.0] * len(self.analyzers)
-        else:
-            self.weights = weights
-
-    def analyze_sentiment(self, text):
-        if not text:
-            return 0.0
-        scores = [analyzer.analyze_sentiment(text) * weight for analyzer, weight in zip(self.analyzers, self.weights)]
-        return sum(scores) / sum(self.weights)
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ENTITY_ROLES = {
     "actor": {"description": "Initiates an action"},
@@ -145,8 +29,9 @@ class RelationGraph:
         self.entity_ids = set()
         self.aggregate_sentiments = {}
         if self.sentiment_analyzer_system is None:
-            self.sentiment_analyzer_system = VADERSentimentAnalyzer()
-    
+            from .sas import PresetEnsembleSentimentAnalyzer
+            self.sentiment_analyzer_system = PresetEnsembleSentimentAnalyzer()
+
     def _validate_role(self, role):
         if role not in ENTITY_ROLES:
             raise ValueError(f"Invalid entity role: {role}. Valid roles are: {list(ENTITY_ROLES.keys())}")
@@ -156,12 +41,14 @@ class RelationGraph:
             raise ValueError(f"Invalid relation type: {relation}. Valid relations are: {list(RELATION_TYPES.keys())}")
 
     def add_entity_node(self, id:int, head:str, modifier:List[str], entity_role:str, clause_layer:int):
+        logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
         self.graph.add_node(f"{id}_{clause_layer}", head=head, modifier=modifier, text=self.text, entity_role=entity_role, clause_layer=clause_layer)
         self.graph.nodes[f"{id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
     
     def add_entity_modifier(self, entity_id:int, modifier:List[str], clause_layer:int):
+        logger.info("Adding entity modeifiers...")
         if entity_id not in self.entity_ids:
             raise ValueError(f"Entity ID {entity_id} not found in the graph.")
         node_key = f"{entity_id}_{clause_layer}"
@@ -171,6 +58,7 @@ class RelationGraph:
         self.graph.nodes[node_key]['modifier'] = current_modifiers + modifier
     
     def set_entity_role(self, entity_id:int, entity_role:str, clause_layer:int):
+        logger.info("Setting entity role...")
         self._validate_role(entity_role)
         if entity_id not in self.entity_ids:
             raise ValueError(f"Entity ID {entity_id} not found in the graph.")
@@ -180,6 +68,7 @@ class RelationGraph:
         self.graph.nodes[node_key]['entity_role'] = entity_role
 
     def add_temporal_edge(self, entity_id:int):
+        logger.info("Adding temporal edge...")
         if entity_id not in self.entity_ids:
             raise ValueError(f"Entity ID {entity_id} not found in the graph.")
         layers = []
@@ -193,6 +82,7 @@ class RelationGraph:
             self.graph.add_edge(f"{entity_id}_{layers[i]}", f"{entity_id}_{layers[i + 1]}", relation="temporal")
     
     def add_action_edge(self, actor_id:int, target_id:int, clause_layer:int, head:str, modifier:List[str]):
+        logger.info(f"Adding action edge between {actor_id} and {target_id}...")
         if actor_id not in self.entity_ids or target_id not in self.entity_ids:
             raise ValueError(f"Actor ID {actor_id} or Target ID {target_id} not found in the graph.")
         self.graph.add_edge(f"{actor_id}_{clause_layer}", f"{target_id}_{clause_layer}", 
@@ -201,6 +91,7 @@ class RelationGraph:
         self.graph.nodes[f"{actor_id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
 
     def add_belonging_edge(self, parent_id:int, child_id:int, clause_layer:int):
+        logger.info(f"Adding belonging edge between {parent_id} and {child_id}...")
         if parent_id not in self.entity_ids or child_id not in self.entity_ids:
             raise ValueError(f"Parent ID {parent_id} or Child ID {child_id} not found in the graph.")
         self.graph.add_edge(f"{parent_id}_{clause_layer}", f"{child_id}_{clause_layer}", 
@@ -208,6 +99,7 @@ class RelationGraph:
                             relation="belonging")
 
     def add_association_edge(self, entity1_id:int, entity2_id:int, clause_layer:int):
+        logger.info(f"Adding association edge between {entity1_id} and {entity2_id}...")
         if entity1_id not in self.entity_ids or entity2_id not in self.entity_ids:
             raise ValueError(f"Entity1 ID {entity1_id} or Entity2 ID {entity2_id} not found in the graph.")
         self.graph.add_edge(f"{entity1_id}_{clause_layer}", f"{entity2_id}_{clause_layer}", 
@@ -215,6 +107,7 @@ class RelationGraph:
                             relation="association")
 
     def run_compound_action_sentiment_calculations(self, function:Callable=None):
+        logger.info(f"Running compound action sentiment calculations with function {function.__name__}...")
         for edge in self.graph.edges:
             edge_data = self.graph.edges[edge]
             if 'relation' in edge_data and edge_data['relation'] == "action":
@@ -232,6 +125,7 @@ class RelationGraph:
                 self.graph.nodes[target]['compound_sentiment'] = target_sentiment_compound
 
     def run_compound_belonging_sentiment_calculations(self, function:Callable=None):
+        logger.info(f"Running compound belonging sentiment calculations with function {function.__name__}...")
         for edge in self.graph.edges:
             edge_data = self.graph.edges[edge]
             if 'relation' in edge_data and edge_data['relation'] == "belonging":
@@ -248,6 +142,7 @@ class RelationGraph:
                 self.graph.nodes[child]['compound_sentiment'] = child_sentiment_compound
 
     def run_compound_association_sentiment_calculations(self, function:Callable=None):
+        logger.info(f"Running compound association sentiment calculations with function {function.__name__}...")
         for edge in self.graph.edges:
             edge_data = self.graph.edges[edge]
             if 'relation' in edge_data and edge_data['relation'] == "association":
@@ -264,6 +159,7 @@ class RelationGraph:
                 self.graph.nodes[entity2]['compound_sentiment'] = entity2_sentiment_compound
 
     def run_aggregate_sentiment_calculations(self, entity_id, function:Callable=None):
+        logger.info(f"Running aggregate sentiment calculations for entity {entity_id} with function {function.__name__}...")
         layers = []
         for node in self.graph.nodes:
             id_int = int(str(node).split('_')[0])
@@ -306,8 +202,9 @@ class GraphVisualizer:
         return colors
 
     def draw_graph(self, save_path=None):
+        logger.info("Drawing graph...")
         if not self.graph.nodes:
-            print("Graph is empty. Nothing to draw.")
+            logger.info("Graph is empty. Nothing to draw.")
             return
 
         pos_2d = nx.spring_layout(self.graph, k=2.0, iterations=100, seed=42)

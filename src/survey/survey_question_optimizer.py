@@ -1,4 +1,7 @@
 from typing import Literal, Callable
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 import pandas as pd
 import ssl
 import ast
@@ -21,6 +24,7 @@ import matplotlib.gridspec as gridspec
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 current_dir = Path(__file__).parent
@@ -29,7 +33,15 @@ sys.path.insert(0, str(current_dir))
 try:
     from formulas import SentimentFormula
 except ImportError:
-    from .formulas import SentimentFormula
+    try:
+        from .formulas import SentimentFormula
+    except Exception:
+        class SentimentFormula:
+            def __init__(self, name, category, func, params):
+                self.name = name
+                self.category = category
+                self.func = func
+                self.params = params
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -55,11 +67,13 @@ intensity_map_integer = {
 sentiment_sign_map = {'positive': 1, 'negative': -1}
 
 def associate_sentiment_integer(integer):
+    logger.info("associate_sentiment_integer")
     if not isinstance(integer, int):
         integer = int(integer)
     return intensity_map_integer.get(abs(integer), 0) * ((integer > 0) - (integer < 0))
 
 def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'droptop', 'none']='none'):
+    logger.info("fit")
     x0 = [(l + u) / 2 for l, u in zip(bounds[0], bounds[1])]
     if remove_outliers_method == "lsquares":
         def residuals(params, X_res, y_res):
@@ -121,55 +135,94 @@ def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'dropt
     }
 
 def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    theoretical_intensity_map = {'very': 0.85, 'medium': 0.6, 'somewhat': 0.4, 'slightly': 0.2, 'neutral': 0.0}
+    """FIXFIXFIX"""
+    intensity_map = {'very': 0.85, 'strong': 0.6, 'moderate': 0.4, 'slight': 0.2, 'neutral': 0.0}
     polarity_map = {'positive': 1, 'negative': -1, 'neutral': 0}
-    def get_stimulus_sentiment(row):
+
+    def compute_sentiment_from_row(row):
         try:
-            descriptor = ast.literal_eval(row['descriptor'])[0]
-            intensity = ast.literal_eval(row['intensity'])[0]
-            return polarity_map.get(descriptor, 0) * theoretical_intensity_map.get(intensity, 0)
-        except (ValueError, SyntaxError, IndexError):
-            return 0.0
-    reference_df = df[df['packet_step'] == 1].copy()
-    reference_df['ground_truth_stimulus_sentiment'] = reference_df.apply(get_stimulus_sentiment, axis=1)
-    calibration_df = df[df['item_type'].str.contains('calibration', na=False)].copy()
-    user_final_normalizers = {}
-    for seed in df['seed'].unique():
+            desc_list = ast.literal_eval(row.get('descriptor', '[]'))
+            intens_list = ast.literal_eval(row.get('intensity', '[]'))
+            if isinstance(desc_list, list) and len(desc_list) > 0 and isinstance(intens_list, list) and len(intens_list) > 0:
+                return polarity_map.get(desc_list[0], 0) * intensity_map.get(intens_list[0], 0.0)
+        except Exception:
+            pass
+        return None
+
+    reference_df = df[df.get('packet_step', pd.Series(dtype=float)) == 1].copy()
+    reference_df['ground_truth_stimulus_sentiment'] = reference_df.apply(lambda r: (compute_sentiment_from_row(r) if compute_sentiment_from_row(r) is not None else 0.0), axis=1)
+
+    calib_mask = (
+        (df.get('item_id', pd.Series([''] * len(df))) == 'calibration') |
+        (df.get('code_key', pd.Series([''] * len(df))).isin(['calibration_positive', 'calibration_negative']))
+    )
+    calibration_df = df[calib_mask].copy()
+
+    user_final_normalizers: dict = {}
+    for seed in pd.Series(df.get('seed')).dropna().unique():
         cal_m, cal_c = None, None
-        user_cal_data = calibration_df[calibration_df['seed'] == seed]
-        pos_response = user_cal_data[user_cal_data['code_key'] == 'calibration_positive']
-        neg_response = user_cal_data[user_cal_data['code_key'] == 'calibration_negative']
-        if not pos_response.empty and not neg_response.empty:
-            try:
-                desc_pos = json.loads(pos_response['description'].iloc[0])
-                desc_neg = json.loads(neg_response['description'].iloc[0])
-                y1 = desc_pos.get('ground_truth')
-                y2 = desc_neg.get('ground_truth')
-                x1 = pos_response['user_sentiment_score'].iloc[0]
-                x2 = neg_response['user_sentiment_score'].iloc[0]
-                if x1 is not None and x2 is not None and y1 is not None and y2 is not None and x1 != x2:
-                    cal_m = (y2 - y1) / (x2 - x1)
-                    cal_c = y1 - cal_m * x1
-            except (json.JSONDecodeError, KeyError, IndexError):
-                pass
+        user_cal = calibration_df[calibration_df['seed'] == seed]
+
+        pos = user_cal[user_cal.get('code_key', pd.Series([''] * len(user_cal))) == 'calibration_positive']
+        neg = user_cal[user_cal.get('code_key', pd.Series([''] * len(user_cal))) == 'calibration_negative']
+
+        if pos.empty and neg.empty and 'item_id' in user_cal.columns:
+            sorted_user_cal = user_cal.sort_values(by=['submission_timestamp_utc']) if 'submission_timestamp_utc' in user_cal.columns else user_cal
+            if len(sorted_user_cal) >= 2:
+                pos = sorted_user_cal.head(1)
+                neg = sorted_user_cal.tail(1)
+
+        def extract_xy(sdf: pd.DataFrame):
+            if sdf.empty:
+                return None, None
+            row = sdf.iloc[0]
+            x = row['user_sentiment_score'] if 'user_sentiment_score' in row else None
+            y = None
+            if 'description' in row and isinstance(row['description'], str):
+                try:
+                    desc_obj = json.loads(row['description'])
+                    if isinstance(desc_obj, dict) and 'ground_truth' in desc_obj:
+                        y = desc_obj['ground_truth']
+                except Exception:
+                    pass
+            if y is None:
+                y = compute_sentiment_from_row(row)
+            return x, y
+
+        x1, y1 = extract_xy(pos)
+        x2, y2 = extract_xy(neg)
+
+        if x1 is not None and x2 is not None and y1 is not None and y2 is not None and x1 != x2:
+            cal_m = (y2 - y1) / (x2 - x1)
+            cal_c = y1 - cal_m * x1
+
         ref_m, ref_c = None, None
-        user_ref_data = reference_df[reference_df['seed'] == seed]
-        if len(user_ref_data) >= 2:
-            X = user_ref_data[['user_sentiment_score']]
-            y = user_ref_data['ground_truth_stimulus_sentiment']
-            model = LinearRegression().fit(X, y)
-            ref_m, ref_c = model.coef_[0], model.intercept_
+        user_ref = reference_df[reference_df['seed'] == seed]
+        if len(user_ref) >= 2 and 'user_sentiment_score' in user_ref.columns and 'ground_truth_stimulus_sentiment' in user_ref.columns:
+            try:
+                model = LinearRegression().fit(user_ref[['user_sentiment_score']], user_ref['ground_truth_stimulus_sentiment'])
+                ref_m, ref_c = float(model.coef_[0]), float(model.intercept_)
+            except Exception:
+                ref_m, ref_c = None, None
+
         if cal_m is not None and cal_c is not None:
             user_final_normalizers[seed] = (cal_m, cal_c)
         elif ref_m is not None and ref_c is not None:
             user_final_normalizers[seed] = (ref_m, ref_c)
         else:
-            user_final_normalizers[seed] = (1/4, 0)
-    def apply_final_normalization(row):
-        m, c = user_final_normalizers.get(row['seed'], (1/4, 0))
-        return m * row['user_sentiment_score'] + c
-    df['user_normalized_sentiment_scores'] = df.apply(apply_final_normalization, axis=1)
-    df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(associate_sentiment_integer)
+            user_final_normalizers[seed] = (0.25, 0.0)
+
+    def apply_norm(row):
+        m, c = user_final_normalizers.get(row['seed'], (0.25, 0.0))
+        x = row['user_sentiment_score'] if 'user_sentiment_score' in row else None
+        try:
+            return m * float(x) + c if x is not None else None
+        except Exception:
+            return None
+
+    df['user_normalized_sentiment_scores'] = df.apply(apply_norm, axis=1)
+    if 'user_sentiment_score_mapped' not in df.columns:
+        df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(associate_sentiment_integer)
     return df, user_final_normalizers
 
 def fit_compound(formula, X, y, remove_outliers_method:Literal['lsquares', 'droptop', 'none']='none'):
@@ -338,18 +391,8 @@ def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normali
     return aggregate_df
 
 
-def actor_formula_v1(X, lambda_actor, w, b):
-    s_init_actor, driver = X
-    s_new = lambda_actor * s_init_actor + (1 - lambda_actor) * w * driver + b
-    return np.tanh(s_new)
-
-def actor_formula_v2(X, w_actor, w_driver, b):
-    s_init_actor, driver = X
-    s_new = w_actor * s_init_actor + w_driver * driver + b
-    return np.tanh(s_new)
-
 def determine_actor_parameters(action_model_df: pd.DataFrame,
-                                function: SentimentFormula,
+                                function: Callable,
                                 remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                 splits: Literal['none', 'driver', 'action_target'] = 'none',
                                 print_process=False) -> pd.DataFrame:
@@ -367,38 +410,38 @@ def determine_actor_parameters(action_model_df: pd.DataFrame,
         if not pos_driver_df.empty:
             X = pos_driver_df[['s_init_actor', 'driver']].to_numpy().T
             y = pos_driver_df['s_user_actor'].to_numpy()
-            pos_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_driver_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_driver_params'] = pos_driver_params
         if not neg_driver_df.empty:
             X = neg_driver_df[['s_init_actor', 'driver']].to_numpy().T
             y = neg_driver_df['s_user_actor'].to_numpy()
-            neg_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_driver_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_driver_params'] = neg_driver_params
     elif splits == 'action_target':
         if not pos_action_pos_action_model.empty:
             X = pos_action_pos_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = pos_action_pos_action_model['s_user_actor'].to_numpy()
-            pos_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_pos_params'] = pos_pos_params
         if not pos_action_neg_action_model.empty:
             X = pos_action_neg_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = pos_action_neg_action_model['s_user_actor'].to_numpy()
-            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_action_pos_action_model.empty:
             X = neg_action_pos_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = neg_action_pos_action_model['s_user_actor'].to_numpy()
-            neg_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_pos_params'] = neg_pos_params
         if not neg_action_neg_action_model.empty:
             X = neg_action_neg_action_model[['s_init_actor', 'driver']].to_numpy().T
             y = neg_action_neg_action_model['s_user_actor'].to_numpy()
-            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
     else:
         X = action_model_df[['s_init_actor', 'driver']].to_numpy().T
         y = action_model_df['s_user_actor'].to_numpy()
-        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -409,43 +452,53 @@ def determine_actor_parameters(action_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
-    return output, function
+    return output
 
-def target_formula_v1(X, lambda_target, w, b):
-    s_init_target, s_action = X
-    s_new = lambda_target * s_init_target + (1 - lambda_target) * w * s_action + b
-    return np.tanh(s_new)
+def actor_skeleton_formula(s_actor, s_action, s_target, split: Literal['driver', 'action_target', 'none'], function: Callable, fitted: dict):
+    driver = s_action * s_target
+    key = 'params'
+    if split == 'driver':
+        key = 'pos_driver_params' if driver > 0 else 'neg_driver_params'
+    elif split == 'action_target':
+        if s_action > 0 and s_target > 0:
+            key = 'pos_pos_params'
+        elif s_action > 0 and s_target <= 0:
+            key = 'pos_neg_params'
+        elif s_action <= 0 and s_target > 0:
+            key = 'neg_pos_params'
+        else:
+            key = 'neg_neg_params'
+    selected = fitted.get(key) or fitted.get('params')
+    if selected is None:
+        return np.nan
+    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
+    return function((s_actor, driver), *params_arr)
 
-def target_formula_v2(X, w_target, w_action, b):
-    s_init_target, s_action = X
-    s_new = w_target * s_init_target + w_action * s_action + b
-    return np.tanh(s_new)
 
 def determine_target_parameters(action_model_df: pd.DataFrame,
-                                function: SentimentFormula,
+                                function: Callable,
                                 remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
-                                splits: Literal['none', 'driver', 'action_target'] = 'none',
+                                splits: Literal['none', 'action'] = 'none',
                                 print_process=False) -> pd.DataFrame:
     pos_action_df = action_model_df[action_model_df['s_init_action'] > 0]
     neg_action_df = action_model_df[action_model_df['s_init_action'] <= 0]
 
     output = {}
-    if splits == 'driver':
+    if splits == 'action':
         if not pos_action_df.empty:
             X = pos_action_df[['s_init_target', 's_init_action']].to_numpy().T
             y = pos_action_df['s_user_target'].to_numpy()
-            pos_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
-            output['pos_driver_params'] = pos_driver_params
+            pos_action_params = fit_compound(function, X, y, remove_outlier_method)
+            output['pos_action_params'] = pos_action_params
         if not neg_action_df.empty:
             X = neg_action_df[['s_init_target', 's_init_action']].to_numpy().T
             y = neg_action_df['s_user_target'].to_numpy()
-            neg_driver_params = fit_compound(function.function, X, y, remove_outlier_method)
-            output['neg_driver_params'] = neg_driver_params
+            neg_action_params = fit_compound(function, X, y, remove_outlier_method)
+            output['neg_action_params'] = neg_action_params
     else:
         X = action_model_df[['s_init_target', 's_init_action']].to_numpy().T
         y = action_model_df['s_user_target'].to_numpy()
-        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -456,22 +509,21 @@ def determine_target_parameters(action_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
-    return output, function
+    return output
 
+def target_skeleton_formula(s_target, s_action, split: Literal['action', 'none'], function: Callable, fitted: dict):
+    key = 'params'
+    if split == 'action':
+        key = 'pos_action_params' if s_action > 0 else 'neg_action_params'
+    selected = fitted.get(key) or fitted.get('params')
+    if selected is None:
+        return np.nan
+    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
+    return function((s_target, s_action), *params_arr)
 
-def assoc_formula_v1(X, lambda_val, w, b):
-    s_init, s_other = X
-    s_new = lambda_val * s_init + (1 - lambda_val) * w * s_other + b
-    return np.tanh(s_new)
-
-def assoc_formula_v2(X, w_entity, w_other, b):
-    s_init, s_other = X
-    s_new = w_entity * s_init + w_other * s_other + b
-    return np.tanh(s_new)
 
 def determine_association_parameters(association_model_df: pd.DataFrame,
-                                        function: SentimentFormula,
+                                        function: Callable,
                                         remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                         splits: Literal['none', 'other', 'entity_other'] = 'none',
                                         print_process=False) -> pd.DataFrame:
@@ -489,38 +541,38 @@ def determine_association_parameters(association_model_df: pd.DataFrame,
         if not pos_entity_df.empty:
             X = pos_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
             y = pos_entity_df['s_user_entity'].to_numpy()
-            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_params'] = pos_params
         if not neg_entity_df.empty:
             X = neg_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
             y = neg_entity_df['s_user_entity'].to_numpy()
-            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_params'] = neg_params
     elif splits == 'entity_other':
         if not pos_entity_pos_other_df.empty:
             X = pos_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
             y = pos_entity_pos_other_df['s_user_entity'].to_numpy()
-            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
-            output['pos_params'] = pos_params
+            pos_params = fit_compound(function, X, y, remove_outlier_method)
+            output['pos_pos_params'] = pos_params
         if not neg_entity_pos_other_df.empty:
             X = neg_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
             y = neg_entity_pos_other_df['s_user_entity'].to_numpy()
-            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
-            output['neg_params'] = neg_params
+            neg_params = fit_compound(function, X, y, remove_outlier_method)
+            output['neg_pos_params'] = neg_params
         if not pos_entity_neg_other_df.empty:
             X = pos_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
             y = pos_entity_neg_other_df['s_user_entity'].to_numpy()
-            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_entity_neg_other_df.empty:
             X = neg_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
             y = neg_entity_neg_other_df['s_user_entity'].to_numpy()
-            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
     else:
         X = association_model_df[['s_init_entity', 's_init_other']].to_numpy().T
         y = association_model_df['s_user_entity'].to_numpy()
-        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -531,22 +583,30 @@ def determine_association_parameters(association_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
-    return output, function
+    return output
 
+def association_skeleton_formula(s_entity, s_other, split: Literal['other', 'entity_other', 'none'], function: Callable, fitted: dict):
+    key = 'params'
+    if split == 'other':
+        key = 'pos_params' if s_other > 0 else 'neg_params'
+    elif split == 'entity_other':
+        if s_entity > 0 and s_other > 0:
+            key = 'pos_pos_params'
+        elif s_entity > 0 and s_other <= 0:
+            key = 'pos_neg_params'
+        elif s_entity <= 0 and s_other > 0:
+            key = 'neg_pos_params'
+        else:
+            key = 'neg_neg_params'
+    selected = fitted.get(key) or fitted.get('params')
+    if selected is None:
+        return np.nan
+    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
+    return function((s_entity, s_other), *params_arr)
 
-def belong_formula_v1(X, lambda_parent, w, b):
-    s_entity, s_other = X
-    s_new = lambda_parent * s_entity + (1 - lambda_parent) * w * s_other + b
-    return np.tanh(s_new)
-
-def belong_formula_v2(X, w_parent, w_child, b):
-    s_entity, s_child = X
-    s_new = w_parent * s_entity + w_child * s_child + b
-    return np.tanh(s_new)
 
 def determine_parent_parameters(belonging_model_df: pd.DataFrame,
-                                    function: SentimentFormula,
+                                    function: Callable,
                                     remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                     splits: Literal['none', 'parent_child', 'child'] = 'none',
                                     print_process=False) -> pd.DataFrame:
@@ -563,38 +623,38 @@ def determine_parent_parameters(belonging_model_df: pd.DataFrame,
         if not pos_parent_df.empty:
             X = pos_parent_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = pos_parent_df['s_user_parent'].to_numpy()
-            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_params'] = pos_params
         if not neg_parent_df.empty:
             X = neg_parent_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = neg_parent_df['s_user_parent'].to_numpy()
-            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_params'] = neg_params
     elif splits == 'parent_child':
         if not pos_parent_neg_child_df.empty:
             X = pos_parent_neg_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = pos_parent_neg_child_df['s_user_parent'].to_numpy()
-            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_parent_neg_child_df.empty:
             X = neg_parent_neg_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = neg_parent_neg_child_df['s_user_parent'].to_numpy()
-            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
         if not pos_parent_pos_child_df.empty:
             X = pos_parent_pos_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = pos_parent_pos_child_df['s_user_parent'].to_numpy()
-            pos_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_pos_params'] = pos_pos_params
         if not neg_parent_pos_child_df.empty:
             X = neg_parent_pos_child_df[['s_init_parent', 's_init_child']].to_numpy().T
             y = neg_parent_pos_child_df['s_user_parent'].to_numpy()
-            neg_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_pos_params'] = neg_pos_params
     else:
         X = belonging_model_df[['s_init_parent', 's_init_child']].to_numpy().T
         y = belonging_model_df['s_user_parent'].to_numpy()
-        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -605,11 +665,10 @@ def determine_parent_parameters(belonging_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
-    return output, function
+    return output
 
 def determine_child_parameters(belonging_model_df: pd.DataFrame,
-                                    function: SentimentFormula,
+                                    function: Callable,
                                     remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
                                     splits: Literal['none', 'parent_child', 'parent'] = 'none',
                                     print_process=False) -> pd.DataFrame:
@@ -626,38 +685,38 @@ def determine_child_parameters(belonging_model_df: pd.DataFrame,
         if not pos_child_df.empty:
             X = pos_child_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = pos_child_df['s_user_child'].to_numpy()
-            pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_params'] = pos_params
         if not neg_child_df.empty:
             X = neg_child_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = neg_child_df['s_user_child'].to_numpy()
-            neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_params'] = neg_params
     elif splits == 'parent_child':
         if not pos_child_neg_parent_df.empty:
             X = pos_child_neg_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = pos_child_neg_parent_df['s_user_child'].to_numpy()
-            pos_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_neg_params'] = pos_neg_params
         if not neg_child_neg_parent_df.empty:
             X = neg_child_neg_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = neg_child_neg_parent_df['s_user_child'].to_numpy()
-            neg_neg_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_neg_params'] = neg_neg_params
         if not pos_child_pos_parent_df.empty:
             X = pos_child_pos_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = pos_child_pos_parent_df['s_user_child'].to_numpy()
-            pos_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['pos_pos_params'] = pos_pos_params
         if not neg_child_pos_parent_df.empty:
             X = neg_child_pos_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
             y = neg_child_pos_parent_df['s_user_child'].to_numpy()
-            neg_pos_params = fit_compound(function.function, X, y, remove_outlier_method)
+            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
             output['neg_pos_params'] = neg_pos_params
     else:
         X = belonging_model_df[['s_init_child', 's_init_parent']].to_numpy().T
         y = belonging_model_df['s_user_child'].to_numpy()
-        output['params'] = fit_compound(function.function, X, y, remove_outlier_method)
+        output['params'] = fit_compound(function, X, y, remove_outlier_method)
     if print_process:
         for key, value in output.items():
             if value is not None:
@@ -668,8 +727,45 @@ def determine_child_parameters(belonging_model_df: pd.DataFrame,
                 print(f"R2 Loss: {value['r2_loss']}")
             else:
                 print(f"{key}: No data available")
-    function.set_params(output.get('params', {}).get('params', None) if output.get('params') else None)
-    return output, function
+    return output
+
+def parent_skeleton_formula(s_parent, s_child, split: Literal['parent_child', 'child', 'none'], function: Callable, fitted: dict):
+    key = 'params'
+    if split == 'parent_child':
+        if s_parent > 0 and s_child > 0:
+            key = 'pos_pos_params'
+        elif s_parent > 0 and s_child <= 0:
+            key = 'pos_neg_params'
+        elif s_parent <= 0 and s_child > 0:
+            key = 'neg_pos_params'
+        else:
+            key = 'neg_neg_params'
+    elif split == 'child':
+        key = 'pos_params' if s_child > 0 else 'neg_params'
+    selected = fitted.get(key) or fitted.get('params')
+    if selected is None:
+        return np.nan
+    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
+    return function((s_parent, s_child), *params_arr)
+
+def child_skeleton_formula(s_child, s_parent, split: Literal['parent_child', 'parent', 'none'], function: Callable, fitted: dict):
+    key = 'params'
+    if split == 'parent_child':
+        if s_child > 0 and s_parent > 0:
+            key = 'pos_pos_params'
+        elif s_child > 0 and s_parent <= 0:
+            key = 'pos_neg_params'
+        elif s_child <= 0 and s_parent > 0:
+            key = 'neg_pos_params'
+        else:
+            key = 'neg_neg_params'
+    elif split == 'parent':
+        key = 'pos_params' if s_parent > 0 else 'neg_params'
+    selected = fitted.get(key) or fitted.get('params')
+    if selected is None:
+        return np.nan
+    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
+    return function((s_child, s_parent), *params_arr)
 
 
 def calculate_weights(n, alpha, beta):
@@ -833,209 +929,478 @@ def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
         'function': SentimentFormula(f"aggregate_{model_type}", "aggregate", func, result.x.tolist())
     }
 
+def aggregate_skeleton_formula(s_inits, formula, params):
+    return formula(s_inits, params)
 
-def test_all_parameterizations():
-    console = Console()
+CONFIG = {
+    "test_train_split": 0.8
+}
 
-    def format_formula_string(func, params):
-        source_lines = inspect.getsource(func).split('\n')
-        param_names = list(inspect.signature(func).parameters.keys())[1:]
-        formula_line = ""
-        for line in source_lines:
-            if 's_new =' in line:
-                formula_line = line.strip()
-                break
-        if not formula_line: return "Could not parse formula."
-        substitutions = {}
-        if 'lambda' in param_names[0]:
-            lambda_val = params[0]
-            substitutions[param_names[0]] = f"{lambda_val:.4f}"
-            substitutions[f"(1 - {param_names[0]})"] = f"{(1 - lambda_val):.4f}"
-            for i, p_name in enumerate(param_names[1:], 1):
-                substitutions[p_name] = f"{params[i]:.4f}"
+def _safe_mse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    logger.info("_safe_mse")
+    mask = ~np.isnan(y_pred)
+    if mask.sum() == 0:
+        return float('inf')
+    return mean_squared_error(y_true[mask], y_pred[mask])
+
+
+def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
+    logger.info("test_actor_parameters")
+    from formulas import actor_formula_v1, actor_formula_v2
+
+    action_df = create_action_df(score_key)
+    if action_df.empty:
+        print("No action data available.")
+        return {}
+
+    action_df = action_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    n_train = int(len(action_df) * CONFIG["test_train_split"])
+    train_df = action_df.iloc[:n_train].copy()
+    test_df = action_df.iloc[n_train:].copy()
+
+    candidates = [
+        {"function": actor_formula_v1},
+        {"function": actor_formula_v2},
+    ]
+    remove_outliers = ["none", "lsquares", "droptop"]
+    splits = ["none", "driver", "action_target"]
+
+    results = []
+    for cand in candidates:
+        func = cand["function"]
+        for ro in remove_outliers:
+            for sp in splits:
+                fitted = determine_actor_parameters(train_df, func, ro, sp, print_process=False)
+                preds = []
+                for _, r in test_df.iterrows():
+                    preds.append(
+                        actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted)
+                    )
+                preds = np.array(preds, dtype=float)
+                mse = _safe_mse(test_df['s_user_actor'].to_numpy(dtype=float), preds)
+                results.append({
+                    "model": func.__name__,
+                    "split": sp,
+                    "remove_outliers": ro,
+                    "mse": mse,
+                    "score_key": score_key,
+                    "fitted": fitted,
+                })
+                print(f"actor | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
+    if not results:
+        return {}
+    best = min(results, key=lambda x: x["mse"])
+    print(f"Best actor config: {best}")
+    return {"best": best, "all": results}
+
+def test_target_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
+    logger.info("test_target_parameters")
+    from formulas import target_formula_v1, target_formula_v2
+
+    action_df = create_action_df(score_key)
+    if action_df.empty:
+        print("No action data available for target model.")
+        return {}
+
+    action_df = action_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    n_train = int(len(action_df) * CONFIG["test_train_split"])
+    train_df = action_df.iloc[:n_train].copy()
+    test_df = action_df.iloc[n_train:].copy()
+
+    candidates = [
+        {"function": target_formula_v1},
+        {"function": target_formula_v2},
+    ]
+    remove_outliers = ["none", "lsquares", "droptop"]
+    splits = ["none", "action"]
+
+    results = []
+    for cand in candidates:
+        func = cand["function"]
+        for ro in remove_outliers:
+            for sp in splits:
+                fitted = determine_target_parameters(train_df, func, ro, sp, print_process=False)
+                preds = []
+                for _, r in test_df.iterrows():
+                    preds.append(
+                        target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted)
+                    )
+                preds = np.array(preds, dtype=float)
+                mse = _safe_mse(test_df['s_user_target'].to_numpy(dtype=float), preds)
+                results.append({
+                    "model": func.__name__,
+                    "split": sp,
+                    "remove_outliers": ro,
+                    "mse": mse,
+                    "score_key": score_key,
+                    "fitted": fitted,
+                })
+                print(f"target | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
+    if not results:
+        return {}
+    best = min(results, key=lambda x: x["mse"])
+    print(f"Best target config: {best}")
+    return {"best": best, "all": results}
+
+def test_association_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
+    logger.info("test_association_parameters")
+    from formulas import assoc_formula_v1, assoc_formula_v2
+
+    assoc_df = create_association_df(score_key)
+    if assoc_df.empty:
+        print("No association data available.")
+        return {}
+
+    assoc_df = assoc_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    n_train = int(len(assoc_df) * CONFIG["test_train_split"])
+    train_df = assoc_df.iloc[:n_train].copy()
+    test_df = assoc_df.iloc[n_train:].copy()
+
+    candidates = [
+        {"function": assoc_formula_v1},
+        {"function": assoc_formula_v2},
+    ]
+    remove_outliers = ["none", "lsquares", "droptop"]
+    splits = ["none", "other", "entity_other"]
+
+    results = []
+    for cand in candidates:
+        func = cand["function"]
+        for ro in remove_outliers:
+            for sp in splits:
+                fitted = determine_association_parameters(train_df, func, ro, sp, print_process=False)
+                preds = []
+                for _, r in test_df.iterrows():
+                    preds.append(
+                        association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted)
+                    )
+                preds = np.array(preds, dtype=float)
+                mse = _safe_mse(test_df['s_user_entity'].to_numpy(dtype=float), preds)
+                results.append({
+                    "model": func.__name__,
+                    "split": sp,
+                    "remove_outliers": ro,
+                    "mse": mse,
+                    "score_key": score_key,
+                    "fitted": fitted,
+                })
+                print(f"assoc | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
+    if not results:
+        return {}
+    best = min(results, key=lambda x: x["mse"])
+    print(f"Best association config: {best}")
+    return {"best": best, "all": results}
+
+def test_parent_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
+    logger.info("test_parent_parameters")
+    from formulas import belong_formula_v1, belong_formula_v2
+
+    bel_df = create_belonging_df(score_key)
+    if bel_df.empty:
+        print("No belonging data available for parent model.")
+        return {}
+
+    bel_df = bel_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    n_train = int(len(bel_df) * CONFIG["test_train_split"])
+    train_df = bel_df.iloc[:n_train].copy()
+    test_df = bel_df.iloc[n_train:].copy()
+
+    candidates = [
+        {"function": belong_formula_v1},
+        {"function": belong_formula_v2},
+    ]
+    remove_outliers = ["none", "lsquares", "droptop"]
+    splits = ["none", "child", "parent_child"]
+
+    results = []
+    for cand in candidates:
+        func = cand["function"]
+        for ro in remove_outliers:
+            for sp in splits:
+                fitted = determine_parent_parameters(train_df, func, ro, sp, print_process=False)
+                preds = []
+                for _, r in test_df.iterrows():
+                    preds.append(
+                        parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted)
+                    )
+                preds = np.array(preds, dtype=float)
+                mse = _safe_mse(test_df['s_user_parent'].to_numpy(dtype=float), preds)
+                results.append({
+                    "model": func.__name__,
+                    "split": sp,
+                    "remove_outliers": ro,
+                    "mse": mse,
+                    "score_key": score_key,
+                    "fitted": fitted,
+                })
+                print(f"parent | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
+    if not results:
+        return {}
+    best = min(results, key=lambda x: x["mse"])
+    print(f"Best parent config: {best}")
+    return {"best": best, "all": results}
+
+def test_child_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
+    logger.info("test_child_parameters")
+    from formulas import belong_formula_v1, belong_formula_v2
+
+    bel_df = create_belonging_df(score_key)
+    if bel_df.empty:
+        print("No belonging data available for child model.")
+        return {}
+
+    bel_df = bel_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    n_train = int(len(bel_df) * CONFIG["test_train_split"])
+    train_df = bel_df.iloc[:n_train].copy()
+    test_df = bel_df.iloc[n_train:].copy()
+
+    candidates = [
+        {"function": belong_formula_v1},
+        {"function": belong_formula_v2},
+    ]
+    remove_outliers = ["none", "lsquares", "droptop"]
+    splits = ["none", "parent", "parent_child"]
+
+    results = []
+    for cand in candidates:
+        func = cand["function"]
+        for ro in remove_outliers:
+            for sp in splits:
+                fitted = determine_child_parameters(train_df, func, ro, sp, print_process=False)
+                preds = []
+                for _, r in test_df.iterrows():
+                    preds.append(
+                        child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted)
+                    )
+                preds = np.array(preds, dtype=float)
+                mse = _safe_mse(test_df['s_user_child'].to_numpy(dtype=float), preds)
+                results.append({
+                    "model": func.__name__,
+                    "split": sp,
+                    "remove_outliers": ro,
+                    "mse": mse,
+                    "score_key": score_key,
+                    "fitted": fitted,
+                })
+                print(f"child | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
+    if not results:
+        return {}
+    best = min(results, key=lambda x: x["mse"])
+    print(f"Best child config: {best}")
+    return {"best": best, "all": results}
+
+def test_aggregate_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
+    logger.info("test_aggregate_parameters")
+    agg_df = create_aggregate_df(score_key)
+    if agg_df.empty:
+        print("No aggregate data available.")
+        return {}
+    agg_df = agg_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    n_train = int(len(agg_df) * CONFIG["test_train_split"])
+    train_df = agg_df.iloc[:n_train].copy()
+    test_df = agg_df.iloc[n_train:].copy()
+    losses = [aggregate_error_mse, aggregate_error_softl1, aggregate_error_dynamic_mse, aggregate_error_dynamic_softl1, aggregate_error_logistic_mse, aggregate_error_logistic_softl1]
+    results = []
+    for loss_fn in losses:
+        fitted = determine_aggregate_parameters(train_df, loss_fn, print_process=False)
+        name = fitted['function'].name if isinstance(fitted.get('function'), SentimentFormula) else loss_fn.__name__
+        if 'dynamic' in loss_fn.__name__:
+            func = aggregate_formula_dynamic
+        elif 'logistic' in loss_fn.__name__:
+            func = aggregate_formula_logistic
         else:
-            for p_name, p_val in zip(param_names, params):
-                substitutions[p_name] = f"{p_val:.4f}"
-        for old, new in substitutions.items():
-            formula_line = re.sub(r'\b' + re.escape(old) + r'\b', new, formula_line)
-        return f"{formula_line}\ns_final = np.tanh(s_new)"
+            func = aggregate_formula
+        preds = []
+        for _, r in test_df.iterrows():
+            preds.append(func(r['s_inits'], fitted['params']))
+        preds = np.array(preds, dtype=float)
+        mse = _safe_mse(test_df['s_user'].to_numpy(dtype=float), preds)
+        results.append({
+            "model": name,
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": mse,
+            "score_key": score_key,
+            "params": fitted['params'],
+        })
+        print(f"aggregate | {name} | MSE={mse:.4f}")
+    best = min(results, key=lambda x: x["mse"]) if results else {}
+    print(f"Best aggregate config: {best}")
+    return {"best": best, "all": results}
 
-    all_results, fitting_errors = [], []
-    score_keys = ["user_sentiment_score", "user_normalized_sentiment_scores", "user_sentiment_score_mapped"]
-    outlier_methods = ['none', 'lsquares', 'droptop']
-    model_functions = {"Actor": [("actor_formula_v1", actor_formula_v1), ("actor_formula_v2", actor_formula_v2)], "Target": [("target_formula_v1", target_formula_v1), ("target_formula_v2", target_formula_v2)], "Association": [("assoc_formula_v1", assoc_formula_v1), ("assoc_formula_v2", assoc_formula_v2)], "Belonging Parent": [("belong_formula_v1", belong_formula_v1), ("belong_formula_v2", belong_formula_v2)], "Belonging Child": [("belong_formula_v1", belong_formula_v1), ("belong_formula_v2", belong_formula_v2)]}
-    model_param_determiners = {"Actor": (determine_actor_parameters, ['none', 'driver', 'action_target']), "Target": (determine_target_parameters, ['none', 'driver', 'action_target']), "Association": (determine_association_parameters, ['none', 'other', 'entity_other']), "Belonging Parent": (determine_parent_parameters, ['none', 'parent_child', 'child']), "Belonging Child": (determine_child_parameters, ['none', 'parent_child', 'parent'])}
-    aggregate_loss_functions = [("aggregate_error_mse", aggregate_error_mse), ("aggregate_error_softl1", aggregate_error_softl1), ("aggregate_error_dynamic_mse", aggregate_error_dynamic_mse), ("aggregate_error_dynamic_softl1", aggregate_error_dynamic_softl1), ("aggregate_error_logistic_mse", aggregate_error_logistic_mse), ("aggregate_error_logistic_softl1", aggregate_error_logistic_softl1)]
 
-    with console.status("[bold yellow]Running comprehensive analysis...") as status:
-        for score_key in score_keys:
-            action_df, association_df, belonging_df, aggregate_df = create_action_df(score_key), create_association_df(score_key), create_belonging_df(score_key), create_aggregate_df(score_key)
-            data_dfs = {"Actor": action_df, "Target": action_df, "Association": association_df, "Belonging Parent": belonging_df, "Belonging Child": belonging_df}
-            for model_type, (determiner, splits) in model_param_determiners.items():
-                status.update(f"Processing: {model_type} on {score_key}")
-                for func_name, func in model_functions[model_type]:
-                    for method in outlier_methods:
-                        for split in splits:
-                            with warnings.catch_warnings():
-                                warnings.simplefilter("error", OptimizeWarning)
-                                try:
-                                    results_group, formula = determiner(data_dfs[model_type], SentimentFormula(func_name, model_type, func), method, split)
-                                    valid_fits = {k: v for k, v in results_group.items() if v is not None}
-                                    if not valid_fits:
-                                        fitting_errors.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split': split, 'error': 'All sub-models failed to fit.'})
-                                        continue
-                                    avg_r2, avg_mse = np.mean([r['r2_loss'] for r in valid_fits.values()]), np.mean([r['mse'] for r in valid_fits.values()])
-                                    all_results.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split_type': split, 'avg_r2': avg_r2, 'avg_mse': avg_mse, 'sub_models': valid_fits, 'formulas': {k: SentimentFormula(f"{func_name}_{k}", model_type, func, v['params']) for k, v in valid_fits.items()}})
-                                except (ValueError, OptimizeWarning, RuntimeError) as e:
-                                    fitting_errors.append({'model_type': model_type, 'score_key': score_key, 'function': func_name, 'outlier_method': method, 'split': split, 'error': str(e)})
-            status.update(f"Processing: Aggregate on {score_key}")
-            for loss_name, loss_func in aggregate_loss_functions:
-                res = determine_aggregate_parameters(aggregate_df, loss_func)
-                if res['success']: all_results.append({'model_type': 'Aggregate', 'score_key': score_key, 'loss_function': loss_name, **res})
+def _serialize_fitted(fitted: dict) -> dict:
+    out = {}
+    for k, v in fitted.items():
+        if v is None:
+            continue
+        if isinstance(v, dict) and 'params' in v:
+            arr = v['params']
+        else:
+            arr = v
+        if isinstance(arr, np.ndarray):
+            arr = arr.tolist()
+        elif isinstance(arr, (float, int)):
+            arr = [float(arr)]
+        out[k] = arr
+    return out
 
-    console.print("\n[bold green]✅ Comprehensive Analysis Complete.[/bold green]\n")
 
-    for model_type in model_param_determiners.keys():
-        results = sorted([r for r in all_results if r['model_type'] == model_type], key=lambda x: x.get('avg_mse', float('inf')))
-        if not results: continue
-        best_model = results[0]
-        console.print(Panel(f"[bold white on blue] 🏆 Analysis for: {model_type} [/bold white on blue]", expand=False))
-        best_model_table = Table(title="[bold]Best Performing Model (Lowest MSE)[/bold]", show_header=False, box=None, padding=(0, 2))
-        best_model_table.add_column(style="cyan bold"), best_model_table.add_column(style="white")
-        best_model_table.add_row("Score Key:", best_model['score_key']), best_model_table.add_row("Function:", best_model['function']), best_model_table.add_row("Outlier Method:", best_model['outlier_method']), best_model_table.add_row("Split Strategy:", best_model['split_type']), best_model_table.add_row("Avg. MSE:", f"[bold green]{best_model['avg_mse']:.4f}[/bold green]"), best_model_table.add_row("Avg. R² Score:", f"{best_model['avg_r2']:.4f}")
-        param_table = Table(title="[bold]Parameters of Best Model[/bold]", show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
-        param_table.add_column("Context"), param_table.add_column("Parameters"), param_table.add_column("MSE")
-        for context, details in best_model['sub_models'].items(): param_table.add_row(context.replace("_params", "").replace("_", " ").title(), str(np.round(details['params'], 4)), f"{details['mse']:.4f}")
-        first_context, first_details = list(best_model['sub_models'].items())[0]
-        func_obj = dict(model_functions[model_type])[best_model['function']]
-        formula_str = format_formula_string(func_obj, first_details['params'])
-        console.print(best_model_table), console.print(param_table), console.print(Panel(formula_str, title=f"[yellow]Formula Interpretation ({first_context.replace('_params', '').replace('_', ' ').title()})[/yellow]", border_style="yellow", padding=(1,2)))
-        full_log_table = Table(title=f"[bold]Full Test Log for {model_type}[/bold]", show_header=True, header_style="bold white")
-        full_log_table.add_column("Score Key", style="dim"), full_log_table.add_column("Function"), full_log_table.add_column("Method"), full_log_table.add_column("Split"), full_log_table.add_column("Avg MSE", style="green", justify="right")
-        for res in results: full_log_table.add_row(res['score_key'], res['function'], res['outlier_method'], res['split_type'], f"{res['avg_mse']:.6f}")
-        console.print(full_log_table)
-        console.print("\n" + "="*80 + "\n")
-
-    agg_results = [r for r in all_results if r['model_type'] == 'Aggregate']
-    if agg_results:
-        console.print(Panel("[bold white on blue] 🏆 Analysis for: Aggregate Models [/bold white on blue]", expand=False))
-        best_agg_models = []
-        for key in ['normal', 'dynamic', 'logistic']:
-            models = [r for r in agg_results if (('dynamic' not in r['loss_function'] and 'logistic' not in r['loss_function']) if key == 'normal' else key in r['loss_function'])]
-            if models: best_agg_models.append(sorted(models, key=lambda x: x['loss'])[0])
-        table = Table(title="[bold]Top Aggregate Models by Formula Type (Lowest Loss)[/bold]", show_header=True, header_style="bold magenta")
-        table.add_column("Formula Type"), table.add_column("Score Key"), table.add_column("Loss Function"), table.add_column("Final Loss", justify="right"), table.add_column("Parameters")
-        for res in best_agg_models:
-            formula_type = "Normal" if 'dynamic' not in res['loss_function'] and 'logistic' not in res['loss_function'] else ("Dynamic" if 'dynamic' in res['loss_function'] else "Logistic")
-            table.add_row(formula_type, res['score_key'], res['loss_function'], f"{res['loss']:.4f}", str(np.round(res['params'], 4)))
-        console.print(table)
-        console.print("\n[bold cyan]📊 Generating interactive plots for best aggregate models...[/bold cyan]")
-        for result in best_agg_models:
-            score_key, loss_name, params = result['score_key'], result['loss_function'], result['params']
-            df_agg = create_aggregate_df(score_key)
-            formula_type = "Normal" if 'dynamic' not in loss_name and 'logistic' not in loss_name else ("Dynamic" if 'dynamic' in loss_name else "Logistic")
-            df_agg['s_user_pred'] = df_agg.apply(lambda row: (aggregate_formula_dynamic(row['s_inits'], params) if formula_type == "Dynamic" else (aggregate_formula_logistic(row['s_inits'], params) if formula_type == "Logistic" else aggregate_formula(row['s_inits'], params))), axis=1)
-
-            if formula_type == 'Normal':
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-                fig.suptitle(f"Aggregate Model: {formula_type} | {score_key} | {loss_name}", fontsize=16)
-                ax1.scatter(df_agg['s_user'], df_agg['s_user_pred'], alpha=0.6, edgecolors='k', linewidth=0.5, label="Data points")
-                ax1.plot([-1, 1], [-1, 1], 'r--', label='Ideal y=x line'), ax1.set_title('Actual vs. Predicted Sentiment'), ax1.set_xlabel('Actual User Sentiment'), ax1.set_ylabel('Predicted Sentiment')
-                ax1.grid(True, linestyle='--', alpha=0.6), ax1.legend(), ax1.set_aspect('equal', adjustable='box')
-                ax2.set_title(r'Weight Distribution ($w_i$) vs. Item Position (i)'), ax2.set_xlabel('Item Position (i)'), ax2.set_ylabel('Weight')
-                for n_val in [3, 5, 10]:
-                    if n_val <= df_agg['N'].max(): ax2.plot(range(1, n_val + 1), calculate_weights(n_val, params[0], params[1]), '-o', label=f'N={n_val}')
-                ax2.legend(), ax2.grid(True, linestyle='--', alpha=0.6)
+def save_optimal_parameters(all_results: dict, out_path: str = "src/survey/optimal_formulas/all_optimal_parameters.json") -> None:
+    entries = []
+    for score_key, summary in all_results.items():
+        for category, data in summary.items():
+            if not data or 'best' not in data:
+                continue
+            best = data['best']
+            entry = {
+                "category": category,
+                "score_key": score_key,
+                "model": best.get("model"),
+                "split": best.get("split", "none"),
+                "remove_outliers": best.get("remove_outliers", "none"),
+                "mse": float(best.get("mse", float('inf'))),
+            }
+            if category == 'aggregate':
+                params = best.get('params')
+                if isinstance(params, np.ndarray):
+                    params = params.tolist()
+                entry["params_by_key"] = {"params": params}
             else:
-                fig = plt.figure(figsize=(14, 10))
-                gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1])
-                ax1, ax2 = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])
-                ax3 = fig.add_subplot(gs[1, :])
-                fig.suptitle(f"Aggregate Model: {formula_type} | {score_key} | {loss_name}", fontsize=16)
-                plt.subplots_adjust(bottom=0.2, hspace=0.3)
-                ax1.scatter(df_agg['s_user'], df_agg['s_user_pred'], alpha=0.6, edgecolors='k', linewidth=0.5, label="Data points")
-                ax1.plot([-1, 1], [-1, 1], 'r--', label='Ideal y=x line'), ax1.set_title('Actual vs. Predicted Sentiment'), ax1.set_xlabel('Actual User Sentiment'), ax1.set_ylabel('Predicted Sentiment')
-                ax1.grid(True, linestyle='--', alpha=0.6), ax1.legend(), ax1.set_aspect('equal', adjustable='box')
-                max_n = df_agg['N'].max() if not df_agg.empty else 10
-                ax_slider = plt.axes([0.25, 0.05, 0.5, 0.03], facecolor='lightgoldenrodyellow')
-                n_slider = Slider(ax=ax_slider, label='N', valmin=2, valmax=max_n, valinit=int(max_n/2), valstep=1)
+                fitted = best.get('fitted', {})
+                entry["params_by_key"] = _serialize_fitted(fitted)
+            entries.append(entry)
+    payload = {"version": 1, "saved_at": datetime.utcnow().isoformat() + 'Z', "entries": entries}
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, 'w') as f:
+        json.dump(payload, f)
 
-                def update(val):
-                    n = int(n_slider.val)
-                    ax2.clear(), ax3.clear()
-                    n_range = np.arange(2, n + 1)
-                    if formula_type == 'Dynamic':
-                        alphas, betas = (params[0] * n_range + params[1]), (params[2] * n_range + params[3])
-                    else:
-                        alphas = logistic_function(n_range, params[0], params[1], params[2], params[3])
-                        betas = logistic_function(n_range, params[4], params[5], params[6], params[7])
-                    ax2.plot(n_range, alphas, 'b-o', label=r'$\alpha_N$ (Primacy)'), ax2.plot(n_range, betas, 'g-s', label=r'$\beta_N$ (Recency)')
-                    ax2.set_title(f'Parameters vs. N (up to N={n})'), ax2.set_xlabel('Number of Items (N)'), ax2.set_ylabel('Parameter Value'), ax2.legend(), ax2.grid(True, linestyle='--', alpha=0.6)
+def load_optimal_parameters(in_path: str = "src/survey/optimal_formulas/all_optimal_parameters.json") -> dict:
+    if not os.path.exists(in_path):
+        return {}
+    with open(in_path, 'r') as f:
+        data = json.load(f)
+    out = {}
+    for e in data.get('entries', []):
+        out[(e['category'], e['score_key'])] = e
+    return out
 
-                    current_alpha, current_beta = alphas[-1], betas[-1]
-                    weights = calculate_weights(n, current_alpha, current_beta)
-                    markerline, stemlines, baseline = ax3.stem(range(1, n + 1), weights, label=f'N={n}', basefmt=" ")
-                    plt.setp(markerline, 'color', 'red'), plt.setp(stemlines, 'color', 'grey', 'linestyle', ':')
-                    ax3.plot(range(1, n + 1), weights, 'r-')
-                    ax3.set_title(fr'Weight Distribution for N={n} ($\alpha={current_alpha:.2f}, \beta={current_beta:.2f}$)'), ax3.set_xlabel('Item Position (i)'), ax3.set_ylabel('Weight'), ax3.set_ylim(bottom=0), ax3.grid(True, linestyle='--', alpha=0.6)
-                    fig.canvas.draw_idle()
+def _formula_by_name(name: str) -> Callable:
+    from formulas import actor_formula_v1, actor_formula_v2, target_formula_v1, target_formula_v2, assoc_formula_v1, assoc_formula_v2, belong_formula_v1, belong_formula_v2
+    m = {
+        'actor_formula_v1': actor_formula_v1,
+        'actor_formula_v2': actor_formula_v2,
+        'target_formula_v1': target_formula_v1,
+        'target_formula_v2': target_formula_v2,
+        'assoc_formula_v1': assoc_formula_v1,
+        'assoc_formula_v2': assoc_formula_v2,
+        'belong_formula_v1': belong_formula_v1,
+        'belong_formula_v2': belong_formula_v2,
+        'aggregate_normal': aggregate_formula,
+        'aggregate_dynamic': aggregate_formula_dynamic,
+        'aggregate_logistic': aggregate_formula_logistic,
+    }
+    return m.get(name)
 
-                update(int(max_n/2))
-                n_slider.on_changed(update)
-            plt.show()
+def get_actor_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+    confs = load_optimal_parameters()
+    conf = confs.get(('actor', score_key)) or confs.get(('actor', 'user_sentiment_score_mapped'))
+    if not conf:
+        return None
+    func = _formula_by_name(conf['model'])
+    split = conf.get('split', 'none')
+    fitted = conf.get('params_by_key', {})
+    def f(s_actor, s_action, s_target):
+        return actor_skeleton_formula(s_actor, s_action, s_target, split, func, fitted)
+    return f
 
-    if fitting_errors:
-        console.print("\n\n")
-        error_table = Table(title="[bold red]⚠️ Fitting Errors and Warnings Log[/bold red]", show_header=True, header_style="bold yellow", expand=True)
-        error_table.add_column("Model Type"), error_table.add_column("Score Key"), error_table.add_column("Function"), error_table.add_column("Method"), error_table.add_column("Split"), error_table.add_column("Error Message", width=50)
-        for err in fitting_errors:
-            error_table.add_row(err['model_type'], err['score_key'], err['function'], err['outlier_method'], err['split'], err['error'])
-        console.print(error_table)
-    
-    print("\n[yellow]Saving results to 'survey_question_optimizer_results.txt'...[/yellow]")
-    with open('survey_question_optimizer_results.txt', 'w') as f:
-        for res in all_results:
-            f.write(f"Model Type: {res['model_type']}, Score Key: {res['score_key']}, Function: {res.get('function', 'N/A')}, Outlier Method: {res.get('outlier_method', 'N/A')}, Split Type: {res.get('split_type', 'N/A')}, Avg MSE: {res.get('avg_mse', 'N/A')}, Avg R²: {res.get('avg_r2', 'N/A')}\n")
-            if 'sub_models' in res:
-                for context, details in res['sub_models'].items():
-                    f.write(f"  Context: {context}, Params: {details['params']}, MSE: {details['mse']}\n")
-            if 'params' in res:
-                f.write(f"  Parameters: {res['params']}\n")
-        f.write("\nFitting Errors:\n")
-        for err in fitting_errors:
-            f.write(f"  Model Type: {err['model_type']}, Score Key: {err['score_key']}, Function: {err['function']}, Outlier Method: {err['outlier_method']}, Split: {err['split']}, Error Message: {err['error']}\n")
+def get_target_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+    confs = load_optimal_parameters()
+    conf = confs.get(('target', score_key)) or confs.get(('target', 'user_sentiment_score_mapped'))
+    if not conf:
+        return None
+    func = _formula_by_name(conf['model'])
+    split = conf.get('split', 'none')
+    fitted = conf.get('params_by_key', {})
+    def f(s_target, s_action):
+        return target_skeleton_formula(s_target, s_action, split, func, fitted)
+    return f
 
-    os.makedirs('src/survey/optimal_formulas', exist_ok=True)
-    
-    all_params = {}
-    for model_type in model_param_determiners.keys():
-        results = sorted([r for r in all_results if r['model_type'] == model_type], key=lambda x: x.get('avg_mse', float('inf')))
-        if results:
-            best_model = results[0]
-            all_params[model_type] = best_model
-            # if 'formulas' in best_model:
-            #     for context, formula in best_model['formulas'].items():
-            #         formula.save(f"src/survey/optimal_formulas/{model_type}_{context}_{best_model['score_key']}_{best_model['function']}.json")
-    
-    agg_results = [r for r in all_results if r['model_type'] == 'Aggregate']
-    if agg_results:
-        best_agg_models = []
-        for key in ['normal', 'dynamic', 'logistic']:
-            models = [r for r in agg_results if (('dynamic' not in r['loss_function'] and 'logistic' not in r['loss_function']) if key == 'normal' else key in r['loss_function'])]
-            if models: 
-                best = sorted(models, key=lambda x: x['loss'])[0]
-                # best['function'].save(f"src/survey/optimal_formulas/Aggregate_{key}_{best['score_key']}.json")
-                best_agg_models.append(best)
-                all_params[f"Aggregate_{key}"] = best
-        table = Table(title="[bold]Top Aggregate Models by Formula Type (Lowest Loss)[/bold]", show_header=True, header_style="bold magenta")
-        table.add_column("Formula Type"), table.add_column("Score Key"), table.add_column("Loss Function"), table.add_column("Final Loss", justify="right"), table.add_column("Parameters")
-        for res in best_agg_models:
-            formula_type = "Normal" if 'dynamic' not in res['loss_function'] and 'logistic' not in res['loss_function'] else ("Dynamic" if 'dynamic' in res['loss_function'] else "Logistic")
-            table.add_row(formula_type, res['score_key'], res['loss_function'], f"{res['loss']:.4f}", str(np.round(res['params'], 4)))
-        console.print(table)
-    
-    with open('src/survey/optimal_formulas/all_optimal_parameters.json', 'w') as f:
-        json.dump(all_params, f, indent=2, default=str)
+def get_association_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+    confs = load_optimal_parameters()
+    conf = confs.get(('association', score_key)) or confs.get(('association', 'user_sentiment_score_mapped'))
+    if not conf:
+        return None
+    func = _formula_by_name(conf['model'])
+    split = conf.get('split', 'none')
+    fitted = conf.get('params_by_key', {})
+    def f(s_entity, s_other):
+        return association_skeleton_formula(s_entity, s_other, split, func, fitted)
+    return f
+
+def get_parent_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+    confs = load_optimal_parameters()
+    conf = confs.get(('parent', score_key)) or confs.get(('parent', 'user_sentiment_score_mapped'))
+    if not conf:
+        return None
+    func = _formula_by_name(conf['model'])
+    split = conf.get('split', 'none')
+    fitted = conf.get('params_by_key', {})
+    def f(s_parent, s_child):
+        return parent_skeleton_formula(s_parent, s_child, split, func, fitted)
+    return f
+
+def get_child_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+    confs = load_optimal_parameters()
+    conf = confs.get(('child', score_key)) or confs.get(('child', 'user_sentiment_score_mapped'))
+    if not conf:
+        return None
+    func = _formula_by_name(conf['model'])
+    split = conf.get('split', 'none')
+    fitted = conf.get('params_by_key', {})
+    def f(s_child, s_parent):
+        return child_skeleton_formula(s_child, s_parent, split, func, fitted)
+    return f
+
+def get_aggregate_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+    confs = load_optimal_parameters()
+    conf = confs.get(('aggregate', score_key)) or confs.get(('aggregate', 'user_sentiment_score_mapped'))
+    if not conf:
+        return None
+    model = conf['model']
+    if 'dynamic' in model:
+        func = aggregate_formula_dynamic
+    elif 'logistic' in model:
+        func = aggregate_formula_logistic
+    else:
+        func = aggregate_formula
+    params = conf.get('params_by_key', {}).get('params', [])
+    def f(s_inits):
+        return func(s_inits, params)
+    return f
+
+
+def test_all_parameterizations() -> dict:
+    logger.info("test_all_parameterizations")
+    score_keys = ['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped']
+    all_results = {}
+    for sk in score_keys:
+        all_results[sk] = {
+            "actor": test_actor_parameters(sk),
+            "target": test_target_parameters(sk),
+            "association": test_association_parameters(sk),
+            "parent": test_parent_parameters(sk),
+            "child": test_child_parameters(sk),
+            "aggregate": test_aggregate_parameters(sk)
+        }
+    save_optimal_parameters(all_results)
+    return all_results
 
 if __name__ == '__main__':
-    test_all_parameterizations()
+    out = test_all_parameterizations()
+    print("\nSummary:")
+    for sk, summary in out.items():
+        print(f"score_key={sk}")
+        for k, v in summary.items():
+            if v and "best" in v:
+                print(f"- {k}: MSE={v['best']['mse']:.4f} | model={v['best']['model']} | split={v['best']['split']} | outliers={v['best'].get('remove_outliers','none')}")

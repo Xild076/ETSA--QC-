@@ -3,16 +3,21 @@ import nltk
 import ssl
 import warnings
 import re
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore")
 
 ssl._create_default_https_context = ssl._create_unverified_context
 benepar.download('benepar_en3')
 nltk.download('punkt')
-
 parser = benepar.Parser('benepar_en3')
+logger.info("Benepar parser and NLTK punkt tokenizer initialized.")
 
 def constituency_clauses(text):
+    logger.info("Extracting constituency clauses.")
     clauses = []
     for sent in nltk.sent_tokenize(text):
         tree = parser.parse(sent)

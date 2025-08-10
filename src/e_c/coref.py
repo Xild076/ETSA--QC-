@@ -16,14 +16,20 @@ from clause import clause_extraction as ce
 from transformers.utils import logging as tlog
 tlog.set_verbosity_error()
 
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 def _cpu(d): return "cpu" if d in (None, "-1", "CPU", "cpu") else d
 
 @lru_cache(maxsize=None)
 def _mav(device: str):
+    logger.info(f"Initializing Maverick with device: {device}")
     return Maverick(device=_cpu(device))
 
 @lru_cache(maxsize=None)
 def _spacy():
+    logger.info("Loading SpaCy model...")
     for m in ("en_core_web_trf", "en_core_web_lg", "en_core_web_sm"):
         try: return spacy.load(m)
         except: pass
@@ -43,6 +49,7 @@ def _strip(t: str, s: int) -> Tuple[str, int]:
     return t, s
 
 def resolve(text: str, device: str = "-1") -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    logger.info(f"Resolving entities in text with device: {device}")
     mav, nlp = _mav(device), _spacy()
     clusters, seen = {}, set()
     for cid, chain in enumerate(mav.predict(text)["clusters_char_offsets"]):
@@ -71,7 +78,7 @@ def resolve(text: str, device: str = "-1") -> Tuple[Dict[int, Dict[str, Any]], D
                     sent_map[f"clause_{i}"]["entities"].append((txt, [s, e])); break
     return clusters, sent_map
 
-text = "The man hit the child. The child was sad."
+"""text = "The man hit the child. The child was sad."
 c, s = resolve(text)
 print(c)
-print(s)
+print(s)"""
