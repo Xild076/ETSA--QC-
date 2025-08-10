@@ -105,7 +105,7 @@ narwhals==1.42.0
 natsort==8.4.0
 neleval==3.1.1
 networkx==3.5
-nltk==3.9.1
+nltk==3.8.1
 numpy==2.3.0
 oauthlib==3.2.2
 omegaconf==2.3.0
