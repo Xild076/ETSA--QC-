@@ -89,7 +89,6 @@ markdown-it-py==3.0.0
 MarkupSafe==3.0.2
 matplotlib==3.10.5
 matplotlib-inline==0.1.7
-maverick-coref==1.0.7
 mdurl==0.1.2
 metric_visualizer==0.9.17
 mlxtend==0.23.4
