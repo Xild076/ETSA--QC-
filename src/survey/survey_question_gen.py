@@ -761,38 +761,27 @@ def generate_aggregate_sentiment_sentences(used_objects, used_words_in_survey):
 
     return out
 
-def calibration_gen(seed=None, used_words=None):
-    rnd = random.Random(seed)
-    pos_pool = []
-    for d in [pos_nouns, pos_verbs, pos_desc]:
-        for v in d.values():
-            pos_pool.extend(v)
-    neg_pool = []
-    for d in [neg_nouns, neg_verbs, neg_desc]:
-        for v in d.values():
-            neg_pool.extend(v)
-    if used_words:
-        pos_pool = [w for w in pos_pool if w not in used_words]
-        neg_pool = [w for w in neg_pool if w not in used_words]
-    if not pos_pool:
-        for d in [pos_nouns, pos_verbs, pos_desc]:
-            for v in d.values():
-                pos_pool.extend(v)
-    if not neg_pool:
-        for d in [neg_nouns, neg_verbs, neg_desc]:
-            for v in d.values():
-                neg_pool.extend(v)
-    pos_word = rnd.choice(pos_pool)
-    neg_word = rnd.choice(neg_pool)
-    def get_type(word, dicts):
-        for dname, d in dicts:
-            for k, v in d.items():
-                if word in v:
-                    return dname
-        return None
-    pos_type = get_type(pos_word, [('noun', pos_nouns), ('verb', pos_verbs), ('desc', pos_desc)])
-    neg_type = get_type(neg_word, [('noun', neg_nouns), ('verb', neg_verbs), ('desc', neg_desc)])
-    return pos_word, neg_word, pos_type, neg_type
+def calibration_gen(used_objects, used_words_in_survey):
+    pos_pool = {k: nouns['positive'][k] + verbs['positive'][k] + desc['positive'][k] for k in nouns['positive']}
+    neg_pool = {k: nouns['negative'][k] + verbs['negative'][k] + desc['negative'][k] for k in nouns['negative']}
+    intensity_pos = _rand.choice(list(pos_pool.keys()))
+    intensity_neg = _rand.choice(list(neg_pool.keys()))
+    pos_word_pool = pos_pool[intensity_pos]
+    neg_word_pool = neg_pool[intensity_neg]
+    pos_word = _get_unique_words([pos_word_pool], used_words_in_survey)[0]
+    neg_word = _get_unique_words([neg_word_pool], used_words_in_survey)[0]
+    return {
+        "positive": {
+            "word": pos_word,
+            "intensity": intensity_pos,
+            "code_key": f"calibration_pos[[{pos_word}_{intensity_pos}]]"
+        },
+        "negative": {
+            "word": neg_word,
+            "intensity": intensity_neg,
+            "code_key": f"calibration_neg[[{neg_word}_{intensity_neg}]]"
+        }
+    }
 
 def survey_gen(seed=None):
     if seed is not None: 
@@ -804,6 +793,8 @@ def survey_gen(seed=None):
     used_names = set()
     used_objects = set()
     used_words_in_survey = set()
+
+    calibration = calibration_gen(used_objects, used_words_in_survey)
     
     compound_actions = generate_compound_action_sentences(used_names, used_words_in_survey)
     compound_associations = generate_compound_association_sentences(used_names, used_words_in_survey)
@@ -814,6 +805,7 @@ def survey_gen(seed=None):
     
     return {
         "seed": seed, 
+        "calibration": calibration,
         "items": out, 
         "packets": packets
     }
