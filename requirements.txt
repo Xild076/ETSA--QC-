@@ -182,7 +182,6 @@ termcolor==3.1.0
 textblob==0.19.0
 thinc==8.3.6
 threadpoolctl==3.6.0
-tibert==0.5.2
 tikzplotlib==0.10.1
 tokenizers==0.21.1
 toml==0.10.2
