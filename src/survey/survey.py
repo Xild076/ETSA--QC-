@@ -715,9 +715,9 @@ def export_to_google_sheets(data_df):
             data_rows = df_ordered.values.tolist()
             next_row = len(existing_data) + 1
             ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
-        st.success(f"Data successfully exported to Google Sheet (ID: {GOOGLE_SHEET_ID})")
+        st.success(f"Data successfully exported to Google Sheet")
     except gspread.exceptions.SpreadsheetNotFound:
-        st.error(f"Google Sheet (ID: '{GOOGLE_SHEET_ID}') not found or not shared with the service account: {creds_dict.get('client_email', 'your service account email')}.")
+        st.error(f"Google Sheet not found or not shared with the service account: {creds_dict.get('client_email', 'your service account email')}.")
     except Exception as e:
         st.error(f"An error occurred during Google Sheets export: {e}")
 
