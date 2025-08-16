@@ -1,1419 +1,811 @@
-from typing import Literal, Callable
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-import pandas as pd
-import ssl
-import ast
+import random
 import numpy as np
-from scipy.optimize import curve_fit, minimize, least_squares
-from sklearn.metrics import mean_squared_error
-import re
-from rich import print
-from rich.table import Table
-from rich.console import Console
-from rich.panel import Panel
-import matplotlib.pyplot as plt
-import math
-from sklearn.linear_model import LinearRegression
-import inspect
-import warnings
-from scipy.optimize import OptimizeWarning
-from matplotlib.widgets import Slider
-import matplotlib.gridspec as gridspec
+import streamlit as st
+import pandas as pd
 import json
-import os
-import sys
-from datetime import datetime
-from pathlib import Path
+import gspread
+from google.oauth2.service_account import Credentials
+import datetime
 
-current_dir = Path(__file__).parent
-sys.path.insert(0, str(current_dir))
+import re
+from survey_question_gen import survey_gen
+from survey_question_gen import calibration_gen
 
-ssl._create_default_https_context = ssl._create_unverified_context
+def display_calibration_questions():
+    st.markdown("""
+    <div class="academic-paper">
+    <h3>Practice Questions</h3>
+    <p>Before you begin the main survey, please answer two quick practice questions. This will help you get familiar with the rating scale. Each practice question shows a single phrase. Rate the sentiment the phrase conveys, from -4 (Extremely Negative) to 4 (Extremely Positive).</p>
+    </div>
+    """, unsafe_allow_html=True)
+    pos_calibration = st.session_state.get('calibration_questions', {}).get('positive', {})
+    neg_calibration = st.session_state.get('calibration_questions', {}).get('negative', {})
+    pos_text = pos_calibration.get('word') or pos_calibration.get('text') or ''
+    st.markdown(f"<div style='margin-top:1.5em; margin-bottom:0.5em;'><b>Example 1:</b> <i>{pos_text}</i></div>", unsafe_allow_html=True)
+    pos_score = st.slider(
+        label="How would you rate the sentiment of this phrase?",
+        min_value=-4, max_value=4, value=0, format="%d", key="calib_pos_slider",
+        help="Rating scale: -4 (Extremely Negative) to 4 (Extremely Positive)",
+        step=1
+    )
+    slider_view()
+    st.markdown(f"You rated the sentiment as: <b>{pos_score} ({sentiment_scale[pos_score]})</b>", unsafe_allow_html=True)
 
-url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/export?format=csv&gid=0'
-try:
-    df = pd.read_csv(url)
-except Exception as e:
-    print(f"Error reading CSV from {url}: {e}")
+    neg_text = neg_calibration.get('word') or neg_calibration.get('text') or ''
+    st.markdown(f"<div style='margin-top:2em; margin-bottom:0.5em;'><b>Example 2:</b> <i>{neg_text}</i></div>", unsafe_allow_html=True)
+    neg_score = st.slider(
+        label="How would you rate the sentiment of this phrase?",
+        min_value=-4, max_value=4, value=0, format="%d", key="calib_neg_slider",
+        help="Rating scale: -4 (Extremely Negative) to 4 (Extremely Positive)",
+        step=1
+    )
+    slider_view()
+    st.markdown(f"You rated the sentiment as: <b>{neg_score} ({sentiment_scale[neg_score]})</b>", unsafe_allow_html=True)
+    if st.button("Continue", key="calib_continue_btn", type="primary", use_container_width=True):
+        st.session_state['calibration_pos_score'] = pos_score
+        st.session_state['calibration_neg_score'] = neg_score
+        st.session_state['calibration_complete'] = True
+        st.rerun()
+    st.stop()
 
-intensity_map_string = {
-    'very': 0.90,
-    'strong': 0.70,
-    'moderate': 0.45,
-    'slight': 0.20,
-    'neutral': 0.0
-}
+def display_calibration_confirmation():
+    pos_score = st.session_state.get('calibration_pos_score', None)
+    neg_score = st.session_state.get('calibration_neg_score', None)
+    pos_text = st.session_state.get('calibration_questions', {}).get('positive', {}).get('word') or st.session_state.get('calibration_questions', {}).get('positive', {}).get('text', '')
+    neg_text = st.session_state.get('calibration_questions', {}).get('negative', {}).get('word') or st.session_state.get('calibration_questions', {}).get('negative', {}).get('text', '')
+    if isinstance(pos_text, (list, tuple)):
+        pos_text = random.choice(pos_text)
+    if isinstance(neg_text, (list, tuple)):
+        neg_text = random.choice(neg_text)
+    st.markdown(f"""
+    <div class="academic-paper">
+    <h3>Practice Confirmation</h3>
+    <p>You said the sentiment conveyed about <b>'{pos_text}'</b> is <b>{pos_score} ({sentiment_scale.get(pos_score, pos_score)})</b>.</p>
+    <p>You said the sentiment conveyed about <b>'{neg_text}'</b> is <b>{neg_score} ({sentiment_scale.get(neg_score, neg_score)})</b>.</p>
+    <p>Does this seem right?</p>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Yes, continue to survey", key="calib_confirm_final_btn", type="primary", use_container_width=True):
+        st.session_state['calibration_confirmed'] = True
+        calibration = st.session_state.get('calibration_questions', {})
+        pos_meta = calibration.get('positive', {})
+        neg_meta = calibration.get('negative', {})
+        pos_row = {
+            'item_id': 'calibration_positive',
+            'item_type': 'calibration',
+            'description': 'practice positive',
+            'sentences': json.dumps([pos_text]),
+            'combined_text': pos_text,
+            'code_key': pos_meta.get('code_key', ''),
+            'entity': pos_text,
+            'seed': st.session_state.get('seed', ''),
+            'descriptor': json.dumps(['positive']),
+            'intensity': json.dumps([pos_meta.get('intensity', '')]),
+            'all_entities': json.dumps([pos_text]),
+            'packet_step': '',
+            'user_sentiment_score': pos_score,
+            'user_sentiment_label': sentiment_scale.get(pos_score, pos_score),
+            'sentence_at_step': '',
+            'new_sentence_for_step': '',
+            'descriptor_for_step': '',
+            'intensity_for_step': '',
+            'mark': '',
+            'marks': ''
+        }
+        neg_row = {
+            'item_id': 'calibration_negative',
+            'item_type': 'calibration',
+            'description': 'practice negative',
+            'sentences': json.dumps([neg_text]),
+            'combined_text': neg_text,
+            'code_key': neg_meta.get('code_key', ''),
+            'entity': neg_text,
+            'seed': st.session_state.get('seed', ''),
+            'descriptor': json.dumps(['negative']),
+            'intensity': json.dumps([neg_meta.get('intensity', '')]),
+            'all_entities': json.dumps([neg_text]),
+            'packet_step': '',
+            'user_sentiment_score': neg_score,
+            'user_sentiment_label': sentiment_scale.get(neg_score, neg_score),
+            'sentence_at_step': '',
+            'new_sentence_for_step': '',
+            'descriptor_for_step': '',
+            'intensity_for_step': '',
+            'mark': '',
+            'marks': ''
+        }
+        st.session_state.user_responses.append(pos_row)
+        st.session_state.user_responses.append(neg_row)
+        st.rerun()
+    if st.button("No, redo practice questions", key="calib_redo_btn", use_container_width=True):
+        st.session_state['calibration_complete'] = False
+        st.session_state.pop('calib_pos_idx', None)
+        st.session_state.pop('calib_neg_idx', None)
+        st.rerun()
+    st.stop()
 
-intensity_map_integer = {
-    4: 0.90,
-    3: 0.70,
-    2: 0.45,
-    1: 0.20,
-    0: 0.00
-}
+def slider_view():
+    st.markdown("""
+        <style>
+        .slider-scale {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            font-family: "Source Serif Pro", serif;
+            font-size: 13px;
+            margin: 0.2em 0 1.2em 0;
+            border-top: 1px solid #DDD;
+            padding-top: 0.5em;
+        }
+        .scale-item {
+            text-align: center;
+            flex: 1;
+            min-width: 0;
+        }
+        .scale-number {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .scale-label {
+            font-size: 10px;
+            line-height: 1.1;
+            margin-top: 2px;
+        }
+        .scale-separator {
+            border-left: 1px solid #AAA;
+            height: 32px;
+            margin: 0 0.1em;
+        }
+        @media (max-width: 768px) {
+            .scale-item {
+                min-width: 20px;
+            }
+            .scale-label {
+                font-size: 8px;
+            }
+            .scale-separator {
+                margin: 0 0.05em;
+            }
+        }
+        @media (max-width: 480px) {
+            .scale-item {
+                min-width: 15px;
+            }
+            .scale-label {
+                font-size: 7px;
+            }
+            .scale-separator {
+                margin: 0 0.02em;
+                height: 24px;
+            }
+        }
+        </style>
+        <div class='slider-scale'>
+            <div class='scale-item'>
+                <div class='scale-number'>-4</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Extremely<br>Negative</span>
+                    <span class='mobile-label'>Ext.<br>Neg.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>-3</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Strongly<br>Negative</span>
+                    <span class='mobile-label'>Str.<br>Neg.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>-2</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Moderately<br>Negative</span>
+                    <span class='mobile-label'>Mod.<br>Neg.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>-1</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Slightly<br>Negative</span>
+                    <span class='mobile-label'>Sl.<br>Neg.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>0</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Neutral</span>
+                    <span class='mobile-label'>Neu.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>1</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Slightly<br>Positive</span>
+                    <span class='mobile-label'>Sl.<br>Pos.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>2</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Moderately<br>Positive</span>
+                    <span class='mobile-label'>Mod.<br>Pos.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>3</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Strongly<br>Positive</span>
+                    <span class='mobile-label'>Str.<br>Pos.</span>
+                </div>
+            </div>
+            <div class='scale-separator'></div>
+            <div class='scale-item'>
+                <div class='scale-number'>4</div>
+                <div class='scale-label'>
+                    <span class='desktop-label'>Extremely<br>Positive</span>
+                    <span class='mobile-label'>Ext.<br>Pos.</span>
+                </div>
+            </div>
+        </div>
+        <style>
+        @media (min-width: 481px) {
+            .mobile-label { display: none; }
+        }
+        @media (max-width: 480px) {
+            .desktop-label { display: none; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-sentiment_sign_map = {'positive': 1, 'negative': -1}
+GOOGLE_SHEET_ID = "1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0"
+GOOGLE_CREDENTIALS_SECRET_KEY = "google_service_account_credentials"
 
-def associate_sentiment_integer(integer):
-    logger.info("associate_sentiment_integer")
-    if not isinstance(integer, int):
-        integer = int(integer)
-    return intensity_map_integer.get(abs(integer), 0) * ((integer > 0) - (integer < 0))
+ENTITY_COLORS = ["#2C3E50", "#8B4513", "#556B2F", "#8B0000", "#483D8B", "#696969"]
+HIGHLIGHT_BACKGROUND_COLOR = "#F5F5F5"
 
-def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'droptop', 'none']='none'):
-    logger.info("fit")
-    x0 = [(l + u) / 2 for l, u in zip(bounds[0], bounds[1])]
-    if remove_outliers_method == "lsquares":
-        def residuals(params, X_res, y_res):
-            pred = formula(X_res, *params)
-            return pred.flatten() - y_res.flatten()
-        try:
-            result = least_squares(
-                residuals,
-                x0=x0,
-                args=(X, y),
-                bounds=bounds,
-                loss='soft_l1',
-                f_scale=0.3
-            )
-            params = result.x
-        except Exception as e:
-            print(f"Could not fit model: {e}")
-            return None
-    elif remove_outliers_method == "droptop":
-        try:
-            if len(y) < 10:
-                p = 80
-            else:
-                p = 90
-            mask = y < np.percentile(y, p)
-            y_filtered = y[mask]
-            X_filtered = X[:, mask]
+def initialize_session_state():
+    st.markdown("""
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap');
+        * { font-family: 'Source Serif Pro', 'Georgia', serif !important; }
+        .main { padding-top: 2rem; }
+        .stMarkdown, .stMarkdown p, .stMarkdown div, .stMarkdown span { font-family: 'Source Serif Pro', 'Georgia', serif !important; font-size: 16px !important; line-height: 1.7 !important; }
+        .stMarkdown h1 { font-family: 'Source Serif Pro', serif !important; padding-bottom: 8px !important; font-size: 28px !important; }
+        .stMarkdown h2 { font-family: 'Source Serif Pro', serif !important; font-size: 22px !important; }
+        .stMarkdown h3 { font-family: 'Source Serif Pro', serif !important; font-size: 18px !important; }
+        .stProgress .st-bo, .stProgress > div > div > div, div[data-testid="stProgress"] > div > div { background-color: #34495E !important; }
+        .stProgress > div, div[data-testid="stProgress"] > div { border-radius: 2px !important; }
+        div[data-testid="stProgress"] > div > div { border-radius: 2px !important; }
+        .css-1d391kg { background-color: #2C3E50; }
+        .academic-paper { padding: 25px; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin: 15px 0; font-family: 'Source Serif Pro', 'Georgia', serif !important; line-height: 1.7; }
+        .metric-card { background: linear-gradient(135deg, #34495E 0%, #2C3E50 100%); padding: 15px; border-radius: 3px; color: white; text-align: center; margin: 8px 0; }
+        .stButton > button { background-color: #34495E !important; color: white !important; border: 1px solid #2C3E50 !important; border-radius: 3px !important; font-family: 'Source Serif Pro', serif !important; font-size: 16px !important; }
+        .stButton > button:hover { background-color: #2C3E50 !important; border-color: #1A252F !important; }
+        .stButton > button:disabled { background-color: #CCCCCC !important; color: #666666 !important; border: 1px solid #AAAAAA !important; cursor: not-allowed !important; }
+        .stButton > button:disabled:hover { background-color: #CCCCCC !important; border-color: #AAAAAA !important; }
+        .stSlider, .stCheckbox, .stSelectbox, .stTextInput, .stTextArea, .stNumberInput { font-family: 'Source Serif Pro', serif !important; }
+        .stSlider label, .stCheckbox label, .stSelectbox label, .stTextInput label, .stTextArea label, .stNumberInput label { font-family: 'Source Serif Pro', serif !important; }
+        .stDataFrame, .stSuccess, .stError, .stWarning, .stInfo { font-family: 'Source Serif Pro', serif !important; }
+        div[data-testid="stMarkdownContainer"], div[data-testid="column"], div[data-testid="metric-container"], .element-container, .block-container { font-family: 'Source Serif Pro', serif !important; }
+        body[data-theme="light"] .main { background-color: #FAFAFA; }
+        body[data-theme="light"] .stMarkdown, body[data-theme="light"] .stMarkdown p, body[data-theme="light"] .stMarkdown div, body[data-theme="light"] .stMarkdown span { color: #2C3E50 !important; }
+        body[data-theme="light"] .stMarkdown h1 { color: #1A252F !important; border-bottom: 2px solid #34495E !important; }
+        body[data-theme="light"] .stMarkdown h2 { color: #2C3E50 !important; }
+        body[data-theme="light"] .stMarkdown h3 { color: #34495E !important; }
+        body[data-theme="light"] .stProgress .st-bn, body[data-theme="light"] .stProgress > div, body[data-theme="light"] div[data-testid="stProgress"] > div { background-color: #E8E8E8 !important; }
+        body[data-theme="light"] .academic-paper { background: white; border: 1px solid #E8E8E8; color: #2C3E50; }
+        body[data-theme="light"] .stSlider label, body[data-theme="light"] .stCheckbox label, body[data-theme="light"] .stSelectbox label, body[data-theme="light"] .stTextInput label, body[data-theme="light"] .stTextArea label, body[data-theme="light"] .stNumberInput label { color: #2C3E50 !important; }
+        body[data-theme="light"] .text-content { background-color: white !important; color: #2C3E50 !important; }
+        body[data-theme="light"] .stButton > button:disabled { background-color: #CCCCCC !important; color: #666666 !important; border: 1px solid #AAAAAA !important; }
+        body[data-theme="light"] .stButton > button:disabled:hover { background-color: #CCCCCC !important; border-color: #AAAAAA !important; }
+        body[data-theme="dark"] .main { background-color: #0E1117; }
+        body[data-theme="dark"] .stMarkdown, body[data-theme="dark"] .stMarkdown p, body[data-theme="dark"] .stMarkdown div, body[data-theme="dark"] .stMarkdown span { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stMarkdown h1 { color: #FFFFFF !important; border-bottom: 2px solid #FAFAFA !important; }
+        body[data-theme="dark"] .stMarkdown h2 { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stMarkdown h3 { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stProgress .st-bn, body[data-theme="dark"] .stProgress > div, body[data-theme="dark"] div[data-testid="stProgress"] > div { background-color: #262730 !important; }
+        body[data-theme="dark"] .academic-paper { background: #262730; border: 1px solid #404040; color: #FAFAFA; }
+        body[data-theme="dark"] .stSlider label, body[data-theme="dark"] .stCheckbox label, body[data-theme="dark"] .stSelectbox label, body[data-theme="dark"] .stTextInput label, body[data-theme="dark"] .stTextArea label, body[data-theme="dark"] .stNumberInput label { color: #FAFAFA !important; }
+        body[data-theme="dark"] .text-content { background-color: #262730 !important; color: #FAFAFA !important; }
+        body[data-theme="dark"] .stButton > button:disabled { background-color: #404040 !important; color: #888888 !important; border: 1px solid #555555 !important; }
+        body[data-theme="dark"] .stButton > button:disabled:hover { background-color: #404040 !important; border-color: #555555 !important; }
+        body[data-theme="dark"] * { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stForm, body[data-theme="dark"] .stFormSubmitButton, body[data-theme="dark"] .stCheckbox div, body[data-theme="dark"] .stCheckbox span { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stWarning, body[data-theme="dark"] .stSuccess, body[data-theme="dark"] .stError, body[data-theme="dark"] .stInfo { color: #FAFAFA !important; }
+        body[data-theme="dark"] .stAlert { color: #FAFAFA !important; background-color: #262730 !important; }
+        body[data-theme="dark"] p, body[data-theme="dark"] div, body[data-theme="dark"] span, body[data-theme="dark"] label, body[data-theme="dark"] strong, body[data-theme="dark"] b, body[data-theme="dark"] i, body[data-theme="dark"] em { color: #FAFAFA !important; }
+    </style>
+    <script>
+        function detectTheme() {
+            const isDark = window.getComputedStyle(document.body).backgroundColor === 'rgb(14, 17, 23)' ||
+                          document.querySelector('[data-testid="stAppViewContainer"]')?.style.backgroundColor === 'rgb(14, 17, 23)' ||
+                          document.querySelector('.main')?.style.backgroundColor === 'rgb(14, 17, 23)';
+            document.body.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        }
+        detectTheme();
+        const observer = new MutationObserver(detectTheme);
+        observer.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
+        setTimeout(detectTheme, 100); setTimeout(detectTheme, 500); setTimeout(detectTheme, 1000);
+    </script>
+    """, unsafe_allow_html=True)
 
-            if X_filtered.shape[1] < len(bounds[0]):
-                print(f"Could not fit model: Not enough data points after outlier removal.")
-                return None
-
-            params, _ = curve_fit(formula, X_filtered, y_filtered, p0=x0, bounds=bounds)
-        except Exception as e:
-            print(f"Could not fit model: {e}")
-            return None
-    elif remove_outliers_method == "none":
-        try:
-            params, _ = curve_fit(formula, X, y, p0=x0, bounds=bounds)
-        except Exception as e:
-            print(f"Could not fit model: {e}")
-            return None
-    y_pred = formula(X, *params)
-    mse = mean_squared_error(y, y_pred)
-    soft_l1_loss = np.sum(np.square(y - y_pred)) / len(y)
-    ss_res = np.sum((y - y_pred) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
-
-    if ss_tot > 0:
-        r2_loss = 1 - (ss_res / ss_tot)
-    else:
-        r2_loss = 1.0 if ss_res == 0 else 0.0
-
-    return {
-        'params': params,
-        'mse': mse,
-        'soft_l1_loss': soft_l1_loss,
-        'r2_loss': r2_loss
-    }
-
-def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    hide_menu_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
     """
-    Normalizes user sentiment scores based on their individual responses to baseline questions.
-    This creates a more robust mapping from a user's personal scale (-4 to 4) to the
-    theoretical sentiment scale (-1 to 1).
-    """
-    intensity_map = {'very': 0.85, 'strong': 0.6, 'moderate': 0.4, 'slight': 0.2}
-    polarity_map = {'positive': 1, 'negative': -1}
+    st.markdown(hide_menu_style, unsafe_allow_html=True)
 
-    def get_ground_truth_sentiment(row):
-        try:
-            desc_list = ast.literal_eval(row.get('descriptor', '[]'))
-            intens_list = ast.literal_eval(row.get('intensity', '[]'))
-            if desc_list and intens_list:
-                desc = desc_list[0] if isinstance(desc_list, list) else desc_list
-                intens = intens_list[0] if isinstance(intens_list, list) else intens_list
-                return polarity_map.get(desc, 0) * intensity_map.get(intens, 0.0)
-        except (ValueError, SyntaxError, TypeError):
-            pass
-        return 0.0
+    if 'consent_given' not in st.session_state: st.session_state.consent_given = False
+    if 'consent_read_understood_all' not in st.session_state: st.session_state.consent_read_understood_all = False
+    if 'consent_age_confirmed' not in st.session_state: st.session_state.consent_age_confirmed = False
+    if 'consent_voluntary_participation' not in st.session_state: st.session_state.consent_voluntary_participation = False
+    if 'consent_data_anonymity_use' not in st.session_state: st.session_state.consent_data_anonymity_use = False
+    if 'sentences_data' not in st.session_state: st.session_state.sentences_data = []
+    if 'packet_data' not in st.session_state: st.session_state.packet_data = []
+    if 'shuffled_indices' not in st.session_state: st.session_state.shuffled_indices = []
+    if 'current_question_index' not in st.session_state: st.session_state.current_question_index = 0
+    if 'survey_complete' not in st.session_state: st.session_state.survey_complete = False
+    if 'user_responses' not in st.session_state: st.session_state.user_responses = []
+    if 'seed' not in st.session_state: st.session_state.seed = None
+    if 'packet_sentence_index' not in st.session_state: st.session_state.packet_sentence_index = 0
+    if 'packet_sentiment_history' not in st.session_state: st.session_state.packet_sentiment_history = []
+    if 'attention_check_shown' not in st.session_state: st.session_state.attention_check_shown = False
+    if 'attention_check_passed' not in st.session_state: st.session_state.attention_check_passed = True
 
-    user_final_normalizers = {}
-    unique_seeds = df['seed'].dropna().unique()
+def display_attention_check():
+    st.markdown("""
+    <div class=\"academic-paper\">
+    <h3 style='font-family: \"Source Serif Pro\", serif;'>Attention Check</h3>
+    <p style='font-size: 17px;'>
+    To ensure data quality, please select <b>Moderately Positive (2)</b> as your answer for this question.
+    </p>
+    </div>
+    """, unsafe_allow_html=True)
+    score = st.slider(label="Please select Moderately Positive (2)", min_value=-4, max_value=4, value=0, format="%d", key="attention_check_slider", label_visibility="collapsed")
+    slider_view()
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+    if st.button("Next", key="attention_check_next_btn", type="primary", use_container_width=True):
+        st.session_state.attention_check_shown = True
+        st.session_state.attention_check_passed = (score == 2)
+        st.rerun()
+    return False
 
-    for seed in unique_seeds:
-        user_df = df[df['seed'] == seed]
-        baseline_points = []
+def display_consent_form():
+    st.title("Research Survey Consent Form")
+    st.markdown("""
+<div class="academic-paper">
 
-        calib_df = user_df[user_df['item_type'] == 'calibration']
-        for _, row in calib_df.iterrows():
-            x = row['user_sentiment_score']
-            y = get_ground_truth_sentiment(row)
-            baseline_points.append((x, y))
+Estimated time to complete: 10-15 minutes
 
-        packet_step1_df = user_df[user_df['packet_step'] == 1]
-        for _, row in packet_step1_df.iterrows():
-            x = row['user_sentiment_score']
-            y = get_ground_truth_sentiment(row)
-            baseline_points.append((x, y))
-        unique_baseline_points = sorted(list(set(baseline_points)))
-        
-        m, c = 0.25, 0.0
-        
-        if len(unique_baseline_points) >= 2:
-            X_points = np.array([p[0] for p in unique_baseline_points]).reshape(-1, 1)
-            y_points = np.array([p[1] for p in unique_baseline_points])
-            
-            if np.std(X_points) > 0:
-                try:
-                    model = LinearRegression().fit(X_points, y_points)
-                    m, c = model.coef_[0], model.intercept_
-                except Exception:
-                    pass
-        user_final_normalizers[seed] = (m, c)
+We thank you for participating in a research study titled "Quantum Criticism—Entity-Targeted Sentiment Analysis". We will describe this study to you and answer any of your questions. This study is being led by Harry Yin, a research student currently associated with MAGICS Lab at USFCA. The Faculty Advisor for this study is Associate Professor David Guy Brizan, Department of CS at USFCA.
 
-    def apply_norm(row):
-        if pd.isna(row['seed']) or pd.isna(row['user_sentiment_score']):
-            return np.nan
-        m, c = user_final_normalizers.get(row['seed'], (0.25, 0.0))
-        return m * float(row['user_sentiment_score']) + c
+---
 
-    df['user_normalized_sentiment_scores'] = df.apply(apply_norm, axis=1)
-    
-    if 'user_sentiment_score_mapped' not in df.columns:
-        df['user_sentiment_score_mapped'] = df['user_sentiment_score'].apply(
-            lambda x: associate_sentiment_integer(x) if pd.notna(x) else np.nan
-        )
-        
-    return df, user_final_normalizers
+**Purpose:**
 
-def fit_compound(formula, X, y, remove_outliers_method:Literal['lsquares', 'droptop', 'none']='none'):
-    sig = inspect.signature(formula)
-    params = sig.parameters
-    num_params = len(params) - 1
-    if num_params <= 0:
-        y_pred = np.array([formula((X[0, i], X[1, i])) for i in range(X.shape[1])], dtype=float)
-        mse = mean_squared_error(y.astype(float), y_pred)
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r2_loss = 1 - (ss_res / ss_tot) if ss_tot > 0 else (1.0 if ss_res == 0 else 0.0)
-        return {'params': np.array([]), 'mse': mse, 'soft_l1_loss': np.sum(np.square(y - y_pred)) / len(y), 'r2_loss': r2_loss}
-    bounds = ([0] + [-5] * (num_params - 1), [1] + [5] * (num_params - 1))
-    return fit(formula, X, y, bounds, remove_outliers_method)
+The purpose of this research is to collect ground truth data on peoples' emotional response towards entities or characters within a text, depending on factors such as how the text is formatted, the intensity of the language, and how the entities/characters interact with each other. The ultimate goal is to use this data in order to develop tools to quantify this phenomenon.
 
-try:
-    df, _ = add_score_interpretations(df)
-except:
-    print("Error adding score interpretations")
+**What we will ask you to do:**
 
-def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
-    action_df = df[df['item_type'] == 'compound_action'].copy()
+We will ask you to, given a text, to read the text and give each highlighted entity/character within the text a rating on a 9-point scale from -4 (Extremely Negative) to 4 (Extremely Positive) depending on how you feel about the entity/character. There will be 30 questions in the survey and should take at most 10 minutes to complete.
 
-    cols_to_ignore = ['submission_timestamp_utc']
-    subset_cols = [col for col in action_df.columns if col not in cols_to_ignore]
-    action_df.drop_duplicates(subset=subset_cols, inplace=True)
+    """, unsafe_allow_html=True)
 
-    action_data = []
+    with st.expander("More Information", expanded=False):
+        st.markdown("""
+<div class="academic-paper">
 
-    for _, row in action_df.iterrows():
-        entities = ast.literal_eval(row['all_entities'])
-        seed = row['seed']
-        s_user_actor = action_df[(action_df['seed'] == seed) & (action_df['entity'] == entities[0])][score_key]
-        s_user_target = action_df[(action_df['seed'] == seed) & (action_df['entity'] == entities[1])][score_key]
+**Risks and discomforts:**
 
-        if isinstance(s_user_actor, pd.Series):
-            s_user_actor = s_user_actor.iloc[0] if not s_user_actor.empty else None
-        if isinstance(s_user_target, pd.Series):
-            s_user_target = s_user_target.iloc[0] if not s_user_target.empty else None
+We do not anticipate any significant risks from participating in this research. The given sample text may describe mildly intense situations, but they are brief and fictional. We believe that the risk of discomfort is minimal.
 
-        descriptor = ast.literal_eval(row['descriptor'])
-        intensity = ast.literal_eval(row['intensity'])
+**Benefits:**
 
-        base_sentiments = []
-        for desc, intens in zip(descriptor, intensity):
-            base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
+We do not anticipate any direct benefits to the participant.
 
-        action_data.append({
-            's_init_actor': base_sentiments[0],
-            's_init_action': base_sentiments[1],
-            's_init_target': base_sentiments[2],
-            's_user_actor': s_user_actor,
-            's_user_target': s_user_target
-        })
+However, we hope to learn more clearly about the way text and textual formatting shapes sentiment. This information may benefit other people now or in the future by mitigating the effects of manipulative language online.
 
-    action_df = pd.DataFrame(action_data)
-    action_df.drop_duplicates(inplace=True)
+**Incentives for participation:**
 
-    return action_df
+There are no incentives for participation.
 
-def create_association_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
-    association_df = df[df['item_type'] == 'compound_association'].copy()
+**Privacy/Confidentiality/Data Security:**
 
-    cols_to_ignore = ['submission_timestamp_utc']
-    subset_cols = [col for col in association_df.columns if col not in cols_to_ignore]
-    association_df.drop_duplicates(subset=subset_cols, inplace=True)
+The responses are anonymous. We do not collect any personally identifiable information (ex: name, email, or IP address). There is an optional field at the end of the survey to provide your email address if you wish to receive a summary of the results, but this is not required. If you choose to provide your email, it will be stored separately from your responses and will not be linked to your survey data.
 
-    association_data = []
+Please note that the survey is being hosted by Streamlit, a company not affiliated with USFCA and with its own privacy and security policies that you can find at its website, https://streamlit.io/. We anticipate that your participation in this survey presents no greater risk than everyday use of the Internet.
 
-    for _, row in association_df.iterrows():
-        entities = ast.literal_eval(row['all_entities'])
-        seed = row['seed']
-        s_user_entity = association_df[(association_df['seed'] == seed) & (association_df['entity'] == entities[0])][score_key]
-        s_user_other = association_df[(association_df['seed'] == seed) & (association_df['entity'] == entities[1])][score_key]
+**Sharing Data Collected in this Research:**
 
-        if isinstance(s_user_entity, pd.Series):
-            s_user_entity = s_user_entity.iloc[0] if not s_user_entity.empty else None
-        if isinstance(s_user_other, pd.Series):
-            s_user_other = s_user_other.iloc[0] if not s_user_other.empty else None
+Data from this study may be shared with the research community at large in the form of a paper, presentation, or dataset to advance science and health. We will remove or code any personal information that could identify you before files are shared with other researchers to ensure that, by current scientific standards and known methods, no one will be able to identify you from the information we share. Despite these measures, we cannot guarantee anonymity of your personal data.
 
+**Taking part is voluntary:**
 
-        descriptor = ast.literal_eval(row['descriptor'])
-        intensity = ast.literal_eval(row['intensity'])
+Participant involvement is completely voluntary. If at any moment the participant may feel uncomfortable with this survey, the participant may withdraw by closing the brower window. If the participant withdraws, any data collected up to that point will not be used.
 
-        base_sentiments = []
-        for desc, intens in zip(descriptor, intensity):
-            base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
+**If you have questions:**
 
-        association_data.append({
-            's_init_entity': base_sentiments[0],
-            's_init_other': base_sentiments[1],
-            's_user_entity': s_user_entity,
-            's_user_other': s_user_other
-        })
-        association_data.append({
-            's_init_entity': base_sentiments[1],
-            's_init_other': base_sentiments[0],
-            's_user_entity': s_user_other,
-            's_user_other': s_user_entity
-        })
+The main researcher conducting this study is Harry Yin, a student currently associated with the MAGICS Lab at USFCA. If you have questions, you may contact Harry Yin at harry.d.yin.gpc@gmail.com. You may also contact the MAGICS Lab at USFCA or the Faculty Advisor, Associate Professor David Guy Brizan, at dgbrizan@usfca.edu.
 
-    association_df = pd.DataFrame(association_data)
-    association_df.drop_duplicates(inplace=True)
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("""
+<div class="academic-paper">
 
-    return association_df
+Please check the following boxes to consent to this survey.
 
-def create_belonging_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
-    belonging_df = df[df['item_type'] == 'compound_belonging'].copy()
+</div>
+    """, unsafe_allow_html=True)
 
-    cols_to_ignore = ['submission_timestamp_utc']
-    subset_cols = [col for col in belonging_df.columns if col not in cols_to_ignore]
-    belonging_df.drop_duplicates(subset=subset_cols, inplace=True)
+    st.session_state.consent_read_understood_all = st.checkbox("I confirm that I have read and understood all the information provided above.", value=st.session_state.get('consent_read_understood_all', False))
+    st.session_state.consent_age_confirmed = st.checkbox("I confirm that I am 18 years of age or older.", value=st.session_state.get('consent_age_confirmed', False))
+    st.session_state.consent_voluntary_participation = st.checkbox("I understand that my participation is voluntary and I can withdraw at any time without penalty.", value=st.session_state.get('consent_voluntary_participation', False))
+    st.session_state.consent_data_anonymity_use = st.checkbox("I consent to my anonymized data being used for research purposes, including publications, presentations, and potential public sharing for scientific advancement.", value=st.session_state.get('consent_data_anonymity_use', False))
 
-    belonging_data = []
+    all_consents_given_now = (st.session_state.consent_read_understood_all and st.session_state.consent_age_confirmed and st.session_state.consent_voluntary_participation and st.session_state.consent_data_anonymity_use)
 
-    for _, row in belonging_df.iterrows():
-        entities = ast.literal_eval(row['all_entities'])
+    if st.button("Start Survey", type="primary", use_container_width=True, disabled=not all_consents_given_now):
+        st.session_state.consent_given = True
+        question_data = survey_gen()
+        st.session_state.seed = question_data.get('seed', None)
+        st.session_state.calibration_questions = question_data.get('calibration', {})
+        st.session_state.sentences_data = question_data.get('items', [])
+        st.session_state.packet_data = question_data.get('packets', [])
+        all_data = st.session_state.sentences_data + st.session_state.packet_data
+        if not all_data:
+            st.error("Failed to generate sentences. Please try again.")
+            return
+        st.session_state.shuffled_indices = list(range(len(all_data)))
+        random.shuffle(st.session_state.shuffled_indices)
+        st.session_state.current_question_index = 0
+        st.session_state.survey_complete = False
+        st.session_state.user_responses = []
+        st.session_state.packet_sentence_index = 0
+        st.session_state.packet_sentiment_history = []
+        st.rerun()
 
-        seed = row['seed']
-        s_user_entity = belonging_df[(belonging_df['seed'] == seed) & (belonging_df['entity'] == entities[0])][score_key]
-        s_user_other = belonging_df[(belonging_df['seed'] == seed) & (belonging_df['entity'] == entities[1])][score_key]
+sentiment_scale = {-4: "Extremely Negative", -3: "Strongly Negative", -2: "Moderately Negative", -1: "Slightly Negative", 0: "Neutral", 1: "Slightly Positive", 2: "Moderately Positive", 3: "Strongly Positive", 4: "Extremely Positive"}
 
-        if isinstance(s_user_entity, pd.Series):
-            s_user_entity = s_user_entity.iloc[0] if not s_user_entity.empty else None
-        if isinstance(s_user_other, pd.Series):
-            s_user_other = s_user_other.iloc[0] if not s_user_other.empty else None
+def get_scorable_entities(item):
+    if item.get('type') in ['compound_action', 'compound_association', 'compound_belonging']:
+        return item.get('entities', [])
+    elif item.get('type') in ['aggregate_short', 'aggregate_medium', 'aggregate_long']:
+        return [item.get('entity', '')]
+    return []
 
-        descriptor = ast.literal_eval(row['descriptor'])
-        intensity = ast.literal_eval(row['intensity'])
+def get_entities_to_highlight(main_entity, text):
+    entities_to_highlight = [main_entity]
+    pronouns = ['it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves']
+    for pronoun in pronouns:
+        if re.search(r'\b' + re.escape(pronoun) + r'\b', text, re.IGNORECASE):
+            entities_to_highlight.append(pronoun)
+    return entities_to_highlight
 
-        base_sentiments = []
-        for desc, intens in zip(descriptor, intensity):
-            base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
+def highlight_entities_in_sentence(original_text, entities):
+    entity_color_map = {}
+    highlight_details = []
+    sorted_entities = sorted(list(set(entities)), key=len, reverse=True)
+    patterns_for_entities = []
+    for i, entity in enumerate(sorted_entities):
+        color = ENTITY_COLORS[i % len(ENTITY_COLORS)]
+        entity_color_map[entity] = color
+        patterns_for_entities.append((re.compile(r'\b(' + re.escape(entity) + r')\b', re.IGNORECASE), entity, color))
+    all_potential_matches = []
+    for pattern, entity, color in patterns_for_entities:
+        for match in pattern.finditer(original_text):
+            all_potential_matches.append({"start": match.start(1), "end": match.end(1), "text": match.group(1), "color": color, "entity": entity})
+    all_potential_matches.sort(key=lambda m: (m["start"], -(m["end"] - m["start"])))
+    last_highlight_end = -1
+    for match_info in all_potential_matches:
+        if match_info["start"] >= last_highlight_end:
+            highlight_details.append(match_info)
+            last_highlight_end = match_info["end"]
+            if match_info["text"] != match_info["entity"] and match_info["text"] not in entity_color_map:
+                entity_color_map[match_info["text"]] = match_info["color"]
+    highlighted_sentence_parts = []
+    current_pos = 0
+    highlight_details.sort(key=lambda m: m["start"])
+    for detail in highlight_details:
+        if detail["start"] > current_pos:
+            highlighted_sentence_parts.append(original_text[current_pos:detail["start"]])
+        highlight_span = f"<span style='color:{detail['color']}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>{detail['text']}</span>"
+        highlighted_sentence_parts.append(highlight_span)
+        current_pos = detail["end"]
+    if current_pos < len(original_text):
+        highlighted_sentence_parts.append(original_text[current_pos:])
+    return "".join(highlighted_sentence_parts), entity_color_map
 
-        belonging_data.append({
-            's_init_parent': base_sentiments[0],
-            's_init_child': base_sentiments[1],
-            's_user_parent': s_user_entity,
-            's_user_child': s_user_other
-        })
-
-    belonging_df = pd.DataFrame(belonging_data)
-    belonging_df.drop_duplicates(inplace=True)
-
-    return belonging_df
-
-def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
-    aggregate_df = df[df['item_type'].str.contains('aggregate')].copy()
-
-    cols_to_ignore = ['submission_timestamp_utc']
-    subset_cols = [col for col in aggregate_df.columns if col not in cols_to_ignore]
-    aggregate_df.drop_duplicates(subset=subset_cols, inplace=True)
-
-    aggregate_data = []
-
-    for _, group in aggregate_df.groupby(['seed', 'item_type']):
-        descriptor = ast.literal_eval(group.iloc[0]['descriptor'])
-        intensity = ast.literal_eval(group.iloc[0]['intensity'])
-        base_sentiments = []
-        for desc, intens in zip(descriptor, intensity):
-            base_sentiments.append(intensity_map_string.get(intens, 0) * sentiment_sign_map.get(desc, 0))
-
-        for n in range(2, len(base_sentiments) + 1):
-            score = group[group['packet_step'] == n][score_key].iloc[0]
-            aggregate_data.append({
-                'N': n,
-                's_inits': base_sentiments[:n],
-                's_user': score,
-            })
-
-    aggregate_df = pd.DataFrame(aggregate_data)
-
-    return aggregate_df
-
-
-def determine_actor_parameters(action_model_df: pd.DataFrame,
-                                function: Callable,
-                                remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
-                                splits: Literal['none', 'driver', 'action_target'] = 'none',
-                                print_process=False) -> pd.DataFrame:
-    action_model_df['driver'] = action_model_df['s_init_action'] * action_model_df['s_init_target']
-
-    pos_driver_df = action_model_df[action_model_df['driver'] > 0]
-    neg_driver_df = action_model_df[action_model_df['driver'] <= 0]
-    pos_action_pos_action_model = action_model_df[(action_model_df['s_init_action'] > 0) & (action_model_df['s_init_target'] > 0)]
-    pos_action_neg_action_model = action_model_df[(action_model_df['s_init_action'] > 0) & (action_model_df['s_init_target'] <= 0)]
-    neg_action_pos_action_model = action_model_df[(action_model_df['s_init_action'] <= 0) & (action_model_df['s_init_target'] > 0)]
-    neg_action_neg_action_model = action_model_df[(action_model_df['s_init_action'] <= 0) & (action_model_df['s_init_target'] <= 0)]
-
-    output = {}
-    if splits == 'driver':
-        if not pos_driver_df.empty:
-            X = pos_driver_df[['s_init_actor', 'driver']].to_numpy().T
-            y = pos_driver_df['s_user_actor'].to_numpy()
-            pos_driver_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_driver_params'] = pos_driver_params
-        if not neg_driver_df.empty:
-            X = neg_driver_df[['s_init_actor', 'driver']].to_numpy().T
-            y = neg_driver_df['s_user_actor'].to_numpy()
-            neg_driver_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_driver_params'] = neg_driver_params
-    elif splits == 'action_target':
-        if not pos_action_pos_action_model.empty:
-            X = pos_action_pos_action_model[['s_init_actor', 'driver']].to_numpy().T
-            y = pos_action_pos_action_model['s_user_actor'].to_numpy()
-            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_pos_params'] = pos_pos_params
-        if not pos_action_neg_action_model.empty:
-            X = pos_action_neg_action_model[['s_init_actor', 'driver']].to_numpy().T
-            y = pos_action_neg_action_model['s_user_actor'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_neg_params'] = pos_neg_params
-        if not neg_action_pos_action_model.empty:
-            X = neg_action_pos_action_model[['s_init_actor', 'driver']].to_numpy().T
-            y = neg_action_pos_action_model['s_user_actor'].to_numpy()
-            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_pos_params'] = neg_pos_params
-        if not neg_action_neg_action_model.empty:
-            X = neg_action_neg_action_model[['s_init_actor', 'driver']].to_numpy().T
-            y = neg_action_neg_action_model['s_user_actor'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_neg_params'] = neg_neg_params
-    else:
-        X = action_model_df[['s_init_actor', 'driver']].to_numpy().T
-        y = action_model_df['s_user_actor'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
-    if print_process:
-        for key, value in output.items():
-            if value is not None:
-                print(f"--- {key}: ---")
-                print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
-                print(f"MSE: {value['mse']}")
-                print(f"Soft L1 Loss: {value['soft_l1_loss']}")
-                print(f"R2 Loss: {value['r2_loss']}")
+def display_packet_question(sentence_item, actual_sentence_index):
+    item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
+    sentences = sentence_item.get('sentences', [])
+    entity = sentence_item.get('entity', '')
+    current_sentence_idx = st.session_state.packet_sentence_index
+    total_sentences = len(sentences)
+    if current_sentence_idx >= total_sentences:
+        st.session_state.packet_sentence_index = 0
+        st.session_state.packet_sentiment_history = []
+        return True
+    cumulative_text = " ".join(sentences[:current_sentence_idx + 1])
+    st.markdown(f"<h3 style='font-family: \"Source Serif Pro\", serif;'>Step {current_sentence_idx + 1} of {total_sentences}:</h3>", unsafe_allow_html=True)
+    entities_to_highlight = get_entities_to_highlight(entity, cumulative_text)
+    highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(cumulative_text, entities_to_highlight)
+    st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
+    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif;'>Current Rating:</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='font-family: \"Source Serif Pro\", serif;'>Evaluate the sentiment conveyed about the entity in the sentence.</p>", unsafe_allow_html=True)
+    display_color = entity_color_map.get(entity, ENTITY_COLORS[0])
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Sentiment towards: <span style='color:{display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; font-family: \"Source Serif Pro\", serif;'>\"{entity}\"</span></p>", unsafe_allow_html=True)
+    slider_key = f"packet_slider_{item_id}_{current_sentence_idx}"
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
+    score = st.slider(
+        label=f"Rate for \"{entity}\"",
+        min_value=-4,
+        max_value=4,
+        value=0,
+        format="%d",
+        key=slider_key,
+        label_visibility="collapsed",
+        help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})",
+        step=1,
+    )
+    slider_view()
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your current rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+    col_left, col_center, col_right = st.columns([1,2,1])
+    confirm_key = f"confirm_packet_{item_id}_{current_sentence_idx}"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+    with col_center:
+        button_text = "Next Step" if current_sentence_idx < total_sentences - 1 else "Complete Question"
+        if st.button(button_text, key=f"next_btn_{item_id}_{current_sentence_idx}", type="primary", use_container_width=True):
+            if score == 0 and not st.session_state[confirm_key]:
+                st.session_state[confirm_key] = True
+                st.warning("Are you sure you want to continue without changing the default value? Click again to confirm.")
+                st.stop()
+            st.session_state[confirm_key] = False
+            st.session_state.packet_sentiment_history.append(score)
+            if current_sentence_idx < total_sentences - 1:
+                st.session_state.packet_sentence_index += 1
+                st.rerun()
             else:
-                print(f"{key}: No data available")
-    return output
+                for i, recorded_score in enumerate(st.session_state.packet_sentiment_history):
+                    response_data = {'item_id': item_id, 'item_type': sentence_item.get('type', ''), 'description': sentence_item.get('description', ''), 'sentences': json.dumps(sentences), 'combined_text': " ".join(sentences), 'code_key': sentence_item.get('code_key', ''), 'entity': entity, 'seed': st.session_state.seed, 'descriptor': json.dumps(sentence_item.get('descriptor', [])), 'intensity': json.dumps(sentence_item.get('intensity', [])), 'all_entities': json.dumps([entity]), 'packet_step': i + 1, 'user_sentiment_score': recorded_score, 'user_sentiment_label': sentiment_scale[recorded_score], 'sentence_at_step': " ".join(sentences[:i + 1]), 'new_sentence_for_step': sentences[i], 'descriptor_for_step': sentence_item.get('descriptor', [])[i] if i < len(sentence_item.get('descriptor', [])) else '', 'intensity_for_step': sentence_item.get('intensity', [])[i] if i < len(sentence_item.get('intensity', [])) else '', 'mark': sentence_item.get('marks', [])[i] if i < len(sentence_item.get('marks', [])) else '', 'marks': json.dumps(sentence_item.get('marks', []))}
+                    st.session_state.user_responses.append(response_data)
+                st.session_state.packet_sentence_index = 0
+                st.session_state.packet_sentiment_history = []
+                return True
+    return False
 
-def actor_skeleton_formula(s_actor, s_action, s_target, split: Literal['driver', 'action_target', 'none'], function: Callable, fitted: dict):
-    driver = s_action * s_target
-    key = 'params'
-    if split == 'driver':
-        key = 'pos_driver_params' if driver > 0 else 'neg_driver_params'
-    elif split == 'action_target':
-        if s_action > 0 and s_target > 0:
-            key = 'pos_pos_params'
-        elif s_action > 0 and s_target <= 0:
-            key = 'pos_neg_params'
-        elif s_action <= 0 and s_target > 0:
-            key = 'neg_pos_params'
-        else:
-            key = 'neg_neg_params'
-    selected = fitted.get(key) or fitted.get('params')
-    if selected is None:
-        return np.nan
-    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
-    return function((s_actor, driver), *params_arr)
+def display_regular_question(sentence_item, actual_sentence_index):
+    item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
+    sentences = sentence_item.get('sentences', [])
+    combined_text = " ".join(sentences)
+    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif;'>Sentence:</h3>", unsafe_allow_html=True)
+    scorable_entities = get_scorable_entities(sentence_item)
+    highlighted_sentence_html, entity_color_map = highlight_entities_in_sentence(combined_text, scorable_entities)
+    st.markdown(f"<div class='text-content' style='font-size: 17px; border: 1px solid #D5D5D5; padding: 20px; border-radius: 3px; margin-bottom:20px; line-height:1.7; font-family: \"Source Serif Pro\", serif;'>{highlighted_sentence_html}</div>", unsafe_allow_html=True)
+    st.markdown("<h3 style='font-family: \"Source Serif Pro\", serif;'>Sentiment Scoring:</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='font-family: \"Source Serif Pro\", serif;'>For each highlighted entity, evaluate the sentiment conveyed about it in the sentence.</p>", unsafe_allow_html=True)
 
+    confirm_key = f"confirm_regular_{item_id}"
+    if confirm_key not in st.session_state:
+        st.session_state[confirm_key] = False
+    slider_scores = {}
+    for entity in scorable_entities:
+        display_color = entity_color_map.get(entity, "#000000")
+        slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('"','_')}"
+        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; color: {display_color}; background-color:rgba(245,245,245,0.8); padding:0.1em 0.2em; border-radius:2px; font-weight:600; margin-bottom: 0.5em;'>Entity: \"{entity}\"</p>", unsafe_allow_html=True)
+        score = st.slider(label=f"Rate for \"{entity}\"", min_value=-4, max_value=4, value=0, format="%d", key=slider_key, label_visibility="collapsed", help=f"Rating scale: -4 ({sentiment_scale[-4]}) to 4 ({sentiment_scale[4]})")
+        slider_view()
+        slider_scores[entity] = score
+        st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your rating: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
+        st.markdown("---")
 
-def determine_target_parameters(action_model_df: pd.DataFrame,
-                                function: Callable,
-                                remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
-                                splits: Literal['none', 'action'] = 'none',
-                                print_process=False) -> pd.DataFrame:
-    pos_action_df = action_model_df[action_model_df['s_init_action'] > 0]
-    neg_action_df = action_model_df[action_model_df['s_init_action'] <= 0]
+    if st.button("Next Question", key=f"next_btn_{item_id}", type="primary", use_container_width=True):
+        all_default = all(s == 0 for s in slider_scores.values())
+        if all_default and not st.session_state[confirm_key]:
+            st.session_state[confirm_key] = True
+            st.warning("Are you sure you want to continue without changing the default value(s)? Click again to confirm.")
+            st.stop()
+        st.session_state[confirm_key] = False
+        for entity in scorable_entities:
+            slider_key = f"slider_{item_id}_{entity.replace(' ', '_').replace('\"','_')}"
+            score_value = st.session_state[slider_key]
+            if score_value is not None:
+                response_data = {'item_id': item_id, 'item_type': sentence_item.get('type', ''), 'description': sentence_item.get('description', ''), 'sentences': json.dumps(sentences), 'combined_text': combined_text, 'code_key': sentence_item.get('code_key', ''), 'entity': entity, 'user_sentiment_score': score_value, 'user_sentiment_label': sentiment_scale[score_value], 'seed': st.session_state.seed, 'descriptor': json.dumps(sentence_item.get('descriptor', [])), 'intensity': json.dumps(sentence_item.get('intensity', [])), 'all_entities': json.dumps(sentence_item.get('entities', [])), 'packet_step': '', 'sentence_at_step': '', 'new_sentence_for_step': '', 'descriptor_for_step': '', 'intensity_for_step': '', 'marks': '', 'mark': ''}
+                st.session_state.user_responses.append(response_data)
+        return True
+    return False
 
-    output = {}
-    if splits == 'action':
-        if not pos_action_df.empty:
-            X = pos_action_df[['s_init_target', 's_init_action']].to_numpy().T
-            y = pos_action_df['s_user_target'].to_numpy()
-            pos_action_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_action_params'] = pos_action_params
-        if not neg_action_df.empty:
-            X = neg_action_df[['s_init_target', 's_init_action']].to_numpy().T
-            y = neg_action_df['s_user_target'].to_numpy()
-            neg_action_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_action_params'] = neg_action_params
-    else:
-        X = action_model_df[['s_init_target', 's_init_action']].to_numpy().T
-        y = action_model_df['s_user_target'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
-    if print_process:
-        for key, value in output.items():
-            if value is not None:
-                print(f"--- {key}: ---")
-                print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
-                print(f"MSE: {value['mse']}")
-                print(f"Soft L1 Loss: {value['soft_l1_loss']}")
-                print(f"R2 Loss: {value['r2_loss']}")
-            else:
-                print(f"{key}: No data available")
-    return output
+def display_question():
+    current_q_idx = st.session_state.current_question_index
+    all_data = st.session_state.sentences_data + st.session_state.packet_data
+    total_questions = len(st.session_state.shuffled_indices) if st.session_state.shuffled_indices else 0
 
-def target_skeleton_formula(s_target, s_action, split: Literal['action', 'none'], function: Callable, fitted: dict):
-    key = 'params'
-    if split == 'action':
-        key = 'pos_action_params' if s_action > 0 else 'neg_action_params'
-    selected = fitted.get(key) or fitted.get('params')
-    if selected is None:
-        return np.nan
-    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
-    return function((s_target, s_action), *params_arr)
-
-
-def determine_association_parameters(association_model_df: pd.DataFrame,
-                                        function: Callable,
-                                        remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
-                                        splits: Literal['none', 'other', 'entity_other'] = 'none',
-                                        print_process=False) -> pd.DataFrame:
-    pos_entity_df = association_model_df[association_model_df['s_init_other'] > 0]
-    neg_entity_df = association_model_df[association_model_df['s_init_other'] <= 0]
-
-    pos_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] > 0) & (association_model_df['s_init_other'] > 0)]
-    pos_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] > 0) & (association_model_df['s_init_other'] <= 0)]
-    neg_entity_neg_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] <= 0)]
-    neg_entity_pos_other_df = association_model_df[(association_model_df['s_init_entity'] <= 0) & (association_model_df['s_init_other'] > 0)]
-
-
-    output = {}
-    if splits == 'other':
-        if not pos_entity_df.empty:
-            X = pos_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = pos_entity_df['s_user_entity'].to_numpy()
-            pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_params'] = pos_params
-        if not neg_entity_df.empty:
-            X = neg_entity_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = neg_entity_df['s_user_entity'].to_numpy()
-            neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_params'] = neg_params
-    elif splits == 'entity_other':
-        if not pos_entity_pos_other_df.empty:
-            X = pos_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = pos_entity_pos_other_df['s_user_entity'].to_numpy()
-            pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_pos_params'] = pos_params
-        if not neg_entity_pos_other_df.empty:
-            X = neg_entity_pos_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = neg_entity_pos_other_df['s_user_entity'].to_numpy()
-            neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_pos_params'] = neg_params
-        if not pos_entity_neg_other_df.empty:
-            X = pos_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = pos_entity_neg_other_df['s_user_entity'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_neg_params'] = pos_neg_params
-        if not neg_entity_neg_other_df.empty:
-            X = neg_entity_neg_other_df[['s_init_entity', 's_init_other']].to_numpy().T
-            y = neg_entity_neg_other_df['s_user_entity'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_neg_params'] = neg_neg_params
-    else:
-        X = association_model_df[['s_init_entity', 's_init_other']].to_numpy().T
-        y = association_model_df['s_user_entity'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
-    if print_process:
-        for key, value in output.items():
-            if value is not None:
-                print(f"--- {key}: ---")
-                print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
-                print(f"MSE: {value['mse']}")
-                print(f"Soft L1 Loss: {value['soft_l1_loss']}")
-                print(f"R2 Loss: {value['r2_loss']}")
-            else:
-                print(f"{key}: No data available")
-    return output
-
-def association_skeleton_formula(s_entity, s_other, split: Literal['other', 'entity_other', 'none'], function: Callable, fitted: dict):
-    key = 'params'
-    if split == 'other':
-        key = 'pos_params' if s_other > 0 else 'neg_params'
-    elif split == 'entity_other':
-        if s_entity > 0 and s_other > 0:
-            key = 'pos_pos_params'
-        elif s_entity > 0 and s_other <= 0:
-            key = 'pos_neg_params'
-        elif s_entity <= 0 and s_other > 0:
-            key = 'neg_pos_params'
-        else:
-            key = 'neg_neg_params'
-    selected = fitted.get(key) or fitted.get('params')
-    if selected is None:
-        return np.nan
-    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
-    return function((s_entity, s_other), *params_arr)
-
-
-def determine_parent_parameters(belonging_model_df: pd.DataFrame,
-                                    function: Callable,
-                                    remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
-                                    splits: Literal['none', 'parent_child', 'child'] = 'none',
-                                    print_process=False) -> pd.DataFrame:
-    pos_parent_df = belonging_model_df[belonging_model_df['s_init_child'] > 0]
-    neg_parent_df = belonging_model_df[belonging_model_df['s_init_child'] <= 0]
-
-    pos_parent_neg_child_df = belonging_model_df[(belonging_model_df['s_init_parent'] > 0) & (belonging_model_df['s_init_child'] <= 0)]
-    pos_parent_pos_child_df = belonging_model_df[(belonging_model_df['s_init_parent'] > 0) & (belonging_model_df['s_init_child'] > 0)]
-    neg_parent_neg_child_df = belonging_model_df[(belonging_model_df['s_init_parent'] <= 0) & (belonging_model_df['s_init_child'] <= 0)]
-    neg_parent_pos_child_df = belonging_model_df[(belonging_model_df['s_init_parent'] <= 0) & (belonging_model_df['s_init_child'] > 0)]
-
-    output = {}
-    if splits == 'child':
-        if not pos_parent_df.empty:
-            X = pos_parent_df[['s_init_parent', 's_init_child']].to_numpy().T
-            y = pos_parent_df['s_user_parent'].to_numpy()
-            pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_params'] = pos_params
-        if not neg_parent_df.empty:
-            X = neg_parent_df[['s_init_parent', 's_init_child']].to_numpy().T
-            y = neg_parent_df['s_user_parent'].to_numpy()
-            neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_params'] = neg_params
-    elif splits == 'parent_child':
-        if not pos_parent_neg_child_df.empty:
-            X = pos_parent_neg_child_df[['s_init_parent', 's_init_child']].to_numpy().T
-            y = pos_parent_neg_child_df['s_user_parent'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_neg_params'] = pos_neg_params
-        if not neg_parent_neg_child_df.empty:
-            X = neg_parent_neg_child_df[['s_init_parent', 's_init_child']].to_numpy().T
-            y = neg_parent_neg_child_df['s_user_parent'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_neg_params'] = neg_neg_params
-        if not pos_parent_pos_child_df.empty:
-            X = pos_parent_pos_child_df[['s_init_parent', 's_init_child']].to_numpy().T
-            y = pos_parent_pos_child_df['s_user_parent'].to_numpy()
-            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_pos_params'] = pos_pos_params
-        if not neg_parent_pos_child_df.empty:
-            X = neg_parent_pos_child_df[['s_init_parent', 's_init_child']].to_numpy().T
-            y = neg_parent_pos_child_df['s_user_parent'].to_numpy()
-            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_pos_params'] = neg_pos_params
-    else:
-        X = belonging_model_df[['s_init_parent', 's_init_child']].to_numpy().T
-        y = belonging_model_df['s_user_parent'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
-    if print_process:
-        for key, value in output.items():
-            if value is not None:
-                print(f"--- {key}: ---")
-                print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
-                print(f"MSE: {value['mse']}")
-                print(f"Soft L1 Loss: {value['soft_l1_loss']}")
-                print(f"R2 Loss: {value['r2_loss']}")
-            else:
-                print(f"{key}: No data available")
-    return output
-
-def determine_child_parameters(belonging_model_df: pd.DataFrame,
-                                    function: Callable,
-                                    remove_outlier_method: Literal['lsquares', 'droptop', 'none'] = 'none',
-                                    splits: Literal['none', 'parent_child', 'parent'] = 'none',
-                                    print_process=False) -> pd.DataFrame:
-    pos_child_df = belonging_model_df[belonging_model_df['s_init_parent'] > 0]
-    neg_child_df = belonging_model_df[belonging_model_df['s_init_parent'] <= 0]
-
-    pos_child_neg_parent_df = belonging_model_df[(belonging_model_df['s_init_child'] > 0) & (belonging_model_df['s_init_parent'] <= 0)]
-    pos_child_pos_parent_df = belonging_model_df[(belonging_model_df['s_init_child'] > 0) & (belonging_model_df['s_init_parent'] > 0)]
-    neg_child_neg_parent_df = belonging_model_df[(belonging_model_df['s_init_child'] <= 0) & (belonging_model_df['s_init_parent'] <= 0)]
-    neg_child_pos_parent_df = belonging_model_df[(belonging_model_df['s_init_child'] <= 0) & (belonging_model_df['s_init_parent'] > 0)]
-
-    output = {}
-    if splits == 'parent':
-        if not pos_child_df.empty:
-            X = pos_child_df[['s_init_child', 's_init_parent']].to_numpy().T
-            y = pos_child_df['s_user_child'].to_numpy()
-            pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_params'] = pos_params
-        if not neg_child_df.empty:
-            X = neg_child_df[['s_init_child', 's_init_parent']].to_numpy().T
-            y = neg_child_df['s_user_child'].to_numpy()
-            neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_params'] = neg_params
-    elif splits == 'parent_child':
-        if not pos_child_neg_parent_df.empty:
-            X = pos_child_neg_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
-            y = pos_child_neg_parent_df['s_user_child'].to_numpy()
-            pos_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_neg_params'] = pos_neg_params
-        if not neg_child_neg_parent_df.empty:
-            X = neg_child_neg_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
-            y = neg_child_neg_parent_df['s_user_child'].to_numpy()
-            neg_neg_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_neg_params'] = neg_neg_params
-        if not pos_child_pos_parent_df.empty:
-            X = pos_child_pos_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
-            y = pos_child_pos_parent_df['s_user_child'].to_numpy()
-            pos_pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['pos_pos_params'] = pos_pos_params
-        if not neg_child_pos_parent_df.empty:
-            X = neg_child_pos_parent_df[['s_init_child', 's_init_parent']].to_numpy().T
-            y = neg_child_pos_parent_df['s_user_child'].to_numpy()
-            neg_pos_params = fit_compound(function, X, y, remove_outlier_method)
-            output['neg_pos_params'] = neg_pos_params
-    else:
-        X = belonging_model_df[['s_init_child', 's_init_parent']].to_numpy().T
-        y = belonging_model_df['s_user_child'].to_numpy()
-        output['params'] = fit_compound(function, X, y, remove_outlier_method)
-    if print_process:
-        for key, value in output.items():
-            if value is not None:
-                print(f"--- {key}: ---")
-                print(f"Parameters {value['params'] if isinstance(value, dict) else value}")
-                print(f"MSE: {value['mse']}")
-                print(f"Soft L1 Loss: {value['soft_l1_loss']}")
-                print(f"R2 Loss: {value['r2_loss']}")
-            else:
-                print(f"{key}: No data available")
-    return output
-
-def parent_skeleton_formula(s_parent, s_child, split: Literal['parent_child', 'child', 'none'], function: Callable, fitted: dict):
-    key = 'params'
-    if split == 'parent_child':
-        if s_parent > 0 and s_child > 0:
-            key = 'pos_pos_params'
-        elif s_parent > 0 and s_child <= 0:
-            key = 'pos_neg_params'
-        elif s_parent <= 0 and s_child > 0:
-            key = 'neg_pos_params'
-        else:
-            key = 'neg_neg_params'
-    elif split == 'child':
-        key = 'pos_params' if s_child > 0 else 'neg_params'
-    selected = fitted.get(key) or fitted.get('params')
-    if selected is None:
-        return np.nan
-    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
-    return function((s_parent, s_child), *params_arr)
-
-def child_skeleton_formula(s_child, s_parent, split: Literal['parent_child', 'parent', 'none'], function: Callable, fitted: dict):
-    key = 'params'
-    if split == 'parent_child':
-        if s_child > 0 and s_parent > 0:
-            key = 'pos_pos_params'
-        elif s_child > 0 and s_parent <= 0:
-            key = 'pos_neg_params'
-        elif s_child <= 0 and s_parent > 0:
-            key = 'neg_pos_params'
-        else:
-            key = 'neg_neg_params'
-    elif split == 'parent':
-        key = 'pos_params' if s_parent > 0 else 'neg_params'
-    selected = fitted.get(key) or fitted.get('params')
-    if selected is None:
-        return np.nan
-    params_arr = selected['params'] if isinstance(selected, dict) and 'params' in selected else selected
-    return function((s_child, s_parent), *params_arr)
-
-
-def calculate_weights(n, alpha, beta):
-    k = np.arange(1, n + 1)
-    alpha, beta = max(alpha, 0.01), max(beta, 0.01)
-    numerator = (k**(alpha - 1)) * ((n - k + 1)**(beta - 1))
-    denominator = np.sum(numerator)
-    if denominator == 0:
-        return np.full(n, 1/n)
-    return numerator / denominator
-
-def logistic_function(N, L, k, N0, b):
-    return b + L / (1 + np.exp(-k * (N - N0)))
-
-def aggregate_formula(s_inits, params):
-    alpha, beta = params
-    n = len(s_inits)
-    weights = calculate_weights(n, alpha, beta)
-    predicted_sentiment = np.sum(weights * np.array(s_inits))
-    return predicted_sentiment
-
-def aggregate_formula_dynamic(s_inits, params):
-    m_a, c_a, m_b, c_b = params
-    n = len(s_inits)
-    alpha_n = m_a * n + c_a
-    beta_n = m_b * n + c_b
-    weights = calculate_weights(n, alpha_n, beta_n)
-    predicted_sentiment = np.sum(weights * np.array(s_inits))
-    return predicted_sentiment
-
-def aggregate_formula_logistic(s_inits, params):
-    L_a, k_a, N0_a, b_a, L_b, k_b, N0_b, b_b = params
-    N = len(s_inits)
-    alpha = logistic_function(N, L_a, k_a, N0_a, b_a)
-    beta = logistic_function(N, L_b, k_b, N0_b, b_b)
-    weights = calculate_weights(N, alpha, beta)
-    predicted_sentiment = np.sum(weights * np.array(s_inits))
-    return predicted_sentiment
-
-def _calculate_error(s_user_predicted, s_user_actual, loss_type='mse'):
-    if loss_type == 'softl1':
-        delta = 1.0
-        return 2 * (np.sqrt(1 + ((s_user_predicted - s_user_actual)**2) / delta**2) - 1)
-    return (s_user_predicted - s_user_actual) ** 2
-
-def aggregate_error_mse(params, data):
-    total_error = 0
-    for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula(row['s_inits'], params)
-        total_error += _calculate_error(s_user_predicted, row['s_user'], 'mse')
-    return total_error
-
-def aggregate_error_softl1(params, data):
-    total_error = 0
-    for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula(row['s_inits'], params)
-        total_error += _calculate_error(s_user_predicted, row['s_user'], 'softl1')
-    return total_error
-
-def aggregate_error_dynamic_mse(params, data):
-    total_error = 0
-    for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula_dynamic(row['s_inits'], params)
-        total_error += _calculate_error(s_user_predicted, row['s_user'], 'mse')
-    return total_error
-
-def aggregate_error_dynamic_softl1(params, data):
-    total_error = 0
-    for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula_dynamic(row['s_inits'], params)
-        total_error += _calculate_error(s_user_predicted, row['s_user'], 'softl1')
-    return total_error
-
-def aggregate_error_logistic_mse(params, data):
-    total_error = 0
-    for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula_logistic(row['s_inits'], params)
-        total_error += _calculate_error(s_user_predicted, row['s_user'], 'mse')
-    return total_error
-
-def aggregate_error_logistic_softl1(params, data):
-    total_error = 0
-    for _, row in data.iterrows():
-        s_user_predicted = aggregate_formula_logistic(row['s_inits'], params)
-        total_error += _calculate_error(s_user_predicted, row['s_user'], 'softl1')
-    return total_error
-
-all_loss_functions = {
-    'aggregate_error_mse': aggregate_error_mse,
-    'aggregate_error_softl1': aggregate_error_softl1,
-    'aggregate_error_dynamic_mse': aggregate_error_dynamic_mse,
-    'aggregate_error_dynamic_softl1': aggregate_error_dynamic_softl1,
-    'aggregate_error_logistic_mse': aggregate_error_logistic_mse,
-    'aggregate_error_logistic_softl1': aggregate_error_logistic_softl1,
-}
-
-def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
-        loss_function: Callable = aggregate_error_dynamic_softl1,
-        print_process: bool = False
-    ) -> dict:
-
-    loss_name = loss_function.__name__
-
-    if "logistic" in loss_name:
-        initial_guess = [-10, 1, 3, 10, 10, 1, 3, 1]
-        param_bounds = [(-20, 20), (0.1, 5), (1, 10), (0.01, 20),
-                        (-20, 20), (0.1, 5), (1, 10), (0.01, 20)]
-    elif "dynamic" in loss_name:
-        initial_guess = [0.0, 1.0, 0.0, 1.0]
-        param_bounds = [(-5, 5), (-5, 5), (-5, 5), (-5, 5)]
-    else:
-        initial_guess = [1.0, 1.0]
-        param_bounds = [(-5, 5), (-5, 5)]
-
-    result = minimize(
-        fun=loss_function,
-        x0=initial_guess,
-        args=(aggregate_df,),
-        bounds=param_bounds,
-        method='L-BFGS-B'
+    midpoint = total_questions // 2 if total_questions > 0 else 0
+    is_attention_check = (
+        not st.session_state.attention_check_shown and
+        current_q_idx == midpoint and
+        total_questions > 3
     )
 
-    if print_process:
-        if result.success:
-            print("Aggregate parameters found successfully.")
-            print(f"Model Type: {loss_name}")
-            print(f"Parameters: {result.x}")
-            if 'mse' in loss_name:
-                mse_loss_name = loss_name
-                softl1_loss_name = loss_name.replace('mse', 'softl1')
-            else:
-                mse_loss_name = loss_name.replace('softl1', 'mse')
-                softl1_loss_name = loss_name
+    progress_total = total_questions + (1 if not st.session_state.attention_check_shown else 0)
+    st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif; text-align: center; margin-bottom: 10px;'><strong>Question {current_q_idx + 1} of {progress_total}</strong></p>", unsafe_allow_html=True)
+    st.progress((current_q_idx + 1) / progress_total if progress_total > 0 else 0)
 
-            mse_func = all_loss_functions[mse_loss_name]
-            softl1_func = all_loss_functions[softl1_loss_name]
+    if is_attention_check:
+        display_attention_check()
+        return
 
-            total_mse = mse_func(result.x, aggregate_df)
-            total_softl1 = softl1_func(result.x, aggregate_df)
+    if total_questions == 0:
+        st.error("No questions loaded. Please restart.")
+        st.session_state.survey_complete = True
+        st.rerun()
+        return
 
-            print(f"Final Mean Squared Error (MSE): {total_mse / len(aggregate_df):.4f}")
-            print(f"Final Total SoftL1 Loss: {total_softl1:.4f}")
-        else:
-            print("Aggregate parameter optimization failed.")
-            print(result.message)
+    if not (0 <= current_q_idx < total_questions):
+        st.error("Question index out of bounds.")
+        st.session_state.survey_complete = True
+        st.rerun()
+        return
 
-    if "logistic" in loss_name:
-        func = aggregate_formula_logistic
-        model_type = "logistic"
-    elif "dynamic" in loss_name:
-        func = aggregate_formula_dynamic
-        model_type = "dynamic"
+    actual_sentence_index = st.session_state.shuffled_indices[current_q_idx]
+    if not (0 <= actual_sentence_index < len(all_data)):
+        st.error("Sentence index out of bounds.")
+        st.session_state.survey_complete = True
+        st.rerun()
+        return
+
+    sentence_item = all_data[actual_sentence_index]
+    is_packet_question = sentence_item.get('type') in ['aggregate_short', 'aggregate_medium', 'aggregate_long']
+
+    if is_packet_question:
+        question_complete = display_packet_question(sentence_item, actual_sentence_index)
     else:
-        func = aggregate_formula
-        model_type = "normal"
+        question_complete = display_regular_question(sentence_item, actual_sentence_index)
 
-    return {
-        'params': result.x,
-        'loss': result.fun / len(aggregate_df),
-        'success': result.success,
-        'function': func,
-        'model_type': model_type
-    }
-
-def aggregate_skeleton_formula(s_inits, formula, params):
-    return formula(s_inits, params)
-
-CONFIG = {
-    "test_train_split": 0.8
-}
-
-def _safe_mse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    logger.info("_safe_mse")
-    mask = ~np.isnan(y_pred)
-    if mask.sum() == 0:
-        return float('inf')
-    return mean_squared_error(y_true[mask], y_pred[mask])
-
-
-def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
-    logger.info("test_actor_parameters")
-    from formulas import actor_formula_v1, actor_formula_v2, null_identity, null_avg, null_linear
-
-    action_df = create_action_df(score_key)
-    if action_df.empty:
-        print("No action data available.")
-        return {}
-
-    action_df = action_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(action_df) * CONFIG["test_train_split"])
-    train_df = action_df.iloc[:n_train].copy()
-    test_df = action_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": actor_formula_v1},
-        {"function": actor_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
-    remove_outliers = ["none", "lsquares", "droptop"]
-    splits = ["none", "driver", "action_target"]
-
-    results = []
-    for cand in candidates:
-        func = cand["function"]
-        for ro in remove_outliers:
-            for sp in splits:
-                fitted = determine_actor_parameters(train_df, func, ro, sp, print_process=False)
-                preds = []
-                for _, r in test_df.iterrows():
-                    preds.append(
-                        actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted)
-                    )
-                preds = np.array(preds, dtype=float)
-                mse = _safe_mse(test_df['s_user_actor'].to_numpy(dtype=float), preds)
-                results.append({
-                    "model": func.__name__,
-                    "split": sp,
-                    "remove_outliers": ro,
-                    "mse": mse,
-                    "score_key": score_key,
-                    "fitted": fitted,
-                })
-                print(f"actor | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
-    if not results:
-        return {}
-    best = min(results, key=lambda x: x["mse"])
-    print(f"Best actor config: {best}")
-    return {"best": best, "all": results}
-
-def test_target_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
-    logger.info("test_target_parameters")
-    from formulas import target_formula_v1, target_formula_v2, null_identity, null_avg, null_linear
-
-    action_df = create_action_df(score_key)
-    if action_df.empty:
-        print("No action data available for target model.")
-        return {}
-
-    action_df = action_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(action_df) * CONFIG["test_train_split"])
-    train_df = action_df.iloc[:n_train].copy()
-    test_df = action_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": target_formula_v1},
-        {"function": target_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
-    remove_outliers = ["none", "lsquares", "droptop"]
-    splits = ["none", "action"]
-
-    results = []
-    for cand in candidates:
-        func = cand["function"]
-        for ro in remove_outliers:
-            for sp in splits:
-                fitted = determine_target_parameters(train_df, func, ro, sp, print_process=False)
-                preds = []
-                for _, r in test_df.iterrows():
-                    preds.append(
-                        target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted)
-                    )
-                preds = np.array(preds, dtype=float)
-                mse = _safe_mse(test_df['s_user_target'].to_numpy(dtype=float), preds)
-                results.append({
-                    "model": func.__name__,
-                    "split": sp,
-                    "remove_outliers": ro,
-                    "mse": mse,
-                    "score_key": score_key,
-                    "fitted": fitted,
-                })
-                print(f"target | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
-    if not results:
-        return {}
-    best = min(results, key=lambda x: x["mse"])
-    print(f"Best target config: {best}")
-    return {"best": best, "all": results}
-
-def test_association_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
-    logger.info("test_association_parameters")
-    from formulas import assoc_formula_v1, assoc_formula_v2, null_identity, null_avg, null_linear
-
-    assoc_df = create_association_df(score_key)
-    if assoc_df.empty:
-        print("No association data available.")
-        return {}
-
-    assoc_df = assoc_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(assoc_df) * CONFIG["test_train_split"])
-    train_df = assoc_df.iloc[:n_train].copy()
-    test_df = assoc_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": assoc_formula_v1},
-        {"function": assoc_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
-    remove_outliers = ["none", "lsquares", "droptop"]
-    splits = ["none", "other", "entity_other"]
-
-    results = []
-    for cand in candidates:
-        func = cand["function"]
-        for ro in remove_outliers:
-            for sp in splits:
-                fitted = determine_association_parameters(train_df, func, ro, sp, print_process=False)
-                preds = []
-                for _, r in test_df.iterrows():
-                    preds.append(
-                        association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted)
-                    )
-                preds = np.array(preds, dtype=float)
-                mse = _safe_mse(test_df['s_user_entity'].to_numpy(dtype=float), preds)
-                results.append({
-                    "model": func.__name__,
-                    "split": sp,
-                    "remove_outliers": ro,
-                    "mse": mse,
-                    "score_key": score_key,
-                    "fitted": fitted,
-                })
-                print(f"assoc | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
-    if not results:
-        return {}
-    best = min(results, key=lambda x: x["mse"])
-    print(f"Best association config: {best}")
-    return {"best": best, "all": results}
-
-def test_parent_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
-    logger.info("test_parent_parameters")
-    from formulas import belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
-
-    bel_df = create_belonging_df(score_key)
-    if bel_df.empty:
-        print("No belonging data available for parent model.")
-        return {}
-
-    bel_df = bel_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(bel_df) * CONFIG["test_train_split"])
-    train_df = bel_df.iloc[:n_train].copy()
-    test_df = bel_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": belong_formula_v1},
-        {"function": belong_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
-    remove_outliers = ["none", "lsquares", "droptop"]
-    splits = ["none", "child", "parent_child"]
-
-    results = []
-    for cand in candidates:
-        func = cand["function"]
-        for ro in remove_outliers:
-            for sp in splits:
-                fitted = determine_parent_parameters(train_df, func, ro, sp, print_process=False)
-                preds = []
-                for _, r in test_df.iterrows():
-                    preds.append(
-                        parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted)
-                    )
-                preds = np.array(preds, dtype=float)
-                mse = _safe_mse(test_df['s_user_parent'].to_numpy(dtype=float), preds)
-                results.append({
-                    "model": func.__name__,
-                    "split": sp,
-                    "remove_outliers": ro,
-                    "mse": mse,
-                    "score_key": score_key,
-                    "fitted": fitted,
-                })
-                print(f"parent | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
-    if not results:
-        return {}
-    best = min(results, key=lambda x: x["mse"])
-    print(f"Best parent config: {best}")
-    return {"best": best, "all": results}
-
-def test_child_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
-    logger.info("test_child_parameters")
-    from formulas import belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
-
-    bel_df = create_belonging_df(score_key)
-    if bel_df.empty:
-        print("No belonging data available for child model.")
-        return {}
-
-    bel_df = bel_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(bel_df) * CONFIG["test_train_split"])
-    train_df = bel_df.iloc[:n_train].copy()
-    test_df = bel_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": belong_formula_v1},
-        {"function": belong_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
-    remove_outliers = ["none", "lsquares", "droptop"]
-    splits = ["none", "parent", "parent_child"]
-
-    results = []
-    for cand in candidates:
-        func = cand["function"]
-        for ro in remove_outliers:
-            for sp in splits:
-                fitted = determine_child_parameters(train_df, func, ro, sp, print_process=False)
-                preds = []
-                for _, r in test_df.iterrows():
-                    preds.append(
-                        child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted)
-                    )
-                preds = np.array(preds, dtype=float)
-                mse = _safe_mse(test_df['s_user_child'].to_numpy(dtype=float), preds)
-                results.append({
-                    "model": func.__name__,
-                    "split": sp,
-                    "remove_outliers": ro,
-                    "mse": mse,
-                    "score_key": score_key,
-                    "fitted": fitted,
-                })
-                print(f"child | {func.__name__} | split={sp} | outliers={ro} | MSE={mse:.4f}")
-    if not results:
-        return {}
-    best = min(results, key=lambda x: x["mse"])
-    print(f"Best child config: {best}")
-    return {"best": best, "all": results}
-
-def test_aggregate_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
-    logger.info("test_aggregate_parameters")
-    agg_df = create_aggregate_df(score_key)
-    if agg_df.empty:
-        print("No aggregate data available.")
-        return {}
-    agg_df = agg_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(agg_df) * CONFIG["test_train_split"])
-    train_df = agg_df.iloc[:n_train].copy()
-    test_df = agg_df.iloc[n_train:].copy()
-    losses = [aggregate_error_mse, aggregate_error_softl1, aggregate_error_dynamic_mse, aggregate_error_dynamic_softl1, aggregate_error_logistic_mse, aggregate_error_logistic_softl1]
-    results = []
-    null_avg_name = 'aggregate_null_average'
-    if not agg_df.empty:
-        preds = []
-        for _, r in test_df.iterrows():
-            preds.append(np.mean(r['s_inits']))
-        preds = np.array(preds, dtype=float)
-        mse = _safe_mse(test_df['s_user'].to_numpy(dtype=float), preds)
-        results.append({
-            "model": null_avg_name,
-            "split": "none",
-            "remove_outliers": "none",
-            "mse": mse,
-            "score_key": score_key,
-            "params": [],
-        })
-        print(f"aggregate | {null_avg_name} | MSE={mse:.4f}")
-    for loss_fn in losses:
-        fitted = determine_aggregate_parameters(train_df, loss_fn, print_process=False)
-        name = loss_fn.__name__
-        if 'dynamic' in loss_fn.__name__:
-            func = aggregate_formula_dynamic
-        elif 'logistic' in loss_fn.__name__:
-            func = aggregate_formula_logistic
+    if question_complete:
+        next_q_idx = current_q_idx + 1
+        if next_q_idx < total_questions:
+            st.session_state.current_question_index = next_q_idx
         else:
-            func = aggregate_formula
-        preds = []
-        for _, r in test_df.iterrows():
-            preds.append(func(r['s_inits'], fitted['params']))
-        preds = np.array(preds, dtype=float)
-        mse = _safe_mse(test_df['s_user'].to_numpy(dtype=float), preds)
-        results.append({
-            "model": name,
-            "split": "none",
-            "remove_outliers": "none",
-            "mse": mse,
-            "score_key": score_key,
-            "params": fitted['params'],
-        })
-        print(f"aggregate | {name} | MSE={mse:.4f}")
-    best = min(results, key=lambda x: x["mse"]) if results else {}
-    print(f"Best aggregate config: {best}")
-    return {"best": best, "all": results}
+            st.session_state.survey_complete = True
+        st.rerun()
 
-
-def _serialize_fitted(fitted: dict) -> dict:
-    out = {}
-    for k, v in fitted.items():
-        if v is None:
-            continue
-        if isinstance(v, dict) and 'params' in v:
-            arr = v['params']
+def export_to_google_sheets(data_df):
+    creds_str = st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
+    if not creds_str:
+        st.error(f"Secret '{GOOGLE_CREDENTIALS_SECRET_KEY}' not found for Google Sheets export.")
+        return
+    try:
+        creds_dict = json.loads(creds_str)
+    except json.JSONDecodeError:
+        st.error("Failed to parse Google credentials JSON for Sheets export.")
+        return
+    try:
+        creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+        client = gspread.authorize(creds)
+        if GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
+            st.error("GOOGLE_SHEET_ID is not set or is a placeholder; cannot export to Google Sheets.")
+            return
+        spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+        ws_name = "Sheet1"
+        try:
+            ws = spreadsheet.worksheet(ws_name)
+        except gspread.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(data_df.columns))
+        expected_columns = ['submitted_by_user_login', 'submission_timestamp_utc', 'demographic_age', 'demographic_country', 'item_id', 'item_type', 'description', 'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity', 'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label', 'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step', 'mark', 'marks']
+        df_ordered = data_df.reindex(columns=expected_columns, fill_value='')
+        for col in df_ordered.columns:
+            df_ordered[col] = df_ordered[col].astype(str).replace(['nan', 'None'], '')
+        existing_data = ws.get_all_values()
+        if not existing_data or not any(existing_data[0]):
+            header_row = expected_columns
+            data_rows = df_ordered.values.tolist()
+            all_rows = [header_row] + data_rows
+            ws.update('A1', all_rows, value_input_option='USER_ENTERED')
         else:
-            arr = v
-        if isinstance(arr, np.ndarray):
-            arr = arr.tolist()
-        elif isinstance(arr, (float, int)):
-            arr = [float(arr)]
-        out[k] = arr
-    return out
+            data_rows = df_ordered.values.tolist()
+            next_row = len(existing_data) + 1
+            ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
+        st.success("Data successfully exported to Google Sheet.")
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error("Google Sheet not found or not shared with the service account.")
+    except Exception as e:
+        st.error(f"An error occurred during Google Sheets export: {e}")
 
+def display_demographic_section():
+    st.markdown("""
+    <div class="academic-paper" style="background:#fffbe6; border:1px solid #ffe58f;">
+    <h3>Optional Demographic Questions</h3>
+    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    with st.form("demographic_form", clear_on_submit=False):
+        age = st.text_input("What is your age? (Optional)", value=st.session_state.get('demographic_age', ""))
+        country = st.text_input("What country do you currently reside in? (If US, you may specify state)", value=st.session_state.get('demographic_country', ""))
+        submitted = st.form_submit_button("Submit Demographics (Optional)")
+        if submitted:
+            st.session_state['demographic_age'] = age
+            st.session_state['demographic_country'] = country
+            st.session_state['demographic_complete'] = True
+            st.success("Demographic information saved.")
+            st.rerun()
 
-def save_optimal_parameters(all_results: dict, out_path: str = "src/survey/optimal_formulas/all_optimal_parameters.json") -> None:
-    entries = []
-    for score_key, summary in all_results.items():
-        for category, data in summary.items():
-            if not data or 'best' not in data:
-                continue
-            best = data['best']
-            entry = {
-                "category": category,
-                "score_key": score_key,
-                "model": best.get("model"),
-                "split": best.get("split", "none"),
-                "remove_outliers": best.get("remove_outliers", "none"),
-                "mse": float(best.get("mse", float('inf'))),
-            }
-            if category == 'aggregate':
-                params = best.get('params')
-                if isinstance(params, np.ndarray):
-                    params = params.tolist()
-                entry["params_by_key"] = {"params": params}
-            else:
-                fitted = best.get('fitted', {})
-                entry["params_by_key"] = _serialize_fitted(fitted)
-            entries.append(entry)
-    payload = {"version": 1, "saved_at": datetime.utcnow().isoformat() + 'Z', "entries": entries}
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, 'w') as f:
-        json.dump(payload, f, indent=4)
+def display_finish_screen():
+    st.title("Survey Completed!")
+    st.success("Thank you for your participation! Your responses are greatly appreciated.")
+    st.markdown("""
+    <div class="academic-paper">
 
-def load_optimal_parameters(in_path: str = "src/survey/optimal_formulas/all_optimal_parameters.json") -> dict:
-    if not os.path.exists(in_path):
-        return {}
-    with open(in_path, 'r') as f:
-        data = json.load(f)
-    out = {}
-    for e in data.get('entries', []):
-        out[(e['category'], e['score_key'])] = e
-    return out
+**Contact Information:**
 
-def _formula_by_name(name: str) -> Callable:
-    from formulas import actor_formula_v1, actor_formula_v2, target_formula_v1, target_formula_v2, assoc_formula_v1, assoc_formula_v2, belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
-    m = {
-        'actor_formula_v1': actor_formula_v1,
-        'actor_formula_v2': actor_formula_v2,
-        'target_formula_v1': target_formula_v1,
-        'target_formula_v2': target_formula_v2,
-        'assoc_formula_v1': assoc_formula_v1,
-        'assoc_formula_v2': assoc_formula_v2,
-        'belong_formula_v1': belong_formula_v1,
-        'belong_formula_v2': belong_formula_v2,
-        'aggregate_normal': aggregate_formula,
-        'aggregate_dynamic': aggregate_formula_dynamic,
-        'aggregate_logistic': aggregate_formula_logistic,
-        'null_identity': null_identity,
-        'null_avg': null_avg,
-        'null_linear': null_linear,
-        'aggregate_null_average': lambda s_inits, _: float(np.mean(s_inits)) if len(s_inits) else 0.0,
-    }
-    return m.get(name)
+If you have any questions or concerns, please feel free to reach out to us at:
 
-def get_actor_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
-    confs = load_optimal_parameters()
-    conf = confs.get(('actor', score_key)) or confs.get(('actor', 'user_sentiment_score_mapped'))
-    if not conf:
-        return None
-    func = _formula_by_name(conf['model'])
-    split = conf.get('split', 'none')
-    fitted = conf.get('params_by_key', {})
-    def f(s_actor, s_action, s_target):
-        return actor_skeleton_formula(s_actor, s_action, s_target, split, func, fitted)
-    return f
+- harry.d.yin.gpc@gmail.com
 
-def get_target_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
-    confs = load_optimal_parameters()
-    conf = confs.get(('target', score_key)) or confs.get(('target', 'user_sentiment_score_mapped'))
-    if not conf:
-        return None
-    func = _formula_by_name(conf['model'])
-    split = conf.get('split', 'none')
-    fitted = conf.get('params_by_key', {})
-    def f(s_target, s_action):
-        return target_skeleton_formula(s_target, s_action, split, func, fitted)
-    return f
+- USFCA MAGICS Lab
 
-def get_association_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
-    confs = load_optimal_parameters()
-    conf = confs.get(('association', score_key)) or confs.get(('association', 'user_sentiment_score_mapped'))
-    if not conf:
-        return None
-    func = _formula_by_name(conf['model'])
-    split = conf.get('split', 'none')
-    fitted = conf.get('params_by_key', {})
-    def f(s_entity, s_other):
-        return association_skeleton_formula(s_entity, s_other, split, func, fitted)
-    return f
+- dgbrizan@usfca.edu
 
-def get_parent_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
-    confs = load_optimal_parameters()
-    conf = confs.get(('parent', score_key)) or confs.get(('parent', 'user_sentiment_score_mapped'))
-    if not conf:
-        return None
-    func = _formula_by_name(conf['model'])
-    split = conf.get('split', 'none')
-    fitted = conf.get('params_by_key', {})
-    def f(s_parent, s_child):
-        return parent_skeleton_formula(s_parent, s_child, split, func, fitted)
-    return f
+---
 
-def get_child_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
-    confs = load_optimal_parameters()
-    conf = confs.get(('child', score_key)) or confs.get(('child', 'user_sentiment_score_mapped'))
-    if not conf:
-        return None
-    func = _formula_by_name(conf['model'])
-    split = conf.get('split', 'none')
-    fitted = conf.get('params_by_key', {})
-    def f(s_child, s_parent):
-        return child_skeleton_formula(s_child, s_parent, split, func, fitted)
-    return f
+**Project:**
 
-def get_aggregate_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
-    confs = load_optimal_parameters()
-    conf = confs.get(('aggregate', score_key)) or confs.get(('aggregate', 'user_sentiment_score_mapped'))
-    if not conf:
-        return None
-    model = conf['model']
-    if 'dynamic' in model:
-        func = aggregate_formula_dynamic
-    elif 'logistic' in model:
-        func = aggregate_formula_logistic
+You can take a look at the project page here: [Project Page](https://github.com/Xild076/ETSA--QC-)
+
+</div>
+    """, unsafe_allow_html=True)
+    st.markdown("---")
+    st.subheader("Your Data")
+    if st.session_state.user_responses:
+        df = pd.DataFrame(st.session_state.user_responses)
+        df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        df['submitted_by_user_login'] = "anonymous"
+        demographic_age = st.session_state.get('demographic_age', "")
+        demographic_country = st.session_state.get('demographic_country', "")
+        df['demographic_age'] = demographic_age
+        df['demographic_country'] = demographic_country
+        if (
+            st.session_state.get('attention_check_passed', True)
+            and GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
+            and GOOGLE_SHEET_ID
+            and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
+        ):
+            export_to_google_sheets(df)
+        elif GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
+            st.warning("Automatic Google Sheet Export is not configured by the admin (GOOGLE_SHEET_ID is missing or is a placeholder). Your data has not been automatically uploaded.")
+        elif not st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
+            st.warning(f"Automatic Google Sheet Export is not configured by the admin (the '{GOOGLE_CREDENTIALS_SECRET_KEY}' secret is missing). Your data has not been automatically uploaded.")
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(label="Download Survey Data (CSV)", data=csv, use_container_width=True, file_name=f"survey_data_anonymous_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
     else:
-        func = aggregate_formula
-    params = conf.get('params_by_key', {}).get('params', [])
-    def f(s_inits):
-        return func(s_inits, params)
-    return f
+        st.warning("No responses were recorded in this session.")
+    st.markdown("---")
+    return
 
+def main():
+    st.set_page_config(page_title="Sentence Sentiment Survey", layout="centered", initial_sidebar_state="collapsed")
+    initialize_session_state()
+    if not st.session_state.consent_given:
+        display_consent_form()
+    elif not st.session_state.get('calibration_complete', False):
+        display_calibration_questions()
+    elif not st.session_state.get('calibration_confirmed', False):
+        display_calibration_confirmation()
+    elif not st.session_state.survey_complete:
+        display_question()
+    elif not st.session_state.get('demographic_complete', False):
+        display_demographic_section()
+    else:
+        display_finish_screen()
 
-def test_all_parameterizations() -> dict:
-    logger.info("test_all_parameterizations")
-    score_keys = ['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped']
-    all_results = {}
-    for sk in score_keys:
-        all_results[sk] = {
-            "actor": test_actor_parameters(sk),
-            "target": test_target_parameters(sk),
-            "association": test_association_parameters(sk),
-            "parent": test_parent_parameters(sk),
-            "child": test_child_parameters(sk),
-            "aggregate": test_aggregate_parameters(sk)
-        }
-    save_optimal_parameters(all_results)
-    return all_results
-
-"""if __name__ == '__main__':
-    out = test_all_parameterizations()
-    print("\nSummary:")
-    for sk, summary in out.items():
-        print(f"score_key={sk}")
-        for k, v in summary.items():
-            if v and "best" in v:
-                print(f"- {k}: MSE={v['best']['mse']:.4f} | model={v['best']['model']} | split={v['best']['split']} | outliers={v['best'].get('remove_outliers','none')}")"""
+if __name__ == "__main__":
+    main()
