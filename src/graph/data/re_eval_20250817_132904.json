@@ -1,0 +1,670 @@
+{
+  "timestamp": "20250817_132904",
+  "core": {
+    "tp": 62,
+    "fp": 8,
+    "fn": 8,
+    "precision": 0.8857142857142857,
+    "recall": 0.8857142857142857,
+    "f1": 0.8857142857142857
+  },
+  "modifiers": {
+    "gt": 185,
+    "pred": 190,
+    "correct": 161,
+    "accuracy": 0.8702702702702703,
+    "precision": 0.8473684210526315,
+    "recall": 0.8702702702702703,
+    "f1": 0.8586666666666666
+  },
+  "failed_cases": [
+    {
+      "sentence": "The resourceful hacker easily bypassed the company's outdated security system.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "hacker",
+            "modifiers": [
+              "resourceful"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "easily bypassed"
+          },
+          "object": {
+            "head": "system",
+            "modifiers": [
+              "outdated",
+              "security"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "company",
+            "modifiers": []
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "owns"
+          },
+          "object": {
+            "head": "system",
+            "modifiers": [
+              "outdated",
+              "security"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "hacker"
+          },
+          "relation": {
+            "type": "action",
+            "text": "bypassed"
+          },
+          "object": {
+            "head": "system"
+          }
+        },
+        {
+          "subject": {
+            "head": "system"
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "of"
+          },
+          "object": {
+            "head": "company"
+          }
+        }
+      ],
+      "reason": "FP: 1, FN: 1"
+    },
+    {
+      "sentence": "The world-famous author enthusiastically signed copies of her bestselling new book.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "author",
+            "modifiers": [
+              "world-famous"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "enthusiastically signed"
+          },
+          "object": {
+            "head": "copies",
+            "modifiers": []
+          }
+        },
+        {
+          "subject": {
+            "head": "copies",
+            "modifiers": []
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "of"
+          },
+          "object": {
+            "head": "book",
+            "modifiers": [
+              "bestselling",
+              "new"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "author",
+            "modifiers": [
+              "world-famous"
+            ]
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "owns"
+          },
+          "object": {
+            "head": "book",
+            "modifiers": [
+              "bestselling",
+              "new"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "author"
+          },
+          "relation": {
+            "type": "action",
+            "text": "signed"
+          },
+          "object": {
+            "head": "copies"
+          }
+        },
+        {
+          "subject": {
+            "head": "copies"
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "of"
+          },
+          "object": {
+            "head": "book"
+          }
+        }
+      ],
+      "reason": "FP: 0, FN: 1"
+    },
+    {
+      "sentence": "A sleek black cat played gently with a fluffy white kitten.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "cat",
+            "modifiers": [
+              "sleek",
+              "black"
+            ]
+          },
+          "relation": {
+            "type": "association",
+            "text": "played gently with"
+          },
+          "object": {
+            "head": "kitten",
+            "modifiers": [
+              "fluffy",
+              "white"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "cat"
+          },
+          "relation": {
+            "type": "action",
+            "text": "played gently with"
+          },
+          "object": {
+            "head": "kitten"
+          }
+        },
+        {
+          "subject": {
+            "head": "cat"
+          },
+          "relation": {
+            "type": "association",
+            "text": "played with"
+          },
+          "object": {
+            "head": "kitten"
+          }
+        }
+      ],
+      "reason": "FP: 1, FN: 0"
+    },
+    {
+      "sentence": "The renowned architect partnered with an innovative engineer on the ambitious skyscraper project.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "architect",
+            "modifiers": [
+              "renowned"
+            ]
+          },
+          "relation": {
+            "type": "association",
+            "text": "partnered with"
+          },
+          "object": {
+            "head": "engineer",
+            "modifiers": [
+              "innovative"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "architect",
+            "modifiers": [
+              "renowned"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "partnered on"
+          },
+          "object": {
+            "head": "project",
+            "modifiers": [
+              "ambitious",
+              "skyscraper"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "engineer",
+            "modifiers": [
+              "innovative"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "partnered on"
+          },
+          "object": {
+            "head": "project",
+            "modifiers": [
+              "ambitious",
+              "skyscraper"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "architect"
+          },
+          "relation": {
+            "type": "association",
+            "text": "partnered with"
+          },
+          "object": {
+            "head": "engineer"
+          }
+        }
+      ],
+      "reason": "FP: 0, FN: 2"
+    },
+    {
+      "sentence": "My very energetic puppy loves playing with the neighbor's calm, older dog.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "puppy",
+            "modifiers": [
+              "very energetic"
+            ]
+          },
+          "relation": {
+            "type": "association",
+            "text": "loves playing with"
+          },
+          "object": {
+            "head": "dog",
+            "modifiers": [
+              "calm",
+              "older"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "neighbor",
+            "modifiers": []
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "owns"
+          },
+          "object": {
+            "head": "dog",
+            "modifiers": [
+              "calm",
+              "older"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "puppy"
+          },
+          "relation": {
+            "type": "action",
+            "text": "loves playing with"
+          },
+          "object": {
+            "head": "dog"
+          }
+        },
+        {
+          "subject": {
+            "head": "puppy"
+          },
+          "relation": {
+            "type": "association",
+            "text": "playing with"
+          },
+          "object": {
+            "head": "dog"
+          }
+        },
+        {
+          "subject": {
+            "head": "dog"
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "owns"
+          },
+          "object": {
+            "head": "neighbor"
+          }
+        }
+      ],
+      "reason": "FP: 2, FN: 1"
+    },
+    {
+      "sentence": "A majestic lion shared a quiet moment with a fearless little mouse.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "lion",
+            "modifiers": [
+              "majestic"
+            ]
+          },
+          "relation": {
+            "type": "association",
+            "text": "shared a quiet moment with"
+          },
+          "object": {
+            "head": "mouse",
+            "modifiers": [
+              "fearless",
+              "little"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "lion",
+            "modifiers": [
+              "majestic"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "shared"
+          },
+          "object": {
+            "head": "moment",
+            "modifiers": [
+              "quiet"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "lion"
+          },
+          "relation": {
+            "type": "action",
+            "text": "shared with"
+          },
+          "object": {
+            "head": "mouse"
+          }
+        },
+        {
+          "subject": {
+            "head": "lion"
+          },
+          "relation": {
+            "type": "association",
+            "text": "shared with"
+          },
+          "object": {
+            "head": "mouse"
+          }
+        },
+        {
+          "subject": {
+            "head": "lion"
+          },
+          "relation": {
+            "type": "action",
+            "text": "shared"
+          },
+          "object": {
+            "head": "moment"
+          }
+        },
+        {
+          "subject": {
+            "head": "mouse"
+          },
+          "relation": {
+            "type": "action",
+            "text": "shared with"
+          },
+          "object": {
+            "head": "lion"
+          }
+        }
+      ],
+      "reason": "FP: 2, FN: 0"
+    },
+    {
+      "sentence": "The ancient, mysterious castle's crumbling stone walls were covered in ivy.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "castle",
+            "modifiers": [
+              "ancient",
+              "mysterious"
+            ]
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "has"
+          },
+          "object": {
+            "head": "walls",
+            "modifiers": [
+              "crumbling",
+              "stone"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "walls",
+            "modifiers": [
+              "crumbling",
+              "stone"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "were covered in"
+          },
+          "object": {
+            "head": "ivy",
+            "modifiers": []
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "walls"
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "of"
+          },
+          "object": {
+            "head": "castle"
+          }
+        },
+        {
+          "subject": {
+            "head": "walls"
+          },
+          "relation": {
+            "type": "action",
+            "text": "were covered in"
+          },
+          "object": {
+            "head": "ivy"
+          }
+        }
+      ],
+      "reason": "FP: 1, FN: 1"
+    },
+    {
+      "sentence": "The intricate design of the antique Persian rug featured deep, rich colors.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "rug",
+            "modifiers": [
+              "antique",
+              "Persian"
+            ]
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "has"
+          },
+          "object": {
+            "head": "design",
+            "modifiers": [
+              "intricate"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "design",
+            "modifiers": [
+              "intricate"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "featured"
+          },
+          "object": {
+            "head": "colors",
+            "modifiers": [
+              "deep",
+              "rich"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "rug"
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "has"
+          },
+          "object": {
+            "head": "design"
+          }
+        },
+        {
+          "subject": {
+            "head": "rug"
+          },
+          "relation": {
+            "type": "action",
+            "text": "featured"
+          },
+          "object": {
+            "head": "colors"
+          }
+        }
+      ],
+      "reason": "FP: 1, FN: 1"
+    },
+    {
+      "sentence": "The company's latest quarterly report revealed surprisingly high profits.",
+      "ground_truth": [
+        {
+          "subject": {
+            "head": "company",
+            "modifiers": []
+          },
+          "relation": {
+            "type": "belonging",
+            "text": "has"
+          },
+          "object": {
+            "head": "report",
+            "modifiers": [
+              "latest",
+              "quarterly"
+            ]
+          }
+        },
+        {
+          "subject": {
+            "head": "report",
+            "modifiers": [
+              "latest",
+              "quarterly"
+            ]
+          },
+          "relation": {
+            "type": "action",
+            "text": "revealed"
+          },
+          "object": {
+            "head": "profits",
+            "modifiers": [
+              "surprisingly high"
+            ]
+          }
+        }
+      ],
+      "predicted": [
+        {
+          "subject": {
+            "head": "report"
+          },
+          "relation": {
+            "type": "action",
+            "text": "revealed surprisingly high"
+          },
+          "object": {
+            "head": "profits"
+          }
+        }
+      ],
+      "reason": "FP: 0, FN: 1"
+    }
+  ]
+}

@@ -192,16 +192,16 @@ def slider_view():
             <div class='scale-item'>
                 <div class='scale-number'>-3</div>
                 <div class='scale-label'>
-                    <span class='desktop-label'>Negative</span>
-                    <span class='mobile-label'>Neg.</span>
+                    <span class='desktop-label'>Strongly<br>Negative</span>
+                    <span class='mobile-label'>Str.<br>Neg.</span>
                 </div>
             </div>
             <div class='scale-separator'></div>
             <div class='scale-item'>
                 <div class='scale-number'>-2</div>
                 <div class='scale-label'>
-                    <span class='desktop-label'>Somewhat<br>Negative</span>
-                    <span class='mobile-label'>Som.<br>Neg.</span>
+                    <span class='desktop-label'>Moderately<br>Negative</span>
+                    <span class='mobile-label'>Mod.<br>Neg.</span>
                 </div>
             </div>
             <div class='scale-separator'></div>
@@ -232,16 +232,16 @@ def slider_view():
             <div class='scale-item'>
                 <div class='scale-number'>2</div>
                 <div class='scale-label'>
-                    <span class='desktop-label'>Somewhat<br>Positive</span>
-                    <span class='mobile-label'>Som.<br>Pos.</span>
+                    <span class='desktop-label'>Moderately<br>Positive</span>
+                    <span class='mobile-label'>Mod.<br>Pos.</span>
                 </div>
             </div>
             <div class='scale-separator'></div>
             <div class='scale-item'>
                 <div class='scale-number'>3</div>
                 <div class='scale-label'>
-                    <span class='desktop-label'>Positive</span>
-                    <span class='mobile-label'>Pos.</span>
+                    <span class='desktop-label'>Strongly<br>Positive</span>
+                    <span class='mobile-label'>Str.<br>Pos.</span>
                 </div>
             </div>
             <div class='scale-separator'></div>
@@ -366,11 +366,11 @@ def display_attention_check():
     <div class=\"academic-paper\">
     <h3 style='font-family: \"Source Serif Pro\", serif;'>Attention Check</h3>
     <p style='font-size: 17px;'>
-    To ensure data quality, please select <b>Somewhat Positive (2)</b> as your answer for this question.
+    To ensure data quality, please select <b>Moderately Positive (2)</b> as your answer for this question.
     </p>
     </div>
     """, unsafe_allow_html=True)
-    score = st.slider(label="Please select Somewhat Positive (2)", min_value=-4, max_value=4, value=0, format="%d", key="attention_check_slider", label_visibility="collapsed")
+    score = st.slider(label="Please select Moderately Positive (2)", min_value=-4, max_value=4, value=0, format="%d", key="attention_check_slider", label_visibility="collapsed")
     slider_view()
     st.markdown(f"<p style='font-family: \"Source Serif Pro\", serif;'>Your answer: <strong>{score} ({sentiment_scale[score]})</strong></p>", unsafe_allow_html=True)
     if st.button("Next", key="attention_check_next_btn", type="primary", use_container_width=True):
@@ -473,7 +473,7 @@ Please check the following boxes to consent to this survey.
         st.session_state.packet_sentiment_history = []
         st.rerun()
 
-sentiment_scale = {-4: "Extremely Negative", -3: "Negative", -2: "Somewhat Negative", -1: "Slightly Negative", 0: "Neutral", 1: "Slightly Positive", 2: "Somewhat Positive", 3: "Positive", 4: "Extremely Positive"}
+sentiment_scale = {-4: "Extremely Negative", -3: "Strongly Negative", -2: "Moderately Negative", -1: "Slightly Negative", 0: "Neutral", 1: "Slightly Positive", 2: "Moderately Positive", 3: "Strongly Positive", 4: "Extremely Positive"}
 
 def get_scorable_entities(item):
     if item.get('type') in ['compound_action', 'compound_association', 'compound_belonging']:
@@ -715,9 +715,9 @@ def export_to_google_sheets(data_df):
             data_rows = df_ordered.values.tolist()
             next_row = len(existing_data) + 1
             ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
-        st.success(f"Data successfully exported to Google Sheet (ID: {GOOGLE_SHEET_ID})")
+        st.success("Data successfully exported to Google Sheet.")
     except gspread.exceptions.SpreadsheetNotFound:
-        st.error(f"Google Sheet (ID: '{GOOGLE_SHEET_ID}') not found or not shared with the service account: {creds_dict.get('client_email', 'your service account email')}.")
+        st.error("Google Sheet not found or not shared with the service account.")
     except Exception as e:
         st.error(f"An error occurred during Google Sheets export: {e}")
 

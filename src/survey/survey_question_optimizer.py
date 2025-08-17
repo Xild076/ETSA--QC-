@@ -39,19 +39,19 @@ except Exception as e:
     print(f"Error reading CSV from {url}: {e}")
 
 intensity_map_string = {
-    'very': 0.85,
-    'strong': 0.6,
-    'moderate': 0.4,
-    'slight': 0.2,
+    'very': 0.90,
+    'strong': 0.70,
+    'moderate': 0.45,
+    'slight': 0.20,
     'neutral': 0.0
 }
 
 intensity_map_integer = {
-    4: 0.85,
-    3: 0.6,
-    2: 0.4,
-    1: 0.2,
-    0: 0.0
+    4: 0.90,
+    3: 0.70,
+    2: 0.45,
+    1: 0.20,
+    0: 0.00
 }
 
 sentiment_sign_map = {'positive': 1, 'negative': -1}
@@ -1282,7 +1282,7 @@ def save_optimal_parameters(all_results: dict, out_path: str = "src/survey/optim
     payload = {"version": 1, "saved_at": datetime.utcnow().isoformat() + 'Z', "entries": entries}
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, 'w') as f:
-        json.dump(payload, f)
+        json.dump(payload, f, indent=4)
 
 def load_optimal_parameters(in_path: str = "src/survey/optimal_formulas/all_optimal_parameters.json") -> dict:
     if not os.path.exists(in_path):

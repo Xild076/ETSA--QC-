@@ -2,7 +2,14 @@ import json
 import os
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
+import time
+import threading
+import random
 import google.generativeai as genai
+try:
+    from google.api_core import exceptions as gapi_exceptions
+except Exception:
+    gapi_exceptions = None
 try:
     from dotenv import load_dotenv, find_dotenv
     load_dotenv(find_dotenv(), override=False)
@@ -10,13 +17,42 @@ except Exception:
     pass
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
+GENAI_REQUESTS_PER_MIN = float(os.getenv("GENAI_REQUESTS_PER_MIN", "15"))
+GENAI_MAX_RETRIES = int(os.getenv("GENAI_MAX_RETRIES", "6"))
+GENAI_BASE_BACKOFF_SECONDS = float(os.getenv("GENAI_BASE_BACKOFF_SECONDS", "1.5"))
+GENAI_MAX_BACKOFF_SECONDS = float(os.getenv("GENAI_MAX_BACKOFF_SECONDS", "30"))
+
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class _RateLimiter:
+
+    def __init__(self, rpm: float):
+        self._interval = 60.0 / max(rpm, 0.001)
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    @property
+    def interval(self) -> float:
+        return self._interval
+
+    def acquire(self):
+        now = time.monotonic()
+        with self._lock:
+            wait = max(0.0, self._next_allowed - now)
+            if wait > 0:
+                time.sleep(wait)
+            now2 = time.monotonic()
+            self._next_allowed = max(self._next_allowed, now2) + self._interval
+
+
+_GLOBAL_GENAI_LIMITER = _RateLimiter(GENAI_REQUESTS_PER_MIN)
+
 class GemmaRelationExtractor:
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, rate_limiter: _RateLimiter | None = None):
         logger.info("Initializing GemmaRelationExtractor...")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
@@ -24,6 +60,7 @@ class GemmaRelationExtractor:
         
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel("gemma-3-27b-it")
+        self._rate_limiter = rate_limiter or _GLOBAL_GENAI_LIMITER
         
     def extract_relations(self, sentence: str, entities: List[str]) -> Dict[str, Any]:
         logger.info("Extracting relations...")
@@ -82,11 +119,6 @@ class GemmaRelationExtractor:
             )
             
             if signature not in seen_relations:
-                if "modifiers" in relation["subject"]:
-                    relation["subject"]["modifiers"] = list(filter(None, set(relation["subject"]["modifiers"])))
-                if "modifiers" in relation["object"]:
-                    relation["object"]["modifiers"] = list(filter(None, set(relation["object"]["modifiers"])))
-                    
                 cleaned_relations.append(relation)
                 seen_relations.add(signature)
         
@@ -103,72 +135,137 @@ class GemmaRelationExtractor:
             )
         except (KeyError, TypeError):
             return False
-
     def _create_prompt(self, sentence: str, entities: List[str]) -> str:
         entities_json = json.dumps(entities)
-        
-        return f"""You are an expert relation extraction system. Analyze the given sentence and extract relationships between the specified entities.
+        return f"""You are an expert relation extraction system. Extract ONLY relationships between the listed entities. Be exhaustive and precise.
 
 SENTENCE: "{sentence}"
 ENTITIES: {entities_json}
 
-Extract relationships of these types:
-1. ACTION: One entity performs an action on another (hit, help, attack, save, etc.)
-2. ASSOCIATION: Entities are connected or work together (with, together, alongside, etc.)  
-3. BELONGING: One entity belongs to or is owned by another (possessive, part-of relationships)
+TYPES
+1) action: Directed verb phrase where the subject acts on the object.
+     - Include particles/prepositions/adverbs that are integral to the verb phrase (e.g., "tended to", "streaked across", "was moored in", "were covered in").
+     - Do NOT include direct objects or attached "of/with" complements inside the relation text; stop the phrase before the object NP.
+2) association: Cooperative/symmetric joint activity between two entities (worked/partnered/collaborated/played … together/with/alongside).
+     - Use only for joint activity; not for location/path prepositions.
+     - Emit association ONCE per unordered pair. Choose the earlier-mentioned entity as subject; do not output the reverse.
+     - If the same verb also takes a separate object (e.g., "worked on X"), you may also output action relations to that object, but DO NOT also output a duplicate action between the two associates.
+3) belonging: Ownership or part-of (X's Y, Y of X, owns, has/have/had, with [possession], belongs to).
+     - Canonicalize as follows:
+         a) Possessive (X's Y): subject=X, text="owns" or "has", object=Y.
+         a2) Possessive pronoun referring to an entity (his/her/their/its Y): subject=referent entity, text="owns" or "has", object=Y.
+         b) "Y of X":
+                - If Y is a concrete part/property (wheel, door, screen, design), prefer owner direction: subject=X, text="has", object=Y.
+                - If Y is a collection/measure/event noun (flock, herd, team, copy/copies, series, takeover), keep subject=Y, text="of", object=X.
+         c) Noun-with-Noun ("room with ceilings"): subject=first noun, text="with", object=second noun as belonging.
+     - Do NOT create belonging for mere spatial relations.
 
-For each entity mention, also extract descriptive MODIFIERS (adjectives, colors, sizes, descriptive phrases like "was/is/are [insert something]", etc.).
+ALGORITHM (internal – do not output these steps)
+Enumerate all ordered pairs of distinct entities (A, B) from ENTITIES. For each pair:
+        - If possessive/of/with-possession pattern links them: add belonging per the rules above.
+        - If a joint-activity verb connects them with with/together/alongside: add association for the pair once.
+        - If a directed verb phrase goes from A to B: add action A→B; include verb + required particles/preps/adverbs, but no objects or "of/with NP" complements.
+Do this for every pair; many sentences have multiple relations. Avoid duplicates.
 
-CRITICAL: Use lowercase relation types (action, association, belonging) and ensure ALL strings use double quotes, not single quotes.
+DECISIONS CHECKLIST
+- Use only ENTITIES; use exact surface form in heads.
+- Output ALL relations present; don’t omit valid ones.
+- Never output relations where subject == object.
+- Reject preposition-only relation texts: of, with, from, to, into, onto, in, on, at, by, for, about, over, under, across, through, along, past, beyond. Use them only inside a verb phrase or as belonging/association per the rules.
+- Disambiguate "with":
+    • VERB with NP where VERB is symmetric (work, collaborate, partner, play, share): association between the two participants only.
+    • NP with NP (possession/attributes): belonging.
+- Collective NPs ("group/flock/team/herd of X"): the collective performs actions; do not also assign the same action to X unless explicitly stated.
+- Event/collection nouns ("takeover of company", "copies of the book"): belonging with text "of" from the event/collection to its theme (subject=event/collection, object=theme).
+ - Association requires agentive participants (people/animals/groups/organizations). Do not create association with inanimate objects, events, or moments.
+ - Ignore path/location attachments like "from X", "in/at/on X" when they only indicate location/source and not a true action relation between two entities.
 
-Return ONLY a valid JSON object in this exact format:
+OUTPUT FORMAT (JSON only):
 {{
-  "sentence": "{sentence}",
-  "entities": {entities_json},
-  "relations": [
-    {{
-      "subject": {{
-        "head": "entity_name",
-        "modifiers": ["modifier1", "modifier2"]
-      }},
-      "relation": {{
-        "type": "action",
-        "text": "relationship_description"
-      }},
-      "object": {{
-        "head": "entity_name", 
-        "modifiers": ["modifier1", "modifier2"]
-      }}
-    }}
-  ]
+    "sentence": "{sentence}",
+    "entities": {entities_json},
+    "relations": [
+        {{
+            "subject": {{ "head": "entity_name" }},
+            "relation": {{ "type": "action|association|belonging", "text": "relationship_description" }},
+            "object": {{ "head": "entity_name" }}
+        }}
+    ]
 }}
 
-Examples:
-- "The red car crashed into the blue truck" → car (modifiers: ["red"]) ACTION "crashed into" truck (modifiers: ["blue"])
-- "John and Mary worked together" → John ASSOCIATION "worked together" Mary
-- "Alice's phone is broken" → Alice BELONGING "owns" phone (modifiers: ["broken"])
-- "The phone's wifi was terrible" → phone BELONGING "owns" wifi (modifiers: ["was terrible"])
+POSITIVE EXAMPLES (generic; not from your dataset)
+- "The biologist carefully cataloged rare specimens" → biologist action "carefully cataloged" specimens.
+- "The programmer collaborated with the designer on the interface" → programmer association "collaborated with" designer; actions "worked on" may target "interface" but NOT between programmer↔designer again.
+- "A flock of birds crossed the valley" → flock belonging "of" birds; flock action "crossed" valley; do not also say birds crossed, unless stated.
+- "The wheel of the car was replaced" → car belonging "has" wheel.
+- "The copies of the novel sold quickly" → copies belonging "of" novel.
+- "The room with skylights felt bright" → room belonging "with" skylights.
+- "They partnered together on the study" → association "partnered with" between participants only; action "worked on" may target study.
 
-IMPORTANT: Extract meaningful directional relations. Avoid creating symmetric relations unless they truly are bidirectional. Return valid JSON only with double quotes."""
+NEGATIVE/EDGE GUIDANCE
+- Do not create relations where the only connector is a path/location preposition (from/to/into/onto/in/on/at/by/over/under/across/through/along/past/beyond) unless covered by action verb phrases.
+- Do not include objects or "of/with NP" complements inside action relation text.
+- If a relation phrase connects an entity to a non-entity concept, ignore it unless the concept is in ENTITIES.
+- If both association and action to a third object are present, include both; but emit association only once per pair.
+
+IMPORTANT
+- Use lowercase relation types (action, association, belonging).
+- Use only double quotes in JSON.
+- Return valid JSON only, no extra text."""
 
     def _query_gemma(self, prompt: str) -> str:
         generation_config = genai.types.GenerationConfig(
-            temperature=0.1,
+            temperature=0.0,
             max_output_tokens=2000,
             top_p=0.9,
             top_k=40
         )
-        try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=generation_config
-            )
-            if not response.text or response.text.strip() == "":
-                raise ValueError("Empty response from Gemma model")
-            return response.text
-        except Exception as e:
-            print(f"Error querying Gemma model: {e}")
-            raise
+
+        def _is_rate_limited_error(err: Exception) -> bool:
+            s = str(err).lower()
+            if "429" in s or "rate" in s or "quota" in s or "exceed" in s or "resource exhausted" in s:
+                return True
+            if gapi_exceptions is not None:
+                if isinstance(err, getattr(gapi_exceptions, "ResourceExhausted", tuple())):
+                    return True
+                if isinstance(err, getattr(gapi_exceptions, "TooManyRequests", tuple())):
+                    return True
+                if isinstance(err, getattr(gapi_exceptions, "DeadlineExceeded", tuple())):
+                    return True
+                if isinstance(err, getattr(gapi_exceptions, "ServiceUnavailable", tuple())):
+                    return True
+            return False
+
+        attempts = 0
+        last_err = None
+        while attempts < GENAI_MAX_RETRIES:
+            attempts += 1
+            try:
+                self._rate_limiter.acquire()
+                response = self.model.generate_content(
+                    prompt,
+                    generation_config=generation_config
+                )
+                if not response.text or response.text.strip() == "":
+                    raise ValueError("Empty response from Gemma model")
+                return response.text
+            except Exception as e:
+                last_err = e
+                is_rate = _is_rate_limited_error(e)
+                if attempts >= GENAI_MAX_RETRIES or not is_rate:
+                    logger.error(f"Gemma query failed (attempt {attempts}/{GENAI_MAX_RETRIES}): {e}")
+                    raise
+                base = max(GENAI_BASE_BACKOFF_SECONDS, self._rate_limiter.interval)
+                delay = min(GENAI_MAX_BACKOFF_SECONDS, base * (2 ** (attempts - 1)))
+                jitter = random.uniform(0.75, 1.25)
+                sleep_s = delay * jitter
+                logger.warning(f"Rate limit encountered; backing off for {sleep_s:.2f}s (attempt {attempts}/{GENAI_MAX_RETRIES})")
+                time.sleep(sleep_s)
+                continue
+
+        if last_err:
+            raise last_err
+        raise RuntimeError("Gemma query failed without an explicit error")
 
     def _parse_response(self, response: str, sentence: str, entities: List[str]) -> Dict[str, Any]:
         try:
@@ -184,6 +281,7 @@ IMPORTANT: Extract meaningful directional relations. Avoid creating symmetric re
             json_end = response_clean.rfind('}') + 1
             if json_start != -1 and json_end > json_start:
                 response_clean = response_clean[json_start:json_end]
+            response_clean = self._pre_sanitize_malformed_tokens(response_clean)
             response_clean = self._fix_json_quotes(response_clean)
             result = json.loads(response_clean)
             if "relations" not in result:
@@ -192,15 +290,11 @@ IMPORTANT: Extract meaningful directional relations. Avoid creating symmetric re
             result["entities"] = entities
             for relation in result["relations"]:
                 if "subject" not in relation:
-                    relation["subject"] = {"head": "", "modifiers": []}
+                    relation["subject"] = {"head": ""}
                 if "object" not in relation:
-                    relation["object"] = {"head": "", "modifiers": []}
+                    relation["object"] = {"head": ""}
                 if "relation" not in relation:
                     relation["relation"] = {"type": "unknown", "text": ""}
-                if "modifiers" not in relation["subject"]:
-                    relation["subject"]["modifiers"] = []
-                if "modifiers" not in relation["object"]:
-                    relation["object"]["modifiers"] = []
                 if "type" in relation["relation"]:
                     relation["relation"]["type"] = relation["relation"]["type"].lower()
             return result
@@ -218,6 +312,17 @@ IMPORTANT: Extract meaningful directional relations. Avoid creating symmetric re
         fixed = fixed.replace("__APOSTROPHE__", "'")
         fixed = fixed.replace("__POSSESSIVE__", "'s")
         return fixed
+
+    def _pre_sanitize_malformed_tokens(self, text: str) -> str:
+        import re
+        s = text
+        s = s.replace('[""s"]', '["\'s"]')
+        s = s.replace(', ""s"', ', "\'s"')
+        s = s.replace('""s"', "'s\"")
+        s = re.sub(r"\[\s*\"\"\s*,", "[", s)
+        s = re.sub(r",\s*\"\"\s*\]", "]", s)
+        s = s.replace(", ,", ",")
+        return s
 
     def _fallback_parse(self, response: str, sentence: str, entities: List[str]) -> Dict[str, Any]:
         relations = []
@@ -275,13 +380,12 @@ IMPORTANT: Extract meaningful directional relations. Avoid creating symmetric re
                     break
         
         return {
-            "subject": {"head": entity1, "modifiers": []},
+            "subject": {"head": entity1},
             "relation": {"type": rel_type, "text": rel_text},
-            "object": {"head": entity2, "modifiers": []}
+            "object": {"head": entity2}
         }
 
     def _is_duplicate_relation(self, relations: List[Dict], new_relation: Dict) -> bool:
-        """Check if a relation already exists to avoid duplicates."""
         for existing in relations:
             if (existing["subject"]["head"] == new_relation["subject"]["head"] and
                 existing["object"]["head"] == new_relation["object"]["head"] and
@@ -298,7 +402,7 @@ def extract_entity_modifiers(sentence: str, entity: str) -> List[str]:
 SENTENCE: "{sentence}"
 TARGET ENTITY: "{entity}"
 
-Extract ONLY meaningful descriptive modifiers (adjectives, colors, sizes, states, conditions, emotions) that describe the target entity. 
+Extract ONLY meaningful descriptive modifiers (adjectives, colors, sizes, states, conditions, emotions) that describe the target entity. Ensure that all modifiers are listed separately, however, if there is a modifier to the modifier like an adverb, keep them together.
 
 DO NOT include:
 - Articles (a, an, the)
@@ -334,13 +438,25 @@ If no meaningful modifiers found, return: []"""
         if start != -1 and end > start:
             json_str = response_clean[start:end]
             import json
+            json_str = extractor._pre_sanitize_malformed_tokens(json_str)
             modifiers = json.loads(json_str)
             filtered_modifiers = []
-            skip_words = {'', 'the', 'a', 'an', 'his', 'her', 'its', 'their', 'my', 'your', 'our'}
+            skip_words = {'', 'the', 'a', 'an', 'his', 'her', 'its', 'their', 'my', 'your', 'our', "'s"}
             for mod in modifiers:
-                if isinstance(mod, str) and mod.strip().lower() not in skip_words and len(mod.strip()) > 0:
-                    filtered_modifiers.append(mod.strip())
-            return filtered_modifiers
+                if not isinstance(mod, str):
+                    continue
+                mm = mod.strip().strip(',.;:!?').strip('"').strip()
+                if mm.lower() in skip_words or not mm:
+                    continue
+                filtered_modifiers.append(mm)
+            seen = set()
+            uniq = []
+            for m in filtered_modifiers:
+                ml = m.lower()
+                if ml not in seen:
+                    seen.add(ml)
+                    uniq.append(m)
+            return uniq
         
         return []
         
@@ -403,31 +519,21 @@ def test_gemma_relation_extraction():
                 
                 print(f"Model used: {result.get('approach_used', 'unknown')}")
                 print(f"Timestamp: {result.get('timestamp', 'N/A')}")
-                
                 if result.get("relations"):
                     total_success += 1
                     for j, rel in enumerate(result["relations"], 1):
                         print(f"  ✅ Relation {j}:")
-                        print(f"    Subject: '{rel['subject']['head']}'", end="")
-                        if rel['subject'].get('modifiers'):
-                            print(f" (modifiers: {rel['subject']['modifiers']})", end="")
-                        print()
+                        print(f"    Subject: '{rel['subject']['head']}'")
                         print(f"    Type: {rel['relation']['type'].upper()}")
                         print(f"    Text: '{rel['relation']['text']}'")
-                        print(f"    Object: '{rel['object']['head']}'", end="")
-                        if rel['object'].get('modifiers'):
-                            print(f" (modifiers: {rel['object']['modifiers']})", end="")
-                        print()
+                        print(f"    Object: '{rel['object']['head']}'")
                 else:
                     print("  ❌ No relations extracted")
                     if "error" in result:
                         print(f"  Error: {result['error']}")
-                
                 if result.get("fallback_used"):
                     print("  ⚠️ Fallback parsing was used")
-                
                 print()
-            
             print()
         
         print("COMPLEX SENTENCE TESTING:")
@@ -451,17 +557,10 @@ def test_gemma_relation_extraction():
                 total_success += 1
                 for rel in result["relations"]:
                     subj_str = f"'{rel['subject']['head']}'"
-                    if rel['subject'].get('modifiers'):
-                        subj_str += f" (modifiers: {rel['subject']['modifiers']})"
-                    
                     obj_str = f"'{rel['object']['head']}'"
-                    if rel['object'].get('modifiers'):
-                        obj_str += f" (modifiers: {rel['object']['modifiers']})"
-                    
                     print(f" FOUND! {subj_str} --{rel['relation']['type']}: {rel['relation']['text']}--> {obj_str}")
             else:
                 print("No relations found")
-            
             print()
         
         print("=" * 70)
@@ -485,6 +584,3 @@ def batch_extract_relations(sentences_and_entities: List[Tuple[str, List[str]]],
     
     return results
 
-"""
-if __name__ == "__main__":
-    test_gemma_relation_extraction()"""

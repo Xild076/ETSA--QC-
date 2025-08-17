@@ -11,7 +11,13 @@ def run_app():
 
 def run_tests():
     print(f"{Fore.GREEN}Running tests...{Style.RESET_ALL}")
-    test_all_parameterizations()
+    out = test_all_parameterizations()
+    print("\nSummary:")
+    for sk, summary in out.items():
+        print(f"score_key={sk}")
+        for k, v in summary.items():
+            if v and "best" in v:
+                print(f"- {k}: MSE={v['best']['mse']:.4f} | model={v['best']['model']} | split={v['best']['split']} | outliers={v['best'].get('remove_outliers','none')}")
 
 def main():
     parser = argparse.ArgumentParser(description="ETSA CLI")

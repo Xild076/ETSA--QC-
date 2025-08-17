@@ -1,0 +1,1761 @@
+[
+  {
+    "sentence": "A brave firefighter rescued the trapped kitten from the tall, burning tree.",
+    "entities": [
+      "firefighter",
+      "kitten",
+      "tree"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "firefighter",
+          "modifiers": [
+            "brave"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "rescued"
+        },
+        "object": {
+          "head": "kitten",
+          "modifiers": [
+            "trapped"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The talented artist meticulously painted a beautiful, vibrant landscape.",
+    "entities": [
+      "artist",
+      "landscape"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "artist",
+          "modifiers": [
+            "talented"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "meticulously painted"
+        },
+        "object": {
+          "head": "landscape",
+          "modifiers": [
+            "beautiful",
+            "vibrant"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "An old, rusty truck slowly hauled the heavy load of timber.",
+    "entities": [
+      "truck",
+      "load",
+      "timber"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "truck",
+          "modifiers": [
+            "old",
+            "rusty"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "slowly hauled"
+        },
+        "object": {
+          "head": "load",
+          "modifiers": [
+            "heavy"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "load",
+          "modifiers": [
+            "heavy"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "of"
+        },
+        "object": {
+          "head": "timber",
+          "modifiers": []
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The curious child accidentally broke the expensive antique vase.",
+    "entities": [
+      "child",
+      "vase"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "child",
+          "modifiers": [
+            "curious"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "accidentally broke"
+        },
+        "object": {
+          "head": "vase",
+          "modifiers": [
+            "expensive",
+            "antique"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A powerful storm violently battered the small coastal village.",
+    "entities": [
+      "storm",
+      "village"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "storm",
+          "modifiers": [
+            "powerful"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "violently battered"
+        },
+        "object": {
+          "head": "village",
+          "modifiers": [
+            "small",
+            "coastal"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The stealthy black cat silently stalked the unsuspecting field mouse.",
+    "entities": [
+      "cat",
+      "mouse"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "cat",
+          "modifiers": [
+            "stealthy",
+            "black"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "silently stalked"
+        },
+        "object": {
+          "head": "mouse",
+          "modifiers": [
+            "unsuspecting",
+            "field"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "An experienced chef masterfully prepared the delicious gourmet meal.",
+    "entities": [
+      "chef",
+      "meal"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "chef",
+          "modifiers": [
+            "experienced"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "masterfully prepared"
+        },
+        "object": {
+          "head": "meal",
+          "modifiers": [
+            "delicious",
+            "gourmet"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The determined student diligently studied for the difficult final exam.",
+    "entities": [
+      "student",
+      "exam"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "student",
+          "modifiers": [
+            "determined"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "diligently studied for"
+        },
+        "object": {
+          "head": "exam",
+          "modifiers": [
+            "difficult",
+            "final"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A rogue wave suddenly capsized the small, weathered fishing boat.",
+    "entities": [
+      "wave",
+      "boat"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "wave",
+          "modifiers": [
+            "rogue"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "suddenly capsized"
+        },
+        "object": {
+          "head": "boat",
+          "modifiers": [
+            "small",
+            "weathered",
+            "fishing"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The ambitious CEO aggressively pursued a hostile takeover of the rival company.",
+    "entities": [
+      "CEO",
+      "takeover",
+      "company"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "CEO",
+          "modifiers": [
+            "ambitious"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "aggressively pursued"
+        },
+        "object": {
+          "head": "takeover",
+          "modifiers": [
+            "hostile"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "takeover",
+          "modifiers": [
+            "hostile"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "of"
+        },
+        "object": {
+          "head": "company",
+          "modifiers": [
+            "rival"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A gentle nurse compassionately comforted the frightened young patient.",
+    "entities": [
+      "nurse",
+      "patient"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "nurse",
+          "modifiers": [
+            "gentle"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "compassionately comforted"
+        },
+        "object": {
+          "head": "patient",
+          "modifiers": [
+            "frightened",
+            "young"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The resourceful hacker easily bypassed the company's outdated security system.",
+    "entities": [
+      "hacker",
+      "company",
+      "system"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "hacker",
+          "modifiers": [
+            "resourceful"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "easily bypassed"
+        },
+        "object": {
+          "head": "system",
+          "modifiers": [
+            "outdated",
+            "security"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "company",
+          "modifiers": []
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "owns"
+        },
+        "object": {
+          "head": "system",
+          "modifiers": [
+            "outdated",
+            "security"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A noisy flock of seagulls greedily snatched the unattended picnic sandwiches.",
+    "entities": [
+      "flock",
+      "seagulls",
+      "sandwiches"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "flock",
+          "modifiers": [
+            "noisy"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "greedily snatched"
+        },
+        "object": {
+          "head": "sandwiches",
+          "modifiers": [
+            "unattended",
+            "picnic"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "flock",
+          "modifiers": [
+            "noisy"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "of"
+        },
+        "object": {
+          "head": "seagulls",
+          "modifiers": []
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The strong construction worker effortlessly lifted the massive steel beam.",
+    "entities": [
+      "worker",
+      "beam"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "worker",
+          "modifiers": [
+            "strong",
+            "construction"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "effortlessly lifted"
+        },
+        "object": {
+          "head": "beam",
+          "modifiers": [
+            "massive",
+            "steel"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A tiny, persistent ant carried a surprisingly large breadcrumb.",
+    "entities": [
+      "ant",
+      "breadcrumb"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "ant",
+          "modifiers": [
+            "tiny",
+            "persistent"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "carried"
+        },
+        "object": {
+          "head": "breadcrumb",
+          "modifiers": [
+            "surprisingly large"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The world-famous author enthusiastically signed copies of her bestselling new book.",
+    "entities": [
+      "author",
+      "copies",
+      "book"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "author",
+          "modifiers": [
+            "world-famous"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "enthusiastically signed"
+        },
+        "object": {
+          "head": "copies",
+          "modifiers": []
+        }
+      },
+      {
+        "subject": {
+          "head": "copies",
+          "modifiers": []
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "of"
+        },
+        "object": {
+          "head": "book",
+          "modifiers": [
+            "bestselling",
+            "new"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "author",
+          "modifiers": [
+            "world-famous"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "owns"
+        },
+        "object": {
+          "head": "book",
+          "modifiers": [
+            "bestselling",
+            "new"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "An unidentified flying object swiftly streaked across the dark, starry night sky.",
+    "entities": [
+      "object",
+      "sky"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "object",
+          "modifiers": [
+            "unidentified",
+            "flying"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "swiftly streaked across"
+        },
+        "object": {
+          "head": "sky",
+          "modifiers": [
+            "dark",
+            "starry",
+            "night"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The distracted driver carelessly ran the bright red light.",
+    "entities": [
+      "driver",
+      "light"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "driver",
+          "modifiers": [
+            "distracted"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "carelessly ran"
+        },
+        "object": {
+          "head": "light",
+          "modifiers": [
+            "bright red"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A diligent gardener lovingly tended to the delicate, fragrant roses.",
+    "entities": [
+      "gardener",
+      "roses"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "gardener",
+          "modifiers": [
+            "diligent"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "lovingly tended to"
+        },
+        "object": {
+          "head": "roses",
+          "modifiers": [
+            "delicate",
+            "fragrant"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The vicious Tyrannosaurus Rex fiercely hunted the swift, horned Triceratops.",
+    "entities": [
+      "Tyrannosaurus Rex",
+      "Triceratops"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "Tyrannosaurus Rex",
+          "modifiers": [
+            "vicious"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "fiercely hunted"
+        },
+        "object": {
+          "head": "Triceratops",
+          "modifiers": [
+            "swift",
+            "horned"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A professional cleaner thoroughly scrubbed the grimy kitchen floor.",
+    "entities": [
+      "cleaner",
+      "floor"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "cleaner",
+          "modifiers": [
+            "professional"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "thoroughly scrubbed"
+        },
+        "object": {
+          "head": "floor",
+          "modifiers": [
+            "grimy",
+            "kitchen"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The enthusiastic crowd loudly applauded the incredible solo performance.",
+    "entities": [
+      "crowd",
+      "performance"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "crowd",
+          "modifiers": [
+            "enthusiastic"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "loudly applauded"
+        },
+        "object": {
+          "head": "performance",
+          "modifiers": [
+            "incredible",
+            "solo"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The wise old professor collaborated closely with his brilliant young protégé.",
+    "entities": [
+      "professor",
+      "protégé"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "professor",
+          "modifiers": [
+            "wise",
+            "old"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "collaborated closely with"
+        },
+        "object": {
+          "head": "protégé",
+          "modifiers": [
+            "brilliant",
+            "young"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A sleek black cat played gently with a fluffy white kitten.",
+    "entities": [
+      "cat",
+      "kitten"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "cat",
+          "modifiers": [
+            "sleek",
+            "black"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "played gently with"
+        },
+        "object": {
+          "head": "kitten",
+          "modifiers": [
+            "fluffy",
+            "white"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The two powerful rival nations finally negotiated a lasting peace treaty.",
+    "entities": [
+      "nations",
+      "treaty"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "nations",
+          "modifiers": [
+            "two",
+            "powerful",
+            "rival"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "finally negotiated"
+        },
+        "object": {
+          "head": "treaty",
+          "modifiers": [
+            "lasting",
+            "peace"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A seasoned detective worked alongside a rookie cop on the perplexing case.",
+    "entities": [
+      "detective",
+      "cop",
+      "case"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "detective",
+          "modifiers": [
+            "seasoned"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "worked alongside"
+        },
+        "object": {
+          "head": "cop",
+          "modifiers": [
+            "rookie"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "detective",
+          "modifiers": [
+            "seasoned"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "worked on"
+        },
+        "object": {
+          "head": "case",
+          "modifiers": [
+            "perplexing"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "cop",
+          "modifiers": [
+            "rookie"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "worked on"
+        },
+        "object": {
+          "head": "case",
+          "modifiers": [
+            "perplexing"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The renowned architect partnered with an innovative engineer on the ambitious skyscraper project.",
+    "entities": [
+      "architect",
+      "engineer",
+      "project"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "architect",
+          "modifiers": [
+            "renowned"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "partnered with"
+        },
+        "object": {
+          "head": "engineer",
+          "modifiers": [
+            "innovative"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "architect",
+          "modifiers": [
+            "renowned"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "partnered on"
+        },
+        "object": {
+          "head": "project",
+          "modifiers": [
+            "ambitious",
+            "skyscraper"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "engineer",
+          "modifiers": [
+            "innovative"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "partnered on"
+        },
+        "object": {
+          "head": "project",
+          "modifiers": [
+            "ambitious",
+            "skyscraper"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "My very energetic puppy loves playing with the neighbor's calm, older dog.",
+    "entities": [
+      "puppy",
+      "neighbor",
+      "dog"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "puppy",
+          "modifiers": [
+            "very energetic"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "loves playing with"
+        },
+        "object": {
+          "head": "dog",
+          "modifiers": [
+            "calm",
+            "older"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "neighbor",
+          "modifiers": []
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "owns"
+        },
+        "object": {
+          "head": "dog",
+          "modifiers": [
+            "calm",
+            "older"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The local community and several small businesses worked together on the park cleanup.",
+    "entities": [
+      "community",
+      "businesses",
+      "cleanup"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "community",
+          "modifiers": [
+            "local"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "worked together with"
+        },
+        "object": {
+          "head": "businesses",
+          "modifiers": [
+            "several",
+            "small"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "community",
+          "modifiers": [
+            "local"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "worked on"
+        },
+        "object": {
+          "head": "cleanup",
+          "modifiers": [
+            "park"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "businesses",
+          "modifiers": [
+            "several",
+            "small"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "worked on"
+        },
+        "object": {
+          "head": "cleanup",
+          "modifiers": [
+            "park"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "A majestic lion shared a quiet moment with a fearless little mouse.",
+    "entities": [
+      "lion",
+      "moment",
+      "mouse"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "lion",
+          "modifiers": [
+            "majestic"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "shared a quiet moment with"
+        },
+        "object": {
+          "head": "mouse",
+          "modifiers": [
+            "fearless",
+            "little"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "lion",
+          "modifiers": [
+            "majestic"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "shared"
+        },
+        "object": {
+          "head": "moment",
+          "modifiers": [
+            "quiet"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The lead singer and the talented lead guitarist wrote the hit song together.",
+    "entities": [
+      "singer",
+      "guitarist",
+      "song"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "singer",
+          "modifiers": [
+            "lead"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "wrote together with"
+        },
+        "object": {
+          "head": "guitarist",
+          "modifiers": [
+            "talented",
+            "lead"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "singer",
+          "modifiers": [
+            "lead"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "wrote"
+        },
+        "object": {
+          "head": "song",
+          "modifiers": [
+            "hit"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "guitarist",
+          "modifiers": [
+            "talented",
+            "lead"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "wrote"
+        },
+        "object": {
+          "head": "song",
+          "modifiers": [
+            "hit"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "Smart, dedicated students often study with their equally motivated peers.",
+    "entities": [
+      "students",
+      "peers"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "students",
+          "modifiers": [
+            "Smart",
+            "dedicated"
+          ]
+        },
+        "relation": {
+          "type": "association",
+          "text": "often study with"
+        },
+        "object": {
+          "head": "peers",
+          "modifiers": [
+            "equally motivated"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The wealthy tycoon's brand-new luxury yacht was moored in the private harbor.",
+    "entities": [
+      "tycoon",
+      "yacht",
+      "harbor"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "tycoon",
+          "modifiers": [
+            "wealthy"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "owns"
+        },
+        "object": {
+          "head": "yacht",
+          "modifiers": [
+            "brand-new",
+            "luxury"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "yacht",
+          "modifiers": [
+            "brand-new",
+            "luxury"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "was moored in"
+        },
+        "object": {
+          "head": "harbor",
+          "modifiers": [
+            "private"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The ancient, mysterious castle's crumbling stone walls were covered in ivy.",
+    "entities": [
+      "castle",
+      "walls",
+      "ivy"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "castle",
+          "modifiers": [
+            "ancient",
+            "mysterious"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "walls",
+          "modifiers": [
+            "crumbling",
+            "stone"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "walls",
+          "modifiers": [
+            "crumbling",
+            "stone"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "were covered in"
+        },
+        "object": {
+          "head": "ivy",
+          "modifiers": []
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "An old, forgotten book had a beautifully illustrated, leather-bound cover.",
+    "entities": [
+      "book",
+      "cover"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "book",
+          "modifiers": [
+            "old",
+            "forgotten"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "had"
+        },
+        "object": {
+          "head": "cover",
+          "modifiers": [
+            "beautifully illustrated",
+            "leather-bound"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The intricate design of the antique Persian rug featured deep, rich colors.",
+    "entities": [
+      "design",
+      "rug",
+      "colors"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "rug",
+          "modifiers": [
+            "antique",
+            "Persian"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "design",
+          "modifiers": [
+            "intricate"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "design",
+          "modifiers": [
+            "intricate"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "featured"
+        },
+        "object": {
+          "head": "colors",
+          "modifiers": [
+            "deep",
+            "rich"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "My computer's powerful new graphics card can handle any modern game.",
+    "entities": [
+      "computer",
+      "card",
+      "game"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "computer",
+          "modifiers": []
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "card",
+          "modifiers": [
+            "powerful",
+            "new",
+            "graphics"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "card",
+          "modifiers": [
+            "powerful",
+            "new",
+            "graphics"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "can handle"
+        },
+        "object": {
+          "head": "game",
+          "modifiers": [
+            "modern"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The nervous young man's trembling hands clutched the small, velvet box.",
+    "entities": [
+      "man",
+      "hands",
+      "box"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "man",
+          "modifiers": [
+            "nervous",
+            "young"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "hands",
+          "modifiers": [
+            "trembling"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "hands",
+          "modifiers": [
+            "trembling"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "clutched"
+        },
+        "object": {
+          "head": "box",
+          "modifiers": [
+            "small",
+            "velvet"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "Our new house has a spacious, sunlit living room with high ceilings.",
+    "entities": [
+      "house",
+      "room",
+      "ceilings"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "house",
+          "modifiers": [
+            "new"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "room",
+          "modifiers": [
+            "spacious",
+            "sunlit",
+            "living"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "room",
+          "modifiers": [
+            "spacious",
+            "sunlit",
+            "living"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "with"
+        },
+        "object": {
+          "head": "ceilings",
+          "modifiers": [
+            "high"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The front wheel of the rusty red bicycle was completely bent.",
+    "entities": [
+      "wheel",
+      "bicycle"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "bicycle",
+          "modifiers": [
+            "rusty",
+            "red"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "wheel",
+          "modifiers": [
+            "front",
+            "completely bent"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The company's latest quarterly report revealed surprisingly high profits.",
+    "entities": [
+      "company",
+      "report",
+      "profits"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "company",
+          "modifiers": []
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "has"
+        },
+        "object": {
+          "head": "report",
+          "modifiers": [
+            "latest",
+            "quarterly"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "report",
+          "modifiers": [
+            "latest",
+            "quarterly"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "revealed"
+        },
+        "object": {
+          "head": "profits",
+          "modifiers": [
+            "surprisingly high"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The legendary warrior's enchanted silver sword glowed with a faint blue light.",
+    "entities": [
+      "warrior",
+      "sword",
+      "light"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "warrior",
+          "modifiers": [
+            "legendary"
+          ]
+        },
+        "relation": {
+          "type": "belonging",
+          "text": "owns"
+        },
+        "object": {
+          "head": "sword",
+          "modifiers": [
+            "enchanted",
+            "silver"
+          ]
+        }
+      },
+      {
+        "subject": {
+          "head": "sword",
+          "modifiers": [
+            "enchanted",
+            "silver"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "glowed with"
+        },
+        "object": {
+          "head": "light",
+          "modifiers": [
+            "faint",
+            "blue"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The lonely, old lighthouse stood resiliently against the crashing waves.",
+    "entities": [
+      "lighthouse",
+      "waves"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "lighthouse",
+          "modifiers": [
+            "lonely",
+            "old"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "stood resiliently against"
+        },
+        "object": {
+          "head": "waves",
+          "modifiers": [
+            "crashing"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The freshly baked apple pie smelled incredibly warm and sweet.",
+    "entities": [
+      "pie"
+    ],
+    "ground_truth": []
+  },
+  {
+    "sentence": "A truly enormous, ancient oak tree dominated the quiet, empty field.",
+    "entities": [
+      "tree",
+      "field"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "tree",
+          "modifiers": [
+            "truly enormous",
+            "ancient",
+            "oak"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "dominated"
+        },
+        "object": {
+          "head": "field",
+          "modifiers": [
+            "quiet",
+            "empty"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "Her stunning, emerald-green dress shimmered beautifully under the ballroom lights.",
+    "entities": [
+      "dress",
+      "lights"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "dress",
+          "modifiers": [
+            "stunning",
+            "emerald-green"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "shimmered beautifully under"
+        },
+        "object": {
+          "head": "lights",
+          "modifiers": [
+            "ballroom"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "sentence": "The cold, bitter winter wind howled relentlessly outside the cozy cabin.",
+    "entities": [
+      "wind",
+      "cabin"
+    ],
+    "ground_truth": [
+      {
+        "subject": {
+          "head": "wind",
+          "modifiers": [
+            "cold",
+            "bitter",
+            "winter"
+          ]
+        },
+        "relation": {
+          "type": "action",
+          "text": "howled relentlessly outside"
+        },
+        "object": {
+          "head": "cabin",
+          "modifiers": [
+            "cozy"
+          ]
+        }
+      }
+    ]
+  }
+]

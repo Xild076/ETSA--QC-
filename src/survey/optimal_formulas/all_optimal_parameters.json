@@ -1,1 +1,265 @@
-{"version": 1, "saved_at": "2025-08-10T00:25:22.659580Z", "entries": [{"category": "actor", "score_key": "user_sentiment_score", "model": "actor_formula_v1", "split": "action_target", "remove_outliers": "droptop", "mse": 0.8931962029477858, "params_by_key": {"pos_pos_params": [5.188870531515154e-20, -4.999999999999998, 2.340008313028333]}}, {"category": "target", "score_key": "user_sentiment_score", "model": "target_formula_v2", "split": "action", "remove_outliers": "droptop", "mse": 0.3800238196593251, "params_by_key": {"pos_action_params": [0.9999999961981398, -4.999999541354072, 3.03416775827117]}}, {"category": "association", "score_key": "user_sentiment_score", "model": "assoc_formula_v2", "split": "none", "remove_outliers": "none", "mse": 5.375011983693733, "params_by_key": {"params": [0.40118737931456505, 2.1482667382623313, 0.4039958790563471]}}, {"category": "parent", "score_key": "user_sentiment_score", "model": "belong_formula_v2", "split": "parent_child", "remove_outliers": "none", "mse": 2.785753910777619, "params_by_key": {"neg_neg_params": [0.43749677178263685, 4.999999999953599, 2.8646110084000305], "pos_pos_params": [2.1257627147652313e-08, -4.999999999174161, 4.291018666280126], "neg_pos_params": [0.9999999968747746, -4.999999873353273, 2.1403171381664956]}}, {"category": "child", "score_key": "user_sentiment_score", "model": "belong_formula_v2", "split": "parent_child", "remove_outliers": "none", "mse": 0.9940922058008268, "params_by_key": {"pos_neg_params": [0.9999999999979964, -4.999999999998976, -2.925000006856782], "neg_neg_params": [0.9999999999923747, 4.9969594382504825, -4.999360526402562], "pos_pos_params": [2.8504132008553995e-08, -4.999997714163532, 3.321593399651488]}}, {"category": "aggregate", "score_key": "user_sentiment_score", "model": "aggregate_logistic", "split": "none", "remove_outliers": "none", "mse": 4.037280450920235, "params_by_key": {"params": [-2.7045111375231548, 4.9936414472728625, 9.997059175039809, 20.0, 20.0, 5.0, 9.2807539075556, 0.01]}}, {"category": "actor", "score_key": "user_normalized_sentiment_scores", "model": "actor_formula_v2", "split": "action_target", "remove_outliers": "droptop", "mse": 0.0006646076364903144, "params_by_key": {"pos_pos_params": [0.4124555102970903, -4.4077650442281096, 1.1309253569648778]}}, {"category": "target", "score_key": "user_normalized_sentiment_scores", "model": "target_formula_v1", "split": "none", "remove_outliers": "none", "mse": 0.11767756723288121, "params_by_key": {"params": [0.1584995446786873, -0.28453025128769177, 0.10714033939976814]}}, {"category": "association", "score_key": "user_normalized_sentiment_scores", "model": "assoc_formula_v2", "split": "other", "remove_outliers": "none", "mse": 0.12390165364218349, "params_by_key": {"pos_params": [0.4102945606857653, 1.0863773110361703, -0.5165688571715661], "neg_params": [1.0913416841367201e-20, 0.6322770991994701, 0.19136335385406217]}}, {"category": "parent", "score_key": "user_normalized_sentiment_scores", "model": "belong_formula_v1", "split": "parent_child", "remove_outliers": "lsquares", "mse": 0.02526008455423556, "params_by_key": {"pos_neg_params": [0.48561702713233235, -0.18878656886840603, -0.3192776715308893], "neg_neg_params": [0.46704554065500364, 1.658050692459014, 0.4208758620005202], "pos_pos_params": [0.20398491928831236, -2.926378098244004, 1.654901427729449], "neg_pos_params": [0.8694744397259574, -4.363258439839002, 0.7114471664166238]}}, {"category": "child", "score_key": "user_normalized_sentiment_scores", "model": "belong_formula_v1", "split": "none", "remove_outliers": "droptop", "mse": 0.038430970300765636, "params_by_key": {"params": [0.19018061655499632, -0.020025734843520267, -0.29587257211837414]}}, {"category": "aggregate", "score_key": "user_normalized_sentiment_scores", "model": "aggregate_normal", "split": "none", "remove_outliers": "none", "mse": 0.11050224042243512, "params_by_key": {"params": [-0.7176473109248307, -0.8790472045375656]}}, {"category": "actor", "score_key": "user_sentiment_score_mapped", "model": "actor_formula_v2", "split": "action_target", "remove_outliers": "droptop", "mse": 0.04531119183145142, "params_by_key": {"pos_pos_params": [0.13035351532701484, -3.2588379137269845, 1.05586348455548]}}, {"category": "target", "score_key": "user_sentiment_score_mapped", "model": "target_formula_v1", "split": "action", "remove_outliers": "droptop", "mse": 0.010030235039941899, "params_by_key": {"pos_action_params": [9.820754303479693e-23, -1.5887813088100606, 1.05916145847766]}}, {"category": "association", "score_key": "user_sentiment_score_mapped", "model": "assoc_formula_v2", "split": "none", "remove_outliers": "none", "mse": 0.22200698447279005, "params_by_key": {"params": [0.07458248162724151, 0.31763109853320065, 0.04836221807415616]}}, {"category": "parent", "score_key": "user_sentiment_score_mapped", "model": "belong_formula_v1", "split": "none", "remove_outliers": "none", "mse": 0.113412566353852, "params_by_key": {"params": [0.2382246142810358, 0.3295378079597526, -0.004921679698080203]}}, {"category": "child", "score_key": "user_sentiment_score_mapped", "model": "belong_formula_v1", "split": "none", "remove_outliers": "none", "mse": 0.08631563570656324, "params_by_key": {"params": [0.3007833447897793, 0.18899556970690842, -0.012001403048658738]}}, {"category": "aggregate", "score_key": "user_sentiment_score_mapped", "model": "aggregate_normal", "split": "none", "remove_outliers": "none", "mse": 0.30591685829456305, "params_by_key": {"params": [1.7637271767507023, -1.9769830442820422]}}]}
+{
+    "version": 1,
+    "saved_at": "2025-08-12T17:42:31.081247Z",
+    "entries": [
+        {
+            "category": "actor",
+            "score_key": "user_sentiment_score",
+            "model": "null_linear",
+            "split": "driver",
+            "remove_outliers": "lsquares",
+            "mse": 0.016272737011180236,
+            "params_by_key": {
+                "pos_driver_params": [
+                    0.03521880504752151,
+                    2.937642849886006,
+                    1.508845876324015
+                ],
+                "neg_driver_params": [
+                    0.8035616112933401,
+                    1.5945580063862246,
+                    -3.0618433474288946
+                ]
+            }
+        },
+        {
+            "category": "target",
+            "score_key": "user_sentiment_score",
+            "model": "target_formula_v1",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "mse": 10.76055510398503,
+            "params_by_key": {
+                "params": [
+                    0.9999998661342132,
+                    1.1228354578724566,
+                    -0.3069633457464915
+                ]
+            }
+        },
+        {
+            "category": "association",
+            "score_key": "user_sentiment_score",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "droptop",
+            "mse": 2.0481268808609263,
+            "params_by_key": {
+                "params": [
+                    0.9999999999999999,
+                    -1.0000006160412729,
+                    -1.9250004232300189
+                ]
+            }
+        },
+        {
+            "category": "parent",
+            "score_key": "user_sentiment_score",
+            "model": "null_avg",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 2.175625,
+            "params_by_key": {
+                "params": []
+            }
+        },
+        {
+            "category": "child",
+            "score_key": "user_sentiment_score",
+            "model": "null_identity",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 9.9225,
+            "params_by_key": {
+                "params": []
+            }
+        },
+        {
+            "category": "aggregate",
+            "score_key": "user_sentiment_score",
+            "model": "aggregate_error_dynamic_mse",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 4.281455017815233,
+            "params_by_key": {
+                "params": [
+                    5.0,
+                    5.0,
+                    -5.0,
+                    -4.470439423611286
+                ]
+            }
+        },
+        {
+            "category": "actor",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "actor_formula_v1",
+            "split": "driver",
+            "remove_outliers": "lsquares",
+            "mse": 5.307623244229866e-07,
+            "params_by_key": {
+                "pos_driver_params": [
+                    0.24597550763400164,
+                    2.043494110547497,
+                    0.07620414258374299
+                ],
+                "neg_driver_params": [
+                    0.6304884735379809,
+                    0.3000899869591963,
+                    -1.3636193392866667
+                ]
+            }
+        },
+        {
+            "category": "target",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "null_identity",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.12794378698224856,
+            "params_by_key": {
+                "params": []
+            }
+        },
+        {
+            "category": "association",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "assoc_formula_v2",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.044199641032736166,
+            "params_by_key": {
+                "params": [
+                    0.9999999999999999,
+                    0.41403554350559957,
+                    -0.10079511379045929
+                ]
+            }
+        },
+        {
+            "category": "parent",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "belong_formula_v2",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.000427069211330541,
+            "params_by_key": {
+                "params": [
+                    0.9999999999999999,
+                    0.2700093760495177,
+                    -0.1372486515266967
+                ]
+            }
+        },
+        {
+            "category": "child",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.0016503901436831499,
+            "params_by_key": {
+                "params": [
+                    0.9999999950190621,
+                    0.22956730561046212,
+                    -0.10240384488011241
+                ]
+            }
+        },
+        {
+            "category": "aggregate",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "aggregate_error_dynamic_mse",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.028006202721012508,
+            "params_by_key": {
+                "params": [
+                    0.3062610220233379,
+                    1.4260052280633613,
+                    -4.432719984104747,
+                    -0.18693315334135702
+                ]
+            }
+        },
+        {
+            "category": "actor",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_identity",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.0,
+            "params_by_key": {
+                "params": []
+            }
+        },
+        {
+            "category": "target",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_identity",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.0625,
+            "params_by_key": {
+                "params": []
+            }
+        },
+        {
+            "category": "association",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "mse": 0.03930477846599116,
+            "params_by_key": {
+                "params": [
+                    0.7629447200116982,
+                    0.2866069622941849,
+                    -0.12945321043177407
+                ]
+            }
+        },
+        {
+            "category": "parent",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "belong_formula_v1",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.007513006944061645,
+            "params_by_key": {
+                "params": [
+                    0.9460126176075804,
+                    4.999999999999999,
+                    -0.11304860724721306
+                ]
+            }
+        },
+        {
+            "category": "child",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_identity",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.0,
+            "params_by_key": {
+                "params": []
+            }
+        },
+        {
+            "category": "aggregate",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "aggregate_error_dynamic_softl1",
+            "split": "none",
+            "remove_outliers": "none",
+            "mse": 0.0167853548483081,
+            "params_by_key": {
+                "params": [
+                    0.20797530465349978,
+                    1.3002580122584426,
+                    -3.2408782178344757,
+                    0.11953728810962327
+                ]
+            }
+        }
+    ]
+}

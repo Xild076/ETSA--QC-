@@ -1,0 +1,48 @@
+sentence,tp,fp,fn,num_predicted_relations,num_gt_relations
+"A brave firefighter rescued the trapped kitten from the tall, burning tree.",1,1,0,2,1
+"The talented artist meticulously painted a beautiful, vibrant landscape.",1,0,0,1,1
+"An old, rusty truck slowly hauled the heavy load of timber.",1,1,1,2,2
+The curious child accidentally broke the expensive antique vase.,1,0,0,1,1
+A powerful storm violently battered the small coastal village.,1,0,0,1,1
+The stealthy black cat silently stalked the unsuspecting field mouse.,1,0,0,1,1
+An experienced chef masterfully prepared the delicious gourmet meal.,1,0,0,1,1
+The determined student diligently studied for the difficult final exam.,1,0,0,1,1
+"A rogue wave suddenly capsized the small, weathered fishing boat.",1,0,0,1,1
+The ambitious CEO aggressively pursued a hostile takeover of the rival company.,1,1,1,2,2
+A gentle nurse compassionately comforted the frightened young patient.,1,0,0,1,1
+The resourceful hacker easily bypassed the company's outdated security system.,1,1,1,2,2
+A noisy flock of seagulls greedily snatched the unattended picnic sandwiches.,0,0,2,0,2
+The strong construction worker effortlessly lifted the massive steel beam.,0,0,1,0,1
+"A tiny, persistent ant carried a surprisingly large breadcrumb.",0,0,1,0,1
+The world-famous author enthusiastically signed copies of her bestselling new book.,0,0,3,0,3
+"An unidentified flying object swiftly streaked across the dark, starry night sky.",0,0,1,0,1
+The distracted driver carelessly ran the bright red light.,0,0,1,0,1
+"A diligent gardener lovingly tended to the delicate, fragrant roses.",0,0,1,0,1
+"The vicious Tyrannosaurus Rex fiercely hunted the swift, horned Triceratops.",0,0,1,0,1
+A professional cleaner thoroughly scrubbed the grimy kitchen floor.,0,0,1,0,1
+The enthusiastic crowd loudly applauded the incredible solo performance.,0,0,1,0,1
+The wise old professor collaborated closely with his brilliant young protégé.,0,0,1,0,1
+A sleek black cat played gently with a fluffy white kitten.,0,0,1,0,1
+The two powerful rival nations finally negotiated a lasting peace treaty.,0,0,1,0,1
+A seasoned detective worked alongside a rookie cop on the perplexing case.,0,0,3,0,3
+The renowned architect partnered with an innovative engineer on the ambitious skyscraper project.,0,0,3,0,3
+"My very energetic puppy loves playing with the neighbor's calm, older dog.",0,0,2,0,2
+The local community and several small businesses worked together on the park cleanup.,0,0,3,0,3
+A majestic lion shared a quiet moment with a fearless little mouse.,0,0,2,0,2
+The lead singer and the talented lead guitarist wrote the hit song together.,0,0,3,0,3
+"Smart, dedicated students often study with their equally motivated peers.",0,0,1,0,1
+The wealthy tycoon's brand-new luxury yacht was moored in the private harbor.,0,0,2,0,2
+"The ancient, mysterious castle's crumbling stone walls were covered in ivy.",0,0,2,0,2
+"An old, forgotten book had a beautifully illustrated, leather-bound cover.",0,0,1,0,1
+"The intricate design of the antique Persian rug featured deep, rich colors.",0,0,2,0,2
+My computer's powerful new graphics card can handle any modern game.,0,0,2,0,2
+"The nervous young man's trembling hands clutched the small, velvet box.",0,0,2,0,2
+"Our new house has a spacious, sunlit living room with high ceilings.",0,0,2,0,2
+The front wheel of the rusty red bicycle was completely bent.,0,0,1,0,1
+The company's latest quarterly report revealed surprisingly high profits.,0,0,2,0,2
+The legendary warrior's enchanted silver sword glowed with a faint blue light.,0,0,2,0,2
+"The lonely, old lighthouse stood resiliently against the crashing waves.",0,0,1,0,1
+The freshly baked apple pie smelled incredibly warm and sweet.,0,0,0,0,0
+"A truly enormous, ancient oak tree dominated the quiet, empty field.",0,0,1,0,1
+"Her stunning, emerald-green dress shimmered beautifully under the ballroom lights.",0,0,1,0,1
+"The cold, bitter winter wind howled relentlessly outside the cozy cabin.",0,0,1,0,1
