@@ -503,13 +503,6 @@
                 "word_count": 1
             },
             {
-                "text": "unhealthy",
-                "combined_score": -0.7954811397120294,
-                "standard_deviation": 0.3744254338194809,
-                "perplexity": 53173.79296875,
-                "word_count": 1
-            },
-            {
                 "text": "ugly",
                 "combined_score": -0.8279178982907867,
                 "standard_deviation": 0.36545721519692353,
