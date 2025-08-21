@@ -1,0 +1,41 @@
+name: Keep Streamlit App Alive
+
+on:
+  schedule:
+    # Every 14 minutes (avoids exact intervals)
+    - cron: '2,16,30,44,58 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-app:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Ping Streamlit App
+      run: |
+        echo "🏃 Pinging app at $(date)"
+        
+        # Multiple attempts with different user agents
+        for i in {1..3}; do
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            -H "User-Agent: Mozilla/5.0 (compatible; KeepAlive/1.0)" \
+            "https://etsa-survey.streamlit.app/")
+          
+          if [ $response -eq 200 ]; then
+            echo "✅ Attempt $i: Success (HTTP $response)"
+            break
+          else
+            echo "❌ Attempt $i: Failed (HTTP $response)"
+            sleep 5
+          fi
+        done
+        
+        # Check content length
+        content=$(curl -s --max-time 30 "https://etsa-survey.streamlit.app/" | wc -c)
+        echo "📊 Content length: $content bytes"
+        
+        if [ $content -gt 1000 ]; then
+          echo "✅ App appears healthy"
+        else
+          echo "⚠️ App content minimal - may be loading page"
+        fi
