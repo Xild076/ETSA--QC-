@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping and Verify Streamlit App
+        # THIS IS THE FIX: Explicitly tell the runner to use the bash shell.
+        shell: bash
         run: |
           # --- Configuration ---
           APP_URL="https://etsa-survey.streamlit.app/"
