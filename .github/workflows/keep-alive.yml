@@ -1,61 +1,82 @@
-name: Keep Streamlit App Alive
+name: Keep Streamlit App Alive and Verified
 
 on:
   schedule:
-    # Runs at 2, 16, 30, 44, and 58 minutes past the hour
+    # Runs every 14 minutes for consistent uptime.
     - cron: '2,16,30,44,58 * * * *'
+  
+  # Allows you to run this workflow manually from the Actions tab for testing.
   workflow_dispatch:
 
 jobs:
-  ping-and-verify:
+  ping-and-health-check:
     runs-on: ubuntu-latest
     steps:
-    - name: Ping and Verify Streamlit App
-      run: |
-        # --- Stage 1: Resiliently Ping the App ---
-        # We will try up to 3 times to get a successful HTTP 200 response.
-        
-        echo "🏃 Stage 1: Pinging app to ensure it's reachable..."
-        SUCCESS=false
-        for i in {1..3}; do
-          # The -L flag is CRUCIAL. It tells curl to follow any redirects (like the 303 you saw).
-          # We capture only the HTTP status code.
-          response_code=$(curl -L -s -o /dev/null -w "%{http_code}" --max-time 30 "https://etsa-survey.streamlit.app/")
+      - name: Ping and Verify Streamlit App
+        run: |
+          # --- Configuration ---
+          APP_URL="https://etsa-survey.streamlit.app/"
+          # Unique text that ONLY appears on the "app is asleep" page.
+          SLEEP_PAGE_TEXT="This app has gone to sleep due to inactivity"
+          # A reasonable minimum byte size for a healthy, fully-loaded Streamlit app.
+          MINIMUM_CONTENT_LENGTH=2000
           
-          if [ "$response_code" -eq 200 ]; then
-            echo "✅ Attempt $i: Success! Received HTTP 200."
-            SUCCESS=true
-            break # Exit the loop on first success
-          else
-            echo "⚠️ Attempt $i: Failed. Received HTTP $response_code. Retrying in 5 seconds..."
-            sleep 5
+          # --- Execution ---
+          echo " Pinging URL: ${APP_URL}"
+          
+          # Initialize variables for the retry loop.
+          final_status_code=0
+          attempt=0
+          
+          # Retry loop: Tries up to 3 times to get a successful response.
+          for i in {1..3}; do
+            attempt=$i
+            echo "---"
+            echo "➡️ Attempt #${attempt}..."
+            
+            # Use curl to get the HTTP status code and save the response body to a file.
+            # -L: Follows all redirects (like the 303 error you saw).
+            # -s: Silent mode (no progress meter).
+            # -o response.html: Saves the HTML content to a file named 'response.html'.
+            # -w '%{http_code}': Writes the final HTTP status code to stdout after the transfer.
+            final_status_code=$(curl -L -s -o response.html -w "%{http_code}" --max-time 45 "${APP_URL}")
+            
+            if [ "$final_status_code" -eq 200 ]; then
+              echo "✅ SUCCESS: Received HTTP status code 200."
+              break # Exit the loop on success.
+            else
+              echo "⚠️ WARN: Received HTTP status code ${final_status_code}. Retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+
+          # --- Verification ---
+          echo "---"
+          echo " VERIFYING RESPONSE..."
+
+          # 1. Final Status Code Check
+          if [ "$final_status_code" -ne 200 ]; then
+            echo "❌ CRITICAL: Final attempt failed with HTTP status code ${final_status_code}."
+            exit 1
           fi
-        done
+          echo "✅ Status Code Check: Passed (200 OK)."
 
-        # --- Stage 2: Verify the Ping Succeeded ---
-        # If after 3 attempts, we never got a 200, the app is truly down or broken.
-        
-        if ! $SUCCESS; then
-          echo "❌ CRITICAL: Stage 1 Failed. The app did not respond with a 200 OK after 3 attempts."
-          exit 1 # Fail the entire workflow
-        fi
-
-        # --- Stage 3: Verify App Content ---
-        # A 200 OK is good, but it could still be serving the "sleep" page.
-        # We must check the page content for the unique "sleep" message.
-
-        echo "🔍 Stage 3: Verifying app content to ensure it is not the sleep page..."
-        
-        # Define the unique text that ONLY appears on the "sleep" page.
-        SLEEP_PAGE_TEXT="This app has gone to sleep"
-        
-        # Fetch the page content (again, with -L to follow redirects) and pipe it to grep.
-        # `grep -q` is "quiet". It returns exit code 0 if the text is found, 1 if not.
-        if curl -L -s --max-time 30 "https://etsa-survey.streamlit.app/" | grep -q "$SLEEP_PAGE_TEXT"; then
-          # If grep finds the text, the app is asleep. This is a critical failure.
-          echo "❌ CRITICAL: Stage 3 Failed. The app is serving the sleep page!"
-          exit 1 # Fail the entire workflow
-        else
-          # If grep does NOT find the text, the app is awake and running properly.
-          echo "✅ SUCCESS: App is healthy and responsive. The sleep page was not detected."
-        fi
+          # 2. Sleep Page Content Check
+          # grep -q quietly searches the file. If it finds the text, it returns success (0).
+          if grep -q "${SLEEP_PAGE_TEXT}" response.html; then
+            echo "❌ CRITICAL: The 'app is asleep' message was found on the page."
+            exit 1
+          fi
+          echo "✅ Sleep Page Check: Passed (Sleep message not found)."
+          
+          # 3. Content Length Check
+          content_length=$(wc -c < response.html)
+          echo "📊 Content length is ${content_length} bytes."
+          if [ "$content_length" -lt "$MINIMUM_CONTENT_LENGTH" ]; then
+            echo "❌ CRITICAL: Page content is smaller than the minimum threshold of ${MINIMUM_CONTENT_LENGTH} bytes."
+            exit 1
+          fi
+          echo "✅ Content Length Check: Passed."
+          
+          echo "---"
+          echo "🎉 All checks passed. The app is up and healthy!"
