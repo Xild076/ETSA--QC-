@@ -1,4 +1,4 @@
-name: Keep Streamlit App Alive and Verified
+name: Keep Streamlit App Alive (Playwright)
 
 on:
   schedule:
@@ -6,113 +6,51 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: keep-alive-${{ github.workflow }}
+  group: keep-streamlit-alive
   cancel-in-progress: true
 
 jobs:
   keep_alive:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 10
     permissions:
       contents: read
     env:
       APP_URL: https://etsa-survey.streamlit.app/
-      SLEEP_PAGE_TEXT: "app is asleep"
-      MINIMUM_CONTENT_LENGTH: 1000
+      SLEEP_PAGE_TEXT: app is asleep
+      MINIMUM_CONTENT_LENGTH: "1000"
+      KEEP_OPEN_MS: "20000" # how long to keep session open (ms)
     steps:
-      - name: Keep App Alive and Verify
-        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright and deps
         run: |
-          # Disable immediate exit so curl failures don't end the job prematurely
-          set +e
-          set -u
-          # pipefail is set by the runner; we keep it
+          python -m pip install --upgrade pip
+          pip install playwright==1.46.0
+          python -m playwright install --with-deps chromium
 
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
-          MAX_RETRIES=6
-          SLEEP_BETWEEN=20
+      - name: Keep Streamlit alive with headless browser
+        env:
+          APP_URL: ${{ env.APP_URL }}
+          SLEEP_PAGE_TEXT: ${{ env.SLEEP_PAGE_TEXT }}
+          MINIMUM_CONTENT_LENGTH: ${{ env.MINIMUM_CONTENT_LENGTH }}
+          KEEP_OPEN_MS: ${{ env.KEEP_OPEN_MS }}
+        run: |
+          python scripts/keep_streamlit_alive.py
 
-          ping_head() {
-            # HEAD ping to nudge the app awake (ignore failures)
-            curl -4 -I -sS -A "$UA" --connect-timeout 10 --max-time 20 "$APP_URL" >/dev/null 2>&1 || true
-          }
-
-          request_page() {
-            # Fetch page with limited redirects and browser-like headers
-            curl -4 -A "$UA" --compressed \
-              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
-              -H "Accept-Language: en-US,en;q=0.9" \
-              -H "Referer: https://google.com" \
-              -L --max-redirs 10 \
-              -sS -D headers.txt -o response.html \
-              -w "%{http_code}" \
-              --connect-timeout 15 --max-time 60 \
-              "$APP_URL"
-          }
-
-          http_code=""
-          for attempt in $(seq 1 $MAX_RETRIES); do
-            echo "---"
-            echo "➡️ Attempt #${attempt}..."
-
-            rm -f response.html headers.txt
-
-            # Warm-up HEAD request
-            ping_head
-
-            # Main GET request
-            http_code=$(request_page)
-            curl_exit=$?
-
-            if [ $curl_exit -ne 0 ]; then
-              echo "⚠️ WARN: curl failed with exit code ${curl_exit} (possible redirect loop or network hiccup). Retrying in ${SLEEP_BETWEEN}s..."
-              sleep "$SLEEP_BETWEEN"
-              continue
-            fi
-
-            echo "ℹ️ HTTP status code: ${http_code}"
-
-            # Detect meta/JS redirects or Cloudflare/browser checks
-            if grep -qiE '<meta[^>]*http-equiv=["'"'"']refresh["'"'"']|window\.location|Checking your browser|Just a moment|cf-browser-verification|cloudflare' response.html; then
-              echo "❌ CRITICAL: Detected meta/JS redirect or Cloudflare challenge. Retrying in ${SLEEP_BETWEEN}s..."
-              sleep "$SLEEP_BETWEEN"
-              continue
-            fi
-
-            if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-              echo "✅ SUCCESS: Received 2xx response."
-              break
-            else
-              echo "⚠️ WARN: Received non-2xx HTTP status ${http_code}. Retrying in ${SLEEP_BETWEEN}s..."
-              sleep "$SLEEP_BETWEEN"
-            fi
-          done
-
-          echo "VERIFYING RESPONSE..."
-          if [ -z "${http_code:-}" ] || [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "❌ CRITICAL: Final attempt failed with HTTP status code ${http_code:-unknown}."
-            exit 47
-          fi
-
-          # Sleep Page Content Check
-          if grep -q "${SLEEP_PAGE_TEXT}" response.html; then
-            echo "❌ CRITICAL: The 'app is asleep' message was found on the page."
-            exit 47
-          fi
-          echo "✅ Sleep Page Check: Passed (sleep message not found)."
-
-          # Content Length Check
-          content_length=$(wc -c < response.html | tr -d ' ')
-          echo "📊 Content length is ${content_length} bytes."
-          if [ "$content_length" -lt "$MINIMUM_CONTENT_LENGTH" ]; then
-            echo "❌ CRITICAL: Page content is smaller than the minimum threshold of ${MINIMUM_CONTENT_LENGTH} bytes."
-            exit 47
-          fi
-          echo "✅ Content Length Check: Passed."
-
-          # Optional health probe (non-fatal) to further "touch" the app
-          HEALTH_URL="${APP_URL%/}/_stcore/health"
-          health_code=$(curl -4 -A "$UA" -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 20 "$HEALTH_URL") || health_code="000"
-          echo "🩺 Health endpoint (${HEALTH_URL}) HTTP ${health_code}"
-
-          exit 0
+      - name: Upload artifacts (HTML and screenshot)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keep-alive-artifacts
+          path: |
+            response.html
+            screenshot.png
+            debug.log
+          if-no-files-found: ignore
