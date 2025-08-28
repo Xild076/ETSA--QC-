@@ -11,6 +11,45 @@
 				"$pytest-stylish"
 			],
 			"group": "build"
+		},
+		{
+			"label": "run unit tests (venv)",
+			"type": "shell",
+			"command": "/Users/harry/Documents/Python_Projects/ETSA_(QC)/.venv/bin/python",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "run unit tests (script)",
+			"type": "shell",
+			"command": "scripts/run_pytest.sh",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
+		},
+		{
+			"label": "run unit tests (script via zsh)",
+			"type": "shell",
+			"command": "zsh",
+			"args": [
+				"scripts/run_pytest.sh"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest"
+			],
+			"group": "build"
 		}
 	]
 }

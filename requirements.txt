@@ -134,6 +134,7 @@ pydeck==0.9.1
 Pygments==2.19.1
 pyparsing==3.2.3
 pysentimiento==0.7.3
+pyabsa==2.3.5
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
