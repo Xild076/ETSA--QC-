@@ -725,7 +725,7 @@ def display_demographic_section():
     st.markdown("""
     <div class="academic-paper" style="background:#fffbe6; border:1px solid #ffe58f;">
     <h3>Optional Demographic Questions</h3>
-    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>.</p>
+    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>. Once you are done / decide not to do this part, click submit to finish the survey.</p>
     </div>
     """, unsafe_allow_html=True)
     with st.form("demographic_form", clear_on_submit=False):
