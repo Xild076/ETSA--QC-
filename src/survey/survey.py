@@ -320,6 +320,8 @@ def initialize_session_state():
         body[data-theme="dark"] .stWarning, body[data-theme="dark"] .stSuccess, body[data-theme="dark"] .stError, body[data-theme="dark"] .stInfo { color: #FAFAFA !important; }
         body[data-theme="dark"] .stAlert { color: #FAFAFA !important; background-color: #262730 !important; }
         body[data-theme="dark"] p, body[data-theme="dark"] div, body[data-theme="dark"] span, body[data-theme="dark"] label, body[data-theme="dark"] strong, body[data-theme="dark"] b, body[data-theme="dark"] i, body[data-theme="dark"] em { color: #FAFAFA !important; }
+    body[data-theme="light"] .demographic-banner { background:#fffbe6 !important; border:1px solid #ffe58f !important; color:#2C3E50 !important; }
+    body[data-theme="dark"] .demographic-banner { background:#262730 !important; border:1px solid #404040 !important; color:#FAFAFA !important; }
     </style>
     <script>
         function detectTheme() {
@@ -723,9 +725,9 @@ def export_to_google_sheets(data_df):
 
 def display_demographic_section():
     st.markdown("""
-    <div class="academic-paper" style="background:#fffbe6; border:1px solid #ffe58f;">
+    <div class="academic-paper demographic-banner">
     <h3>Optional Demographic Questions</h3>
-    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>. Once you are done / decide not to do this part, click submit to finish the survey.</p>
+    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>. <b>Please click submit to finish the survey and to ensure your answers get uploaded.</b></p>
     </div>
     """, unsafe_allow_html=True)
     with st.form("demographic_form", clear_on_submit=False):
