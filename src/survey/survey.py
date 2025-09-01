@@ -443,7 +443,7 @@ The main researcher conducting this study is Harry Yin, a student currently asso
 
 **IRB Approval:**
 
-This survey did not fall under any of the four categories described in USFCA's [IRB requirement page](https://myusf.usfca.edu/irbphs/what-needs-approval}. 
+This survey did not fall under any of the four categories described in USFCA's [IRB requirement page](https://myusf.usfca.edu/irbphs/what-needs-approval). 
         """, unsafe_allow_html=True)
     st.markdown("""
 <div class="academic-paper">
