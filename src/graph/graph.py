@@ -44,8 +44,23 @@ class RelationGraph:
         logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
-        self.graph.add_node(f"{id}_{clause_layer}", head=head, modifier=modifier, text=self.text, entity_role=entity_role, clause_layer=clause_layer)
-        self.graph.nodes[f"{id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
+        self.graph.add_node(
+            f"{id}_{clause_layer}",
+            head=head,
+            modifier=modifier,
+            text=self.text,
+            entity_role=entity_role,
+            clause_layer=clause_layer,
+        )
+        text_for_sent = (head + ' ' + ' '.join(modifier)).strip()
+        self.graph.nodes[f"{id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(text_for_sent)
+
+    def _get_clause_context(self, clause_layer:int) -> str:
+        import re
+        parts = [p.strip() for p in re.split(r'[.!?]+', self.text) if p.strip()]
+        if 0 <= clause_layer < len(parts):
+            return parts[clause_layer]
+        return ""
     
     def add_entity_modifier(self, entity_id:int, modifier:List[str], clause_layer:int):
         logger.info("Adding entity modeifiers...")
@@ -55,7 +70,14 @@ class RelationGraph:
         if node_key not in self.graph.nodes:
             raise ValueError(f"Node {node_key} not found in the graph.")
         current_modifiers = self.graph.nodes[node_key].get('modifier', [])
-        self.graph.nodes[node_key]['modifier'] = current_modifiers + modifier
+        new_mods = current_modifiers + modifier
+        self.graph.nodes[node_key]['modifier'] = new_mods
+        try:
+            head = self.graph.nodes[node_key].get('head', '')
+            text_for_sent = (head + ' ' + ' '.join(new_mods)).strip()
+            self.graph.nodes[node_key]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(text_for_sent)
+        except Exception:
+            pass
     
     def set_entity_role(self, entity_id:int, entity_role:str, clause_layer:int):
         logger.info("Setting entity role...")
@@ -85,10 +107,23 @@ class RelationGraph:
         logger.info(f"Adding action edge between {actor_id} and {target_id}...")
         if actor_id not in self.entity_ids or target_id not in self.entity_ids:
             raise ValueError(f"Actor ID {actor_id} or Target ID {target_id} not found in the graph.")
-        self.graph.add_edge(f"{actor_id}_{clause_layer}", f"{target_id}_{clause_layer}", 
-                            actor=f"{actor_id}_{clause_layer}", target=f"{target_id}_{clause_layer}",
-                            relation="action", head=head, modifier=modifier)
-        self.graph.nodes[f"{actor_id}_{clause_layer}"]['init_sentiment'] = self.sentiment_analyzer_system.analyze_sentiment(head + ' ' + ' '.join(modifier))
+        self.graph.add_edge(
+            f"{actor_id}_{clause_layer}",
+            f"{target_id}_{clause_layer}",
+            actor=f"{actor_id}_{clause_layer}",
+            target=f"{target_id}_{clause_layer}",
+            relation="action",
+            head=head,
+            modifier=modifier,
+        )
+        try:
+            action_text = (head + ' ' + ' '.join(modifier)).strip()
+            action_sent = self.sentiment_analyzer_system.analyze_sentiment(action_text) if action_text else 0.0
+        except Exception:
+            action_sent = 0.0
+        # store the action sentiment on the edge for downstream compound calculations
+        edge_key = (f"{actor_id}_{clause_layer}", f"{target_id}_{clause_layer}")
+        self.graph.edges[edge_key]['init_sentiment'] = action_sent
 
     def add_belonging_edge(self, parent_id:int, child_id:int, clause_layer:int):
         logger.info(f"Adding belonging edge between {parent_id} and {child_id}...")
@@ -170,7 +205,10 @@ class RelationGraph:
         sentiments = []
         for layer in layers:
             node = f"{entity_id}_{layer}"
-            sentiments.append(self.graph.nodes[node].get('compound_sentiment', 0.0)) if 'compound_sentiment' in self.graph.nodes[node] else self.graph.nodes[node].get('init_sentiment', 0.0)
+            if 'compound_sentiment' in self.graph.nodes[node]:
+                sentiments.append(self.graph.nodes[node].get('compound_sentiment', 0.0))
+            else:
+                sentiments.append(self.graph.nodes[node].get('init_sentiment', 0.0))
         if function is None:
             raise ValueError("No function provided for aggregate sentiment calculation")
         result = function(sentiments) if sentiments else 0.0

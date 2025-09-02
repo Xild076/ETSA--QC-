@@ -6,10 +6,13 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
+from collections.abc import Mapping
 
-import re
-from survey_question_gen import survey_gen
-from survey_question_gen import calibration_gen
+import re, os, sys
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from src.survey.survey_question_gen import survey_gen
+from src.survey.survey_question_gen import calibration_gen
 
 def display_calibration_questions():
     st.markdown("""
@@ -320,6 +323,8 @@ def initialize_session_state():
         body[data-theme="dark"] .stWarning, body[data-theme="dark"] .stSuccess, body[data-theme="dark"] .stError, body[data-theme="dark"] .stInfo { color: #FAFAFA !important; }
         body[data-theme="dark"] .stAlert { color: #FAFAFA !important; background-color: #262730 !important; }
         body[data-theme="dark"] p, body[data-theme="dark"] div, body[data-theme="dark"] span, body[data-theme="dark"] label, body[data-theme="dark"] strong, body[data-theme="dark"] b, body[data-theme="dark"] i, body[data-theme="dark"] em { color: #FAFAFA !important; }
+    body[data-theme="light"] .demographic-banner { background:#fffbe6 !important; border:1px solid #ffe58f !important; color:#2C3E50 !important; }
+    body[data-theme="dark"] .demographic-banner { background:#262730 !important; border:1px solid #404040 !important; color:#FAFAFA !important; }
     </style>
     <script>
         function detectTheme() {
@@ -360,6 +365,8 @@ def initialize_session_state():
     if 'packet_sentiment_history' not in st.session_state: st.session_state.packet_sentiment_history = []
     if 'attention_check_shown' not in st.session_state: st.session_state.attention_check_shown = False
     if 'attention_check_passed' not in st.session_state: st.session_state.attention_check_passed = True
+    if 'exported_once' not in st.session_state: st.session_state.exported_once = False
+    if 'last_exported_count' not in st.session_state: st.session_state.last_exported_count = 0
 
 def display_attention_check():
     st.markdown("""
@@ -677,17 +684,24 @@ def display_question():
             st.session_state.current_question_index = next_q_idx
         else:
             st.session_state.survey_complete = True
+        autosave_export_if_needed()
         st.rerun()
 
 def export_to_google_sheets(data_df):
-    creds_str = st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
-    if not creds_str:
+    creds_obj = st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
+    if not creds_obj:
         st.error(f"Secret '{GOOGLE_CREDENTIALS_SECRET_KEY}' not found for Google Sheets export.")
         return
-    try:
-        creds_dict = json.loads(creds_str)
-    except json.JSONDecodeError:
-        st.error("Failed to parse Google credentials JSON for Sheets export.")
+    if isinstance(creds_obj, str):
+        try:
+            creds_dict = json.loads(creds_obj)
+        except Exception as e:
+            st.error(f"Failed to parse Google credentials JSON for Sheets export: {e}")
+            return
+    elif isinstance(creds_obj, (dict, Mapping)):
+        creds_dict = dict(creds_obj)
+    else:
+        st.error("Google credentials secret must be a JSON string or a dict.")
         return
     try:
         creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
@@ -701,7 +715,7 @@ def export_to_google_sheets(data_df):
             ws = spreadsheet.worksheet(ws_name)
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=ws_name, rows=1000, cols=len(data_df.columns))
-        expected_columns = ['submitted_by_user_login', 'submission_timestamp_utc', 'demographic_age', 'demographic_country', 'item_id', 'item_type', 'description', 'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity', 'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label', 'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step', 'mark', 'marks']
+        expected_columns = ['submitted_by_user_login', 'submission_timestamp_utc', 'demographic_age', 'demographic_country', 'attention_check_passed', 'item_id', 'item_type', 'description', 'sentences', 'combined_text', 'code_key', 'entity', 'seed', 'descriptor', 'intensity', 'all_entities', 'packet_step', 'user_sentiment_score', 'user_sentiment_label', 'sentence_at_step', 'new_sentence_for_step', 'descriptor_for_step', 'intensity_for_step', 'mark', 'marks']
         df_ordered = data_df.reindex(columns=expected_columns, fill_value='')
         for col in df_ordered.columns:
             df_ordered[col] = df_ordered[col].astype(str).replace(['nan', 'None'], '')
@@ -710,24 +724,71 @@ def export_to_google_sheets(data_df):
             header_row = expected_columns
             data_rows = df_ordered.values.tolist()
             all_rows = [header_row] + data_rows
-            ws.update('A1', all_rows, value_input_option='USER_ENTERED')
+            try:
+                ws.update(range_name='A1', values=all_rows, value_input_option='USER_ENTERED')
+            except TypeError:
+                ws.update('A1', all_rows, raw=False)
         else:
             data_rows = df_ordered.values.tolist()
-            next_row = len(existing_data) + 1
-            ws.update(f'A{next_row}', data_rows, value_input_option='USER_ENTERED')
+            ws.append_rows(data_rows, value_input_option='USER_ENTERED')
         st.success("Data successfully exported to Google Sheet.")
     except gspread.exceptions.SpreadsheetNotFound:
         st.error("Google Sheet not found or not shared with the service account.")
     except Exception as e:
         st.error(f"An error occurred during Google Sheets export: {e}")
 
+def autosave_export_if_needed():
+    if not st.session_state.attention_check_shown:
+        return
+    if GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
+        return
+    if not st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):
+        return
+    total = len(st.session_state.user_responses)
+    already = st.session_state.get('last_exported_count', 0)
+    if total <= already:
+        return
+    new_rows = st.session_state.user_responses[already:]
+    if not new_rows:
+        return
+    df = pd.DataFrame(new_rows)
+    df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    df['submitted_by_user_login'] = "anonymous"
+    df['demographic_age'] = st.session_state.get('demographic_age', "")
+    df['demographic_country'] = st.session_state.get('demographic_country', "")
+    df['attention_check_passed'] = bool(st.session_state.get('attention_check_passed', False))
+    try:
+        export_to_google_sheets(df)
+        st.session_state.last_exported_count = total
+        st.session_state.exported_once = True
+    except Exception:
+        pass
+
 def display_demographic_section():
     st.markdown("""
-    <div class="academic-paper" style="background:#fffbe6; border:1px solid #ffe58f;">
+    <div class="academic-paper demographic-banner">
     <h3>Optional Demographic Questions</h3>
-    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>.</p>
+    <p><b>Warning:</b> The following information is personal and will be recorded and linked to your survey responses if you choose to provide it. However, your responses will remain anonymous and will not be linked to your identity. You may skip this section if you prefer by <i>leaving the fields blank</i>. <b>Please click submit to finish the survey and to ensure your answers get uploaded.</b></p>
     </div>
     """, unsafe_allow_html=True)
+    if (
+        not st.session_state.get('exported_once', False)
+        and st.session_state.user_responses
+        and GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
+        and GOOGLE_SHEET_ID
+        and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
+    ):
+        df = pd.DataFrame(st.session_state.user_responses)
+        df['submission_timestamp_utc'] = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        df['submitted_by_user_login'] = "anonymous"
+        df['demographic_age'] = st.session_state.get('demographic_age', "")
+        df['demographic_country'] = st.session_state.get('demographic_country', "")
+        df['attention_check_passed'] = bool(st.session_state.get('attention_check_passed', False))
+        try:
+            export_to_google_sheets(df)
+            st.session_state['exported_once'] = True
+        except Exception:
+            pass
     with st.form("demographic_form", clear_on_submit=False):
         age = st.text_input("What is your age? (Optional)", value=st.session_state.get('demographic_age', ""))
         country = st.text_input("What country do you currently reside in? (If US, you may specify state)", value=st.session_state.get('demographic_country', ""))
@@ -738,6 +799,9 @@ def display_demographic_section():
             st.session_state['demographic_complete'] = True
             st.success("Demographic information saved.")
             st.rerun()
+    if st.button("Skip and Finish", key="skip_demographics_btn", use_container_width=True):
+        st.session_state['demographic_complete'] = True
+        st.rerun()
 
 def display_finish_screen():
     st.title("Survey Completed!")
@@ -773,13 +837,18 @@ You can take a look at the project page here: [Project Page](https://github.com/
         demographic_country = st.session_state.get('demographic_country', "")
         df['demographic_age'] = demographic_age
         df['demographic_country'] = demographic_country
+        df['attention_check_passed'] = bool(st.session_state.get('attention_check_passed', False))
         if (
-            st.session_state.get('attention_check_passed', True)
+            not st.session_state.get('exported_once', False)
             and GOOGLE_SHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
             and GOOGLE_SHEET_ID
             and st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
         ):
-            export_to_google_sheets(df)
+            try:
+                export_to_google_sheets(df)
+                st.session_state['exported_once'] = True
+            except Exception as _:
+                pass
         elif GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
             st.warning("Automatic Google Sheet Export is not configured by the admin (GOOGLE_SHEET_ID is missing or is a placeholder). Your data has not been automatically uploaded.")
         elif not st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY):

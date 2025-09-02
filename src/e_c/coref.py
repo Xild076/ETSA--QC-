@@ -11,8 +11,8 @@ from functools import lru_cache
 from typing import Dict, Any, List, Tuple
 from maverick import Maverick
 import sys, os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from clause import clause_extraction as ce
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from src.clause import clause_extraction as ce
 from transformers.utils import logging as tlog
 tlog.set_verbosity_error()
 
@@ -36,17 +36,59 @@ def _spacy():
     raise RuntimeError("install a spaCy English model")
 
 def _sent_spans(text: str) -> List[Tuple[int, int]]:
-    spans, i = [], 0
-    for s in ce.constituency_clauses(text):
-        j = text.index(s, i); spans.append((j, j + len(s))); i = j + len(s)
-    return spans
+    nlp = _spacy()
+    return [(s.start_char, s.end_char) for s in nlp(text).sents]
 
 _det = ("the ", "The ", "a ", "A ", "an ", "An ")
+
+_poss = ("my ", "My ", "our ", "Our ", "your ", "Your ", "his ", "His ", "her ", "Her ", "their ", "Their ")
+_quant = ("plenty of ", "Plenty of ", "lots of ", "Lots of ", "lot of ", "Lot of ", "bunch of ", "Bunch of ", "kind of ", "Kind of ", "sort of ", "Sort of ")
+
+_stop_entities = {"i", "we", "they", "he", "she", "it", "this", "that", "these", "those", "here", "there", "rest", "us", "you", "someone", "something", "anything", "everything", "nothing", "plenty", "favorite", "wannabe", "wannabes"}
+
+_food_lex = {"food","onion","ring","rings","chili","soup","soups","pizza","burger","pasta","steak","fish","beer","wine","coffee","drink","drinks","guinness","menu"}
+_service_lex = {"service","staff","server","servers","waiter","waitress","host","hostess","bartender","maitre","maitre d'","buy-back"}
+_amb_lex = {"ambience","ambiance","atmosphere","music","noise","decor","lighting","environment","place","bar","restaurant","kitchen"}
 
 def _strip(t: str, s: int) -> Tuple[str, int]:
     for d in _det:
         if t.startswith(d): return t[len(d):], s + len(d)
+    for p in _poss:
+        if t.startswith(p): return t[len(p):], s + len(p)
+    for q in _quant:
+        if t.startswith(q): return t[len(q):], s + len(q)
     return t, s
+
+def _normalize_to_head(doc: "spacy.tokens.Doc", s: int, e: int, t: str) -> Tuple[str, int, int]:
+    span = doc.char_span(s, e, alignment_mode="expand")
+    if span is None or not span:
+        return t, s, e
+    head = span.root
+    if head is None:
+        return t, s, e
+    try:
+        if any(tok.text.lower() == "of" for tok in span):
+            for tok in span:
+                if tok.dep_ == "pobj" and (tok.lemma_.lower() in _food_lex):
+                    ys = tok.left_edge.idx
+                    ye = tok.right_edge.idx + len(tok.right_edge.text)
+                    text_y = doc.text[ys:ye]
+                    text_y2, ys2 = _strip(text_y, ys)
+                    return text_y2, ys2, ys2 + len(text_y2)
+    except Exception:
+        pass
+    compound_parts = [head]
+    for tok in head.children:
+        if tok.dep_ in ("compound", "amod") and tok.i < head.i:
+            compound_parts.append(tok)
+    compound_parts = sorted(compound_parts, key=lambda x: x.i)
+    hs = compound_parts[0].idx
+    he = head.idx + len(head.text)
+    text_span = doc.text[hs:he]
+    text_span2, hs2 = _strip(text_span, hs)
+    if text_span2.strip().lower() in _stop_entities:
+        return text_span2, hs2, hs2 + len(text_span2)
+    return text_span2, hs2, hs2 + len(text_span2)
 
 def resolve(text: str, device: str = "-1") -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     logger.info(f"Resolving entities in text with device: {device}")
@@ -55,17 +97,26 @@ def resolve(text: str, device: str = "-1") -> Tuple[Dict[int, Dict[str, Any]], D
     for cid, chain in enumerate(mav.predict(text)["clusters_char_offsets"]):
         refs = []
         for s0, e0 in chain:
-            t, s = _strip(text[s0:e0 + 1], s0)
+            raw = text[s0:e0 + 1]
+            t, s = _strip(raw, s0)
             e = s + len(t)
-            refs.append((t, [s, e]))
-            seen.add((s, e))
+            t2, s2, e2 = _normalize_to_head(nlp(text), s, e, t)
+            if t2.strip().lower() in _stop_entities:
+                continue
+            refs.append((t2, [s2, e2]))
+            seen.add((s2, e2))
         clusters[cid] = {"entity_references": refs}
     next_id = len(clusters)
     doc = nlp(text)
     for span in list(doc.ents) + list(doc.noun_chunks):
-        if span.root.pos_ not in ("NOUN", "PROPN") and not span.ent_type_: continue
+        has_ent = any(getattr(tok, "ent_type_", "") for tok in span)
+        if span.root.pos_ not in ("NOUN", "PROPN") and not has_ent:
+            continue
         t, s = _strip(span.text, span.start_char)
         e = s + len(t)
+        t, s, e = _normalize_to_head(doc, s, e, t)
+        if t.strip().lower() in _stop_entities:
+            continue
         if (s, e) not in seen:
             clusters[next_id] = {"entity_references": [(t, [s, e])]}
             seen.add((s, e)); next_id += 1

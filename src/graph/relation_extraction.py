@@ -23,8 +23,7 @@ GENAI_BASE_BACKOFF_SECONDS = float(os.getenv("GENAI_BASE_BACKOFF_SECONDS", "1.5"
 GENAI_MAX_BACKOFF_SECONDS = float(os.getenv("GENAI_MAX_BACKOFF_SECONDS", "30"))
 
 import logging
-
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -51,9 +50,17 @@ class _RateLimiter:
 
 _GLOBAL_GENAI_LIMITER = _RateLimiter(GENAI_REQUESTS_PER_MIN)
 
+_EXTRACTOR_SINGLETON = None
+_SPACY_SINGLETON = None
+
+def _get_extractor(api_key: str | None = None):
+    global _EXTRACTOR_SINGLETON
+    if _EXTRACTOR_SINGLETON is None:
+        _EXTRACTOR_SINGLETON = GemmaRelationExtractor(api_key=api_key)
+    return _EXTRACTOR_SINGLETON
+
 class GemmaRelationExtractor:
     def __init__(self, api_key: str = None, rate_limiter: _RateLimiter | None = None):
-        logger.info("Initializing GemmaRelationExtractor...")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable or pass api_key parameter.")
@@ -63,7 +70,6 @@ class GemmaRelationExtractor:
         self._rate_limiter = rate_limiter or _GLOBAL_GENAI_LIMITER
         
     def extract_relations(self, sentence: str, entities: List[str]) -> Dict[str, Any]:
-        logger.info("Extracting relations...")
         if not sentence or not entities:
             return {
                 "sentence": sentence,
@@ -137,88 +143,56 @@ class GemmaRelationExtractor:
             return False
     def _create_prompt(self, sentence: str, entities: List[str]) -> str:
         entities_json = json.dumps(entities)
-        return f"""You are an expert relation extraction system. Extract ONLY relationships between the listed entities. Be exhaustive and precise.
-
-SENTENCE: "{sentence}"
-ENTITIES: {entities_json}
-
-TYPES
-1) action: Directed verb phrase where the subject acts on the object.
-     - Include particles/prepositions/adverbs that are integral to the verb phrase (e.g., "tended to", "streaked across", "was moored in", "were covered in").
-     - Do NOT include direct objects or attached "of/with" complements inside the relation text; stop the phrase before the object NP.
-2) association: Cooperative/symmetric joint activity between two entities (worked/partnered/collaborated/played … together/with/alongside).
-     - Use only for joint activity; not for location/path prepositions.
-     - Emit association ONCE per unordered pair. Choose the earlier-mentioned entity as subject; do not output the reverse.
-     - If the same verb also takes a separate object (e.g., "worked on X"), you may also output action relations to that object, but DO NOT also output a duplicate action between the two associates.
-3) belonging: Ownership or part-of (X's Y, Y of X, owns, has/have/had, with [possession], belongs to).
-     - Canonicalize as follows:
-         a) Possessive (X's Y): subject=X, text="owns" or "has", object=Y.
-         a2) Possessive pronoun referring to an entity (his/her/their/its Y): subject=referent entity, text="owns" or "has", object=Y.
-         b) "Y of X":
-                - If Y is a concrete part/property (wheel, door, screen, design), prefer owner direction: subject=X, text="has", object=Y.
-                - If Y is a collection/measure/event noun (flock, herd, team, copy/copies, series, takeover), keep subject=Y, text="of", object=X.
-         c) Noun-with-Noun ("room with ceilings"): subject=first noun, text="with", object=second noun as belonging.
-     - Do NOT create belonging for mere spatial relations.
-
-ALGORITHM (internal – do not output these steps)
-Enumerate all ordered pairs of distinct entities (A, B) from ENTITIES. For each pair:
-        - If possessive/of/with-possession pattern links them: add belonging per the rules above.
-        - If a joint-activity verb connects them with with/together/alongside: add association for the pair once.
-        - If a directed verb phrase goes from A to B: add action A→B; include verb + required particles/preps/adverbs, but no objects or "of/with NP" complements.
-Do this for every pair; many sentences have multiple relations. Avoid duplicates.
-
-DECISIONS CHECKLIST
-- Use only ENTITIES; use exact surface form in heads.
-- Output ALL relations present; don’t omit valid ones.
-- Never output relations where subject == object.
-- Reject preposition-only relation texts: of, with, from, to, into, onto, in, on, at, by, for, about, over, under, across, through, along, past, beyond. Use them only inside a verb phrase or as belonging/association per the rules.
-- Disambiguate "with":
-    • VERB with NP where VERB is symmetric (work, collaborate, partner, play, share): association between the two participants only.
-    • NP with NP (possession/attributes): belonging.
-- Collective NPs ("group/flock/team/herd of X"): the collective performs actions; do not also assign the same action to X unless explicitly stated.
-- Event/collection nouns ("takeover of company", "copies of the book"): belonging with text "of" from the event/collection to its theme (subject=event/collection, object=theme).
- - Association requires agentive participants (people/animals/groups/organizations). Do not create association with inanimate objects, events, or moments.
- - Ignore path/location attachments like "from X", "in/at/on X" when they only indicate location/source and not a true action relation between two entities.
-
-OUTPUT FORMAT (JSON only):
-{{
-    "sentence": "{sentence}",
-    "entities": {entities_json},
-    "relations": [
-        {{
-            "subject": {{ "head": "entity_name" }},
-            "relation": {{ "type": "action|association|belonging", "text": "relationship_description" }},
-            "object": {{ "head": "entity_name" }}
-        }}
-    ]
-}}
-
-POSITIVE EXAMPLES (generic; not from your dataset)
-- "The biologist carefully cataloged rare specimens" → biologist action "carefully cataloged" specimens.
-- "The programmer collaborated with the designer on the interface" → programmer association "collaborated with" designer; actions "worked on" may target "interface" but NOT between programmer↔designer again.
-- "A flock of birds crossed the valley" → flock belonging "of" birds; flock action "crossed" valley; do not also say birds crossed, unless stated.
-- "The wheel of the car was replaced" → car belonging "has" wheel.
-- "The copies of the novel sold quickly" → copies belonging "of" novel.
-- "The room with skylights felt bright" → room belonging "with" skylights.
-- "They partnered together on the study" → association "partnered with" between participants only; action "worked on" may target study.
-
-NEGATIVE/EDGE GUIDANCE
-- Do not create relations where the only connector is a path/location preposition (from/to/into/onto/in/on/at/by/over/under/across/through/along/past/beyond) unless covered by action verb phrases.
-- Do not include objects or "of/with NP" complements inside action relation text.
-- If a relation phrase connects an entity to a non-entity concept, ignore it unless the concept is in ENTITIES.
-- If both association and action to a third object are present, include both; but emit association only once per pair.
-
-IMPORTANT
-- Use lowercase relation types (action, association, belonging).
-- Use only double quotes in JSON.
-- Return valid JSON only, no extra text."""
+        return (
+            f"You are an expert relation extraction system for restaurant reviews. Extract ONLY relationships between the listed ENTITIES.\n\n"
+            f"SENTENCE: \"{sentence}\"\n"
+            f"ENTITIES: {entities_json}\n\n"
+            "DOMAIN\n"
+            "- Entities include food/drinks, staff, ambience/place, price/value.\n"
+            "- Context: behaviors like chatting/giggling by staff while not serving imply negative service. Ignoring/forgetting/rushing by staff is negative. Serving/helping/bringing/taking orders is positive service.\n"
+            "- Implications: waiting is negative for customers; slow service negative; fast/quick service positive; fresh food positive; cold-when-hot food negative.\n\n"
+            "TYPES\n"
+            "1) action: Directed verb phrase; include required particles/preps/adverbs; exclude objects and of/with-NP complements. Capture implied sentiment when staff behave socially instead of serving.\n"
+            "2) association: Joint activity (work/collaborate/partner/play/share). Emit once per pair; not for location/path.\n"
+            "3) belonging: Ownership/part-of (X has Y; Y of X; NP with NP as attributes). Not for mere spatial relations.\n\n"
+            "ALGO\n"
+            "- For all ordered pairs (A,B) in ENTITIES: add belonging if possessive/of/with-possession; add association if joint-activity verb with with/together/alongside; add action A→B if directed verb phrase.\n\n"
+            "DECISIONS\n"
+            "- Use only ENTITIES, exact heads. No subject==object. Reject preposition-only relation texts (of/with/from/to/...). Association needs agentive participants. Ignore pure location/path attachments.\n\n"
+            "OUTPUT FORMAT (JSON only):\n"
+            "{\n"
+            f"    \"sentence\": \"{sentence}\",\n"
+            f"    \"entities\": {entities_json},\n"
+            "    \"relations\": [\n"
+            "        {\n"
+            "            \"subject\": { \"head\": \"entity_name\" },\n"
+            "            \"relation\": { \"type\": \"action|association|belonging\", \"text\": \"relationship_description\" },\n"
+            "            \"object\": { \"head\": \"entity_name\" }\n"
+            "        }\n"
+            "    ]\n"
+            "}\n\n"
+            "EXAMPLES\n"
+            "- \"The biologist carefully cataloged rare specimens\" → biologist action \"carefully cataloged\" specimens.\n"
+            "- \"The programmer collaborated with the designer on the interface\" → programmer association \"collaborated with\" designer.\n"
+            "- \"A flock of birds crossed the valley\" → flock belonging \"of\" birds; flock action \"crossed\" valley.\n\n"
+            "RESTAURANT\n"
+            "- \"The waiter was chatting with other staff instead of serving us\" → waiter action \"was chatting with\" staff (negative); waiter action \"ignoring\" customers (implied).\n"
+            "- \"Staff were giggling at the bar\" → staff action \"were giggling\" bar (negative).\n"
+            "- \"The server quickly brought our food\" → server action \"quickly brought\" food (positive).\n\n"
+            "EDGE\n"
+            "- Do not create relations where the only connector is a path/location preposition unless covered by action verb phrases.\n"
+            "- Do not include objects or of/with-NP complements inside action relation text.\n"
+            "- If both association and action to a third object are present, include both; but emit association only once per pair.\n\n"
+            "IMPORTANT\n"
+            "- Use lowercase relation types. Use double quotes in JSON. Return valid JSON only."
+        )
 
     def _query_gemma(self, prompt: str) -> str:
         generation_config = genai.types.GenerationConfig(
             temperature=0.0,
-            max_output_tokens=2000,
-            top_p=0.9,
-            top_k=40
+            max_output_tokens=800,
+            top_p=0.6,
+            top_k=20
         )
 
         def _is_rate_limited_error(err: Exception) -> bool:
@@ -394,9 +368,8 @@ IMPORTANT
         return False
 
 def extract_entity_modifiers(sentence: str, entity: str) -> List[str]:
-    logger.info(f"Extracting modifiers for entity '{entity}' in sentence: {sentence}")
     try:
-        extractor = GemmaRelationExtractor(api_key=API_KEY)
+        extractor = _get_extractor(API_KEY)
         prompt = f"""You are an expert at extracting descriptive modifiers for entities. 
 
 SENTENCE: "{sentence}"
@@ -459,128 +432,106 @@ If no meaningful modifiers found, return: []"""
             return uniq
         
         return []
-        
     except Exception as e:
-        print(f"Error extracting modifiers for {entity}: {e}")
+        logger.error(f"Error extracting modifiers with LLM for '{entity}': {e}")
         return []
 
-def re_api(sentence: str, entities: List[str], api_key: str = API_KEY) -> Dict[str, Any]:
-    logger.info(f"Extracting relations for sentence: {sentence} with entities: {entities}")
+def extract_entity_modifiers_spacy(sentence: str, entity: str) -> List[str]:
     try:
-        extractor = GemmaRelationExtractor(api_key)
-        return extractor.extract_relations(sentence, entities)
+        global _SPACY_SINGLETON
+        if _SPACY_SINGLETON is None:
+            import spacy
+            _SPACY_SINGLETON = spacy.blank("en") if not spacy.util.is_package("en_core_web_sm") else spacy.load("en_core_web_sm")
+        doc = _SPACY_SINGLETON(sentence)
+        mods: List[str] = []
+        ent_l = entity.lower()
+
+        def add_phrase(tok) -> None:
+            phrase = tok.text
+            advs = [c.text for c in tok.children if c.dep_ in ("advmod", "neg")]
+            if advs:
+                phrase = " ".join(advs + [phrase])
+            mods.append(phrase)
+
+        spans = list(doc.noun_chunks)
+        for np in spans:
+            if np.root.text.lower() == ent_l or np.text.lower() == ent_l:
+                for tok in np.root.children:
+                    if tok.dep_ == "amod":
+                        add_phrase(tok)
+
+        for tok in doc:
+            if tok.dep_ in ("attr", "acomp") and tok.head.pos_ in ("AUX", "VERB"):
+                nsubj = next((c for c in tok.head.children if c.dep_ in ("nsubj","nsubjpass") and c.text.lower() == ent_l), None)
+                if nsubj is not None:
+                    add_phrase(tok)
+
+        skip = {"the","a","an","of","and","or","to","very","really"}
+        out = []
+        seen = set()
+        for m in mods:
+            mm = m.strip()
+            if not mm or mm.lower() in skip:
+                continue
+            key = mm.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(mm)
+        return out
+    except Exception:
+        return []
+
+def context_window(sentences: List[str], idx: int, width: int = 1) -> str:
+    start = max(0, idx - width)
+    end = min(len(sentences), idx + width + 1)
+    return " ".join(s.strip() for s in sentences[start:end] if s)
+
+def get_entity_modifiers(sentence: str, entity: str) -> List[str]:
+    mods = extract_entity_modifiers_spacy(sentence, entity)
+    if mods:
+        return mods
+    return extract_entity_modifiers(sentence, entity)
+
+def re_api(sentence: str, entities: List[str], api_key: str = API_KEY) -> Dict[str, Any]:
+    try:
+        extractor = _get_extractor(api_key)
+        res = extractor.extract_relations(sentence, entities)
+        if res and res.get("relations"):
+            return res
     except Exception as e:
-        logger.error(f"Error extracting relations: {e}")
-        return {"sentence": sentence, "entities": entities, "relations": [], "error": str(e), "approach_used": "none"}
+        logger.error(f"Error extracting relations via LLM: {e}")
+
+    try:
+        global _SPACY_SINGLETON
+        if _SPACY_SINGLETON is None:
+            import spacy
+            _SPACY_SINGLETON = spacy.blank("en") if not spacy.util.is_package("en_core_web_sm") else spacy.load("en_core_web_sm")
+        doc = _SPACY_SINGLETON(sentence)
+        ents_l = {e.lower() for e in entities}
+        rels: List[Dict[str, Any]] = []
+        for token in doc:
+            if token.pos_ == "VERB" or (token.pos_ == "AUX" and any(c.dep_ in ("xcomp","ccomp","advcl") for c in token.children)):
+                subj = next((c for c in token.children if c.dep_ in ("nsubj","nsubjpass") and c.text.lower() in ents_l), None)
+                dobj = next((c for c in token.children if c.dep_ in ("dobj","obj") and c.text.lower() in ents_l), None)
+                if subj is not None and dobj is not None and subj.text.lower() != dobj.text.lower():
+                    rel_text = token.lemma_
+                    advmods = [c.text for c in token.children if c.dep_ in ("advmod","neg")]
+                    if advmods:
+                        rel_text = " ".join(advmods + [rel_text])
+                    rels.append({
+                        "subject": {"head": subj.text},
+                        "relation": {"type": "action", "text": rel_text},
+                        "object": {"head": dobj.text}
+                    })
+        return {"sentence": sentence, "entities": entities, "relations": rels, "approach_used": "spacy_fallback"}
+    except Exception as e2:
+        logger.error(f"Error extracting relations via spaCy fallback: {e2}")
+        return {"sentence": sentence, "entities": entities, "relations": [], "error": str(e2), "approach_used": "none"}
 
 def test_gemma_relation_extraction():
-    logger.info("=== GEMMA 27B RELATION EXTRACTION TESTING ===")
-
-    action_tests = [
-        ("The man hit the child.", ["man", "child"]),
-        ("The red car crashed into the blue truck.", ["car", "truck"]),
-        ("Alice helped her sick friend Bob recover quickly.", ["Alice", "Bob"])
-    ]
-    
-    association_tests = [
-        ("John and Mary worked together on the difficult project.", ["John", "Mary"]),
-        ("The big dog played with the small cat happily.", ["dog", "cat"]),
-        ("Smart students and experienced teachers collaborated effectively on research.", ["students", "teachers"])
-    ]
-    
-    belonging_tests = [
-        ("John's expensive car is very fast.", ["John", "car"]),
-        ("The rusty wheels of the old bicycle are completely broken.", ["wheels", "bicycle"]),
-        ("The phone's wifi was terrible and slow.", ["phone", "wifi"])
-    ]
-    
-    try:
-        extractor = GemmaRelationExtractor(api_key=API_KEY)
-        
-        all_tests = [
-            ("ACTION RELATIONS", action_tests),
-            ("ASSOCIATION RELATIONS", association_tests), 
-            ("BELONGING RELATIONS", belonging_tests)
-        ]
-        
-        total_success = 0
-        total_tests = 0
-        
-        for test_type, tests in all_tests:
-            print(f"{test_type}:")
-            print("-" * 70)
-            
-            for i, (sentence, entities) in enumerate(tests, 1):
-                total_tests += 1
-                print(f"Test {i}: {sentence}")
-                print(f"Target entities: {entities}")
-                
-                result = extractor.extract_relations(sentence, entities)
-                
-                print(f"Model used: {result.get('approach_used', 'unknown')}")
-                print(f"Timestamp: {result.get('timestamp', 'N/A')}")
-                if result.get("relations"):
-                    total_success += 1
-                    for j, rel in enumerate(result["relations"], 1):
-                        print(f"  ✅ Relation {j}:")
-                        print(f"    Subject: '{rel['subject']['head']}'")
-                        print(f"    Type: {rel['relation']['type'].upper()}")
-                        print(f"    Text: '{rel['relation']['text']}'")
-                        print(f"    Object: '{rel['object']['head']}'")
-                else:
-                    print("  ❌ No relations extracted")
-                    if "error" in result:
-                        print(f"  Error: {result['error']}")
-                if result.get("fallback_used"):
-                    print("  ⚠️ Fallback parsing was used")
-                print()
-            print()
-        
-        print("COMPLEX SENTENCE TESTING:")
-        print("-" * 70)
-        
-        complex_tests = [
-            ("The car's wheel was bad.", ["car", "wheel"]),
-            ("The angry teacher scolded the lazy student harshly.", ["teacher", "student"]),
-            ("Microsoft's new software contains serious security vulnerabilities.", ["Microsoft", "software", "vulnerabilities"]),
-            ("The broken phone's cracked screen displayed fuzzy images.", ["phone", "screen"])
-        ]
-        
-        for i, (sentence, entities) in enumerate(complex_tests, 1):
-            total_tests += 1
-            print(f"Complex Test {i}: {sentence}")
-            print(f"Entities: {entities}")
-            
-            result = extractor.extract_relations(sentence, entities)
-            
-            if result.get("relations"):
-                total_success += 1
-                for rel in result["relations"]:
-                    subj_str = f"'{rel['subject']['head']}'"
-                    obj_str = f"'{rel['object']['head']}'"
-                    print(f" FOUND! {subj_str} --{rel['relation']['type']}: {rel['relation']['text']}--> {obj_str}")
-            else:
-                print("No relations found")
-            print()
-        
-        print("=" * 70)
-        print(f"SUMMARY: {total_success}/{total_tests} tests extracted relations successfully")
-        success_rate = (total_success / total_tests) * 100 if total_tests > 0 else 0
-        print(f"Success Rate: {success_rate:.1f}%")
-        
-    except Exception as e:
-        print(f"Failed to initialize Gemma extractor: {e}")
+    pass
 
 def batch_extract_relations(sentences_and_entities: List[Tuple[str, List[str]]], api_key: str = None) -> List[Dict[str, Any]]:
     extractor = GemmaRelationExtractor(api_key)
-    results = []
-    
-    print(f"Processing {len(sentences_and_entities)} sentences with Gemma 27B...")
-    
-    for i, (sentence, entities) in enumerate(sentences_and_entities, 1):
-        print(f"Processing {i}/{len(sentences_and_entities)}: {sentence[:50]}...")
-        result = extractor.extract_relations(sentence, entities)
-        results.append(result)
-    
-    return results
+    return [extractor.extract_relations(sentence, entities) for (sentence, entities) in sentences_and_entities]
 

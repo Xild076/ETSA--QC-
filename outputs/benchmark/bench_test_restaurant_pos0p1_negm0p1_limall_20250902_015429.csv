@@ -1,0 +1,97 @@
+id,text,aspect,gold,pred,score,entity_matched,cluster_id,matched_by
+1,"All the appetizers and salads were fabulous, the steak was mouth watering and the pasta was delicious!!!",appetizers,positive,positive,0.9702944040764123,appetizers,0,entity_match
+2,"All the appetizers and salads were fabulous, the steak was mouth watering and the pasta was delicious!!!",salads,positive,positive,0.9426351473666728,salads,1,entity_match
+3,"All the appetizers and salads were fabulous, the steak was mouth watering and the pasta was delicious!!!",steak,positive,positive,0.7392565608024597,steak,2,entity_match
+4,"All the appetizers and salads were fabulous, the steak was mouth watering and the pasta was delicious!!!",pasta,positive,positive,0.9874305427074432,pasta,4,entity_match
+5,And really large portions.,portions,positive,positive,0.17674512987012986,large portions,0,entity_match
+6,The sweet lassi was excellent as was the lamb chettinad and the garlic naan but the rasamalai was forgettable.,sweet lassi,positive,positive,0.8491281802998856,sweet lassi,0,entity_match
+7,The sweet lassi was excellent as was the lamb chettinad and the garlic naan but the rasamalai was forgettable.,lamb chettinad,positive,neutral,0.0,lamb chettinad,1,entity_match
+8,The sweet lassi was excellent as was the lamb chettinad and the garlic naan but the rasamalai was forgettable.,garlic naan,positive,neutral,0.0,garlic naan,2,entity_match
+9,The sweet lassi was excellent as was the lamb chettinad and the garlic naan but the rasamalai was forgettable.,rasamalai,negative,negative,-0.9631823599338531,rasamalai,3,entity_match
+10,Service was quick.,Service,positive,positive,0.988143801689148,Service,0,entity_match
+11,"Oh, don't even let me start with how expensive the bills were!",bills,negative,negative,-0.8676869571208954,bills,0,entity_match
+12,Service is top notch.,Service,positive,positive,0.47162241595251214,Service,0,entity_match
+13,The best thing I tasted were the lambc hops.,lambc hops,positive,positive,0.902615487575531,lambc,1,entity_match
+14,"Even though its good seafood, the prices are too high.",seafood,positive,positive,0.8363671411514282,good seafood,0,entity_match
+15,"Even though its good seafood, the prices are too high.",prices,negative,negative,-0.9447309374809265,prices,1,entity_match
+16,"In addition, the food is very good and the prices are reasonable.",food,positive,positive,0.5844129676002425,food,1,entity_match
+17,"In addition, the food is very good and the prices are reasonable.",prices,positive,positive,0.19713204951223331,prices,2,entity_match
+18,The food is great and authentic.,food,positive,positive,0.9727963373297825,food,0,entity_match
+19,"I recommend the garlic shrimp, okra (bindi), and anything with lamb.",garlic shrimp,positive,neutral,-0.04661789796675891,garlic shrimp,0,entity_match
+20,"I recommend the garlic shrimp, okra (bindi), and anything with lamb.",okra (bindi),positive,neutral,-0.005011855970956898,okra,1,entity_match
+21,"I recommend the garlic shrimp, okra (bindi), and anything with lamb.",lamb,positive,positive,0.16775332973458293,lamb,3,entity_match
+22,"The menu was impressive with selections ranging from a burger, to steak, to escargot.",menu,positive,positive,0.6970946347234858,menu,0,entity_match
+23,"The menu was impressive with selections ranging from a burger, to steak, to escargot.",burger,neutral,positive,0.7832286271025464,burger,2,entity_match
+24,"The menu was impressive with selections ranging from a burger, to steak, to escargot.",steak,neutral,positive,0.4243500625888809,steak,3,entity_match
+25,"The menu was impressive with selections ranging from a burger, to steak, to escargot.",escargot,neutral,neutral,0.0,escargot,,no_match
+26,very good breads as well.,breads,positive,positive,0.8948435313394293,good breads,0,entity_match
+27,"Anyway, the food is good, the price is right and they have a decent wine list.",food,positive,positive,0.8300477073295042,food,0,entity_match
+28,"Anyway, the food is good, the price is right and they have a decent wine list.",price,positive,positive,0.6420686926160539,price,1,entity_match
+29,"Anyway, the food is good, the price is right and they have a decent wine list.",wine list,positive,positive,0.9443760276772082,decent wine list,2,entity_match
+30,The food was lousy -too sweet or too salty and the portions tiny.,food,negative,negative,-0.4077590079526352,food,0,entity_match
+31,The food was lousy -too sweet or too salty and the portions tiny.,portions,negative,negative,-0.7836300055072695,portions,1,entity_match
+32,But the coconut rice was good.,coconut rice,positive,positive,0.8148354648379609,coconut rice,0,entity_match
+33,And the Tom Kha soup was pathetic.,Tom Kha soup,negative,negative,-0.9750435268506408,Tom Kha,0,entity_match
+34,The food now is inconsistent.,food,negative,negative,-0.871920108795166,food,0,entity_match
+35,"Try the crunchy tuna, it is to die for.",crunchy tuna,positive,positive,0.383504718542099,crunchy tuna,0,entity_match
+36,Reasonable prices.,prices,positive,positive,0.8725708890706301,Reasonable prices,0,entity_match
+37,Add to that great service and great food at a reasonable price and you have yourself the beginning of a great evening.,service,positive,positive,0.6789789509870966,great service,0,entity_match
+38,Add to that great service and great food at a reasonable price and you have yourself the beginning of a great evening.,food,positive,positive,0.6797100465518424,great food,1,entity_match
+39,Add to that great service and great food at a reasonable price and you have yourself the beginning of a great evening.,price,positive,positive,0.42459307103096283,reasonable price,2,entity_match
+40,"Unfortunately, the food was NOT something to get worked up about.",food,negative,positive,0.7487435936927795,food,0,entity_match
+41,The food is great and reasonably priced.,food,positive,positive,0.9727963373297825,food,0,entity_match
+42,The food is great and reasonably priced.,priced,positive,neutral,0.0,priced,,no_match
+43,"Their calzones are horrific, bad, vomit-inducing, YUCK.",calzones,negative,negative,-0.9843916893005371,calzones,0,entity_match
+44,"A few tips: skip the turnip cake, roast pork buns and egg custards.",turnip cake,negative,neutral,-0.0010797848948526341,turnip cake,1,entity_match
+45,"A few tips: skip the turnip cake, roast pork buns and egg custards.",roast pork buns,negative,neutral,0.005484916632118374,pork buns,2,entity_match
+46,"A few tips: skip the turnip cake, roast pork buns and egg custards.",egg custards,negative,positive,0.40163971600324755,egg custards,3,entity_match
+47,The bagels are fabulous.,bagels,positive,positive,0.9353509689681232,bagels,0,entity_match
+48,"While the ambiance and atmosphere were great, the food and service could have been a lot better.",ambiance,positive,positive,0.6851637813141593,ambiance,0,entity_match
+49,"While the ambiance and atmosphere were great, the food and service could have been a lot better.",atmosphere,positive,positive,0.6794317501485784,atmosphere,1,entity_match
+50,"While the ambiance and atmosphere were great, the food and service could have been a lot better.",food,negative,positive,0.5099836554634531,food,2,entity_match
+51,"While the ambiance and atmosphere were great, the food and service could have been a lot better.",service,negative,negative,-0.6242299837241061,service,3,entity_match
+52,"Our waitress was sweet and accomodating, not overbearing.",waitress,positive,positive,0.8022667985642329,waitress,0,entity_match
+53,"My goodness, everything from the fish to the rice to the seaweed was absolutely amazing.",fish,positive,positive,0.9858035186771303,fish,1,entity_match
+54,"My goodness, everything from the fish to the rice to the seaweed was absolutely amazing.",rice,positive,positive,0.9834904271410778,rice,2,entity_match
+55,"My goodness, everything from the fish to the rice to the seaweed was absolutely amazing.",seaweed,positive,positive,0.9798195030307397,seaweed,3,entity_match
+56,"Good spreads, great beverage selections and bagels really tasty.",spreads,positive,neutral,0.0,spreads,,no_match
+57,"Good spreads, great beverage selections and bagels really tasty.",beverage selections,positive,positive,0.9825733187608421,great beverage selections,0,entity_match
+58,"Good spreads, great beverage selections and bagels really tasty.",bagels,positive,positive,0.9742914893431589,bagels,1,entity_match
+59,The food options rule.,food options,positive,positive,0.5744950771331787,options rule,0,entity_match
+60,Consistently good Japanese Tapas.,Japanese Tapas,positive,positive,0.975572039897088,good Japanese Tapas,0,entity_match
+61,The sushi was awful!,sushi,negative,negative,-0.9874415099620819,sushi,0,entity_match
+62,The food was great.,food,positive,positive,0.9727963373297825,food,0,entity_match
+63,With the theater 2 blocks away we had a delicious meal in a beautiful room.,meal,positive,positive,0.5978536164774089,delicious meal,2,entity_match
+64,With the theater 2 blocks away we had a delicious meal in a beautiful room.,room,positive,positive,0.7799143347482241,beautiful room,3,entity_match
+65,I love the fact that the pizza tastes so good and is so cheap.,pizza,positive,positive,0.6032758111985509,pizza,1,entity_match
+66,"Service was prompt, friendly and great.",Service,positive,positive,0.99201500415802,Service,0,entity_match
+67,"I haven't eat a lamb chop as delicious as that, the salads are really nice dressed with lemon and extra virgnin olive oil.",lamb chop,positive,positive,0.9734265506267548,lamb chop,0,entity_match
+68,"I haven't eat a lamb chop as delicious as that, the salads are really nice dressed with lemon and extra virgnin olive oil.",salads,positive,positive,0.5854493250683238,salads,1,entity_match
+69,Drawbacks: service is slow and they don't toast!,service,negative,negative,-0.7754547780578691,service,1,entity_match
+70,The prices were fantastic.,prices,positive,positive,0.9742873087525368,prices,0,entity_match
+71,"The food is terrible and overall, I would have to say avoid at all costs.",food,negative,negative,-0.9873873889446259,food,0,entity_match
+72,The food is prepared quickly and efficiently.,food,positive,positive,0.8919513903092593,food,0,entity_match
+73,"The food is fresh, delicious, and reasonably priced.",food,positive,positive,0.5392953243572265,food,0,entity_match
+74,"The food is fresh, delicious, and reasonably priced.",priced,positive,neutral,0.0,priced,,no_match
+75,"As we were leaving, the couple standing by the door said to another waiter, we're not in a hurry.",waiter,neutral,neutral,-0.0053796252118769265,waiter,2,entity_match
+76,The outdoor atmosphere of sitting on the sidewalk watching the world go by 50 feet away on 6th avenue on a cool evening was wonderful.,outdoor atmosphere,positive,positive,0.5002623009824226,outdoor atmosphere,3,entity_match
+77,"A large is $20, and toppings are about $3 each.",toppings,neutral,neutral,0.09196435425268891,toppings,2,entity_match
+78,The spicy tuna and salmon are the best we've ever had.,spicy tuna,positive,positive,0.6822181187640535,spicy tuna,0,entity_match
+79,The spicy tuna and salmon are the best we've ever had.,salmon,positive,positive,0.4742235073889217,salmon,1,entity_match
+80,"The food was very good, a great deal, and the place its self was great.",food,positive,positive,0.9865048475330696,food,1,entity_match
+81,"The food was very good, a great deal, and the place its self was great.",place,positive,positive,0.9641825037542731,place,0,entity_match
+82,The food is usually good but it certainly isn't a relaxing place to go.,food,positive,positive,0.49439130474020526,food,0,entity_match
+83,The food is usually good but it certainly isn't a relaxing place to go.,place,negative,negative,-0.7305291566605492,relaxing place,1,entity_match
+84,"After dinner, take your date to the HUGE dance floor, probably one of the biggest you'll see in NY.",dinner,neutral,positive,0.7479483485221863,dinner,1,entity_match
+85,"After dinner, take your date to the HUGE dance floor, probably one of the biggest you'll see in NY.",dance floor,positive,positive,0.9237886080518365,HUGE dance floor,3,entity_match
+86,The server was really cool and served us our food and drinks with a smile.,server,positive,positive,0.9029574713204056,server,1,entity_match
+87,The server was really cool and served us our food and drinks with a smile.,served,positive,neutral,0.0,served,,no_match
+88,The server was really cool and served us our food and drinks with a smile.,food,neutral,positive,0.7495192289352417,food,2,entity_match
+89,The server was really cool and served us our food and drinks with a smile.,drinks,neutral,positive,0.8558588781161234,drinks,3,entity_match
+90,"The dishes offered were unique, very tasty and fresh from the lamb sausages, sardines with biscuits, large whole shrimp to the amazing pistachio ice cream (the best and freshest I've ever had).",dishes,positive,positive,0.6088655717597052,dishes,0,entity_match
+91,"The dishes offered were unique, very tasty and fresh from the lamb sausages, sardines with biscuits, large whole shrimp to the amazing pistachio ice cream (the best and freshest I've ever had).",lamb sausages,positive,positive,0.25100231406712414,lamb sausages,1,entity_match
+92,"The dishes offered were unique, very tasty and fresh from the lamb sausages, sardines with biscuits, large whole shrimp to the amazing pistachio ice cream (the best and freshest I've ever had).",sardines with biscuits,positive,positive,0.567466442475711,sardines,2,entity_match
+93,"The dishes offered were unique, very tasty and fresh from the lamb sausages, sardines with biscuits, large whole shrimp to the amazing pistachio ice cream (the best and freshest I've ever had).",large whole shrimp,positive,positive,0.117946406032086,large whole shrimp,4,entity_match
+94,"The dishes offered were unique, very tasty and fresh from the lamb sausages, sardines with biscuits, large whole shrimp to the amazing pistachio ice cream (the best and freshest I've ever had).",pistachio ice cream,positive,positive,0.7930566551836958,amazing pistachio ice cream,5,entity_match
+95,Went there for an office lunch.,office lunch,neutral,positive,0.7424693703651428,office lunch,0,entity_match
+96,"We've only eaten in the restaurant once, but we have ordered many times for dinner.",dinner,neutral,positive,0.7940733463452254,dinner,3,entity_match

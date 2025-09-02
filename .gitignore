@@ -7,3 +7,10 @@ data/dataset.csv
 /src/tests
 /data/dataset
 .env
+/tests
+/.venv
+/.vscode
+/__pycache__
+/.pytest_cache
+integrated_graph.html
+pytest.ini

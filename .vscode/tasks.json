@@ -50,6 +50,21 @@
 				"$pytest"
 			],
 			"group": "build"
+		},
+		{
+			"label": "pytest (venv)",
+			"type": "shell",
+			"command": "/Users/harry/Documents/Python_Projects/ETSA_(QC)/.venv/bin/python",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$pytest-python"
+			],
+			"group": "build"
 		}
 	]
 }

@@ -27,21 +27,42 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from sklearn.model_selection import KFold
 
 current_dir = Path(__file__).parent
 sys.path.insert(0, str(current_dir))
 
 warnings.filterwarnings("ignore", category=OptimizeWarning)
 VERBOSE = True
+RANDOM_STATE = 41
+CV_FOLDS = 5
 
 def _vprint(msg: str):
     print(msg)
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
+def remove_zero_dominant_seeds(df: pd.DataFrame, threshold: float = 0.5) -> tuple[pd.DataFrame, list]:
+    scores = pd.to_numeric(df.get('user_sentiment_score'), errors='coerce')
+    seeds = df.get('seed')
+    tmp = pd.DataFrame({'seed': seeds, 'score': scores}).dropna(subset=['seed'])
+    if tmp.empty:
+        return df, []
+    counts = tmp.groupby('seed')['score'].apply(lambda x: x.notna().sum())
+    zeros = tmp.groupby('seed')['score'].apply(lambda x: (x.fillna(np.inf) == 0).sum())
+    ratio = zeros / counts.replace(0, np.nan)
+    bad_seeds = ratio[ratio > threshold].index.tolist()
+    if bad_seeds:
+        df = df[~df['seed'].isin(bad_seeds)].copy()
+    return df, bad_seeds
+
 url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/export?format=csv&gid=0'
 try:
     df = pd.read_csv(url)
+    df = df[df['attention_check_passed'] == True]
+    df, _removed_zero_seeds = remove_zero_dominant_seeds(df)
+    if _removed_zero_seeds:
+        print(f"Removed {len(_removed_zero_seeds)} seeds with >50% zero answers")
 except Exception as e:
     print(f"Error reading CSV from {url}: {e}")
 
@@ -192,7 +213,7 @@ def fit_compound(formula, X, y, remove_outliers_method:Literal['lsquares', 'none
         ss_tot = np.sum((y - np.mean(y)) ** 2)
         r2_loss = 1 - (ss_res / ss_tot) if ss_tot > 0 else (1.0 if ss_res == 0 else 0.0)
         return {'params': np.array([]), 'mse': mse, 'soft_l1_loss': np.sum(np.square(y - y_pred)) / len(y), 'r2_loss': r2_loss}
-    bounds = ([0] + [-5] * (num_params - 1), [1] + [5] * (num_params - 1))
+    bounds = ([-50] * (num_params), [50] * (num_params))
     return fit(formula, X, y, bounds, remove_outliers_method)
 
 try:
@@ -232,7 +253,8 @@ def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized
             's_init_action': base_sentiments[1],
             's_init_target': base_sentiments[2],
             's_user_actor': s_user_actor,
-            's_user_target': s_user_target
+            's_user_target': s_user_target,
+            'seed': seed
         })
 
     action_df = pd.DataFrame(action_data)
@@ -272,13 +294,15 @@ def create_association_df(score_key: Literal['user_sentiment_score', 'user_norma
             's_init_entity': base_sentiments[0],
             's_init_other': base_sentiments[1],
             's_user_entity': s_user_entity,
-            's_user_other': s_user_other
+            's_user_other': s_user_other,
+            'seed': seed
         })
         association_data.append({
             's_init_entity': base_sentiments[1],
             's_init_other': base_sentiments[0],
             's_user_entity': s_user_other,
-            's_user_other': s_user_entity
+            's_user_other': s_user_entity,
+            'seed': seed
         })
 
     association_df = pd.DataFrame(association_data)
@@ -318,7 +342,8 @@ def create_belonging_df(score_key: Literal['user_sentiment_score', 'user_normali
             's_init_parent': base_sentiments[0],
             's_init_child': base_sentiments[1],
             's_user_parent': s_user_entity,
-            's_user_child': s_user_other
+            's_user_child': s_user_other,
+            'seed': seed
         })
 
     belonging_df = pd.DataFrame(belonging_data)
@@ -336,6 +361,7 @@ def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normali
     aggregate_data = []
 
     for _, group in aggregate_df.groupby(['seed', 'item_type']):
+        seed = group.iloc[0]['seed']
         descriptor = ast.literal_eval(group.iloc[0]['descriptor'])
         intensity = ast.literal_eval(group.iloc[0]['intensity'])
         base_sentiments = []
@@ -348,6 +374,7 @@ def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normali
                 'N': n,
                 's_inits': base_sentiments[:n],
                 's_user': score,
+                'seed': seed,
             })
 
     aggregate_df = pd.DataFrame(aggregate_data)
@@ -360,7 +387,8 @@ def determine_actor_parameters(action_model_df: pd.DataFrame,
                                 remove_outlier_method: Literal['lsquares', 'none'] = 'none',
                                 splits: Literal['none', 'driver', 'action_target'] = 'none',
                                 print_process=False) -> pd.DataFrame:
-    action_model_df['driver'] = action_model_df['s_init_action'] * action_model_df['s_init_target']
+    action_model_df = action_model_df.copy()
+    action_model_df.loc[:, 'driver'] = action_model_df['s_init_action'] * action_model_df['s_init_target']
 
     pos_driver_df = action_model_df[action_model_df['driver'] > 0]
     neg_driver_df = action_model_df[action_model_df['driver'] <= 0]
@@ -839,10 +867,10 @@ def determine_aggregate_parameters(aggregate_df: pd.DataFrame,
                         (-20, 20), (0.1, 5), (1, 10), (0.01, 20)]
     elif "dynamic" in loss_name:
         initial_guess = [0.0, 1.0, 0.0, 1.0]
-        param_bounds = [(-5, 5), (-5, 5), (-5, 5), (-5, 5)]
+        param_bounds = [(-20, 20), (-20, 20), (-20, 20), (-20, 20)]
     else:
         initial_guess = [1.0, 1.0]
-        param_bounds = [(-5, 5), (-5, 5)]
+        param_bounds = [(-20, 20), (-20, 20)]
 
     result = minimize(
         fun=loss_function,
@@ -943,783 +971,310 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         'spearman': _safe_spearman(y_true, y_pred),
     }
 
+def _cv_evaluate(df_in: pd.DataFrame, fold_eval: Callable[[pd.DataFrame, pd.DataFrame], tuple[np.ndarray, np.ndarray]]) -> dict:
+    if len(df_in) < 2:
+        return {
+            'cv_mean_mse': float('inf'), 'cv_std_mse': 0.0,
+            'cv_mean_r2': None, 'cv_std_r2': 0.0,
+            'cv_mean_spearman': None, 'cv_std_spearman': 0.0,
+            'fold_mse': [], 'fold_r2': [], 'fold_spearman': [],
+        }
+    k = min(CV_FOLDS, len(df_in))
+    if k < 2:
+        k = 2
+    kf = KFold(n_splits=k, shuffle=True, random_state=RANDOM_STATE)
+    mses, r2s, sps = [], [], []
+    X = df_in.reset_index(drop=True)
+    for tr_idx, te_idx in kf.split(X):
+        tr = X.iloc[tr_idx]
+        te = X.iloc[te_idx]
+        y_true, y_pred = fold_eval(tr, te)
+        if y_true is None or y_pred is None or len(y_true) == 0 or len(y_pred) == 0:
+            continue
+        m = _compute_metrics(y_true, y_pred)
+        mses.append(m['mse'])
+        r2s.append(m['r2'])
+        sps.append(m['spearman'])
+    if not mses:
+        return {
+            'cv_mean_mse': float('inf'), 'cv_std_mse': 0.0,
+            'cv_mean_r2': None, 'cv_std_r2': 0.0,
+            'cv_mean_spearman': None, 'cv_std_spearman': 0.0,
+            'fold_mse': [], 'fold_r2': [], 'fold_spearman': [],
+        }
+    valid_mses = [x for x in mses if np.isfinite(x)]
+    mean_mse = float(np.mean(valid_mses)) if valid_mses else float('inf')
+    std_mse = float(np.std(valid_mses, ddof=1)) if len(valid_mses) > 1 else 0.0
+    valid_r2 = [x for x in r2s if (x is not None and np.isfinite(x))]
+    mean_r2 = float(np.mean(valid_r2)) if valid_r2 else None
+    std_r2 = float(np.std(valid_r2, ddof=1)) if len(valid_r2) > 1 else 0.0
+    valid_sps = [x for x in sps if (x is not None and np.isfinite(x))]
+    mean_sp = float(np.mean(valid_sps)) if valid_sps else None
+    std_sp = float(np.std(valid_sps, ddof=1)) if len(valid_sps) > 1 else 0.0
+    return {
+        'cv_mean_mse': mean_mse, 'cv_std_mse': std_mse,
+        'cv_mean_r2': mean_r2, 'cv_std_r2': std_r2,
+        'cv_mean_spearman': mean_sp, 'cv_std_spearman': std_sp,
+        'fold_mse': [float(x) for x in mses],
+        'fold_r2': [float(x) if x is not None else None for x in r2s],
+        'fold_spearman': [float(x) if x is not None else None for x in sps],
+    }
+
 
 def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_actor_parameters")
     from formulas import actor_formula_v1, actor_formula_v2, null_identity, null_avg, null_linear
-
     action_df = create_action_df(score_key)
     if action_df.empty:
         print("No action data available.")
         return {}
-
-    action_df = action_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(action_df) * CONFIG["test_train_split"])
-    train_df = action_df.iloc[:n_train].copy()
-    test_df = action_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": actor_formula_v1},
-        {"function": actor_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
+    n_seeds = int(action_df['seed'].nunique()) if 'seed' in action_df.columns else 0
+    action_df = action_df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
+    candidates = [{"function": actor_formula_v1}, {"function": actor_formula_v2}, {"function": null_identity}, {"function": null_avg}, {"function": null_linear}]
     remove_outliers = ["none", "lsquares"]
     splits = ["none", "driver", "action_target"]
-
     results = []
     for cand in candidates:
         func = cand["function"]
         for ro in remove_outliers:
             for sp in splits:
-                fitted = determine_actor_parameters(train_df, func, ro, sp, print_process=False)
-                if sp == 'none':
-                    test_preds = np.array([
-                        actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted)
-                        for _, r in test_df.iterrows()
-                    ], dtype=float)
-                    test_true = test_df['s_user_actor'].to_numpy(dtype=float)
-                    test_metrics = _compute_metrics(test_true, test_preds)
-
-                    train_preds = np.array([
-                        actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted)
-                        for _, r in train_df.iterrows()
-                    ], dtype=float)
-                    train_true = train_df['s_user_actor'].to_numpy(dtype=float)
-                    train_metrics = _compute_metrics(train_true, train_preds)
-
-                    all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-                    all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-                    all_metrics = _compute_metrics(all_true, all_preds)
-                else:
-                    buckets = []
-                    if sp == 'driver':
-                        t_pos = test_df[(test_df['s_init_action'] * test_df['s_init_target']) > 0]
-                        t_neg = test_df[(test_df['s_init_action'] * test_df['s_init_target']) <= 0]
-                        buckets = [
-                            ('pos_driver_params', t_pos),
-                            ('neg_driver_params', t_neg),
-                        ]
-                    elif sp == 'action_target':
-                        b1 = test_df[(test_df['s_init_action'] > 0) & (test_df['s_init_target'] > 0)]
-                        b2 = test_df[(test_df['s_init_action'] > 0) & (test_df['s_init_target'] <= 0)]
-                        b3 = test_df[(test_df['s_init_action'] <= 0) & (test_df['s_init_target'] > 0)]
-                        b4 = test_df[(test_df['s_init_action'] <= 0) & (test_df['s_init_target'] <= 0)]
-                        buckets = [('pos_pos_params', b1), ('pos_neg_params', b2), ('neg_pos_params', b3), ('neg_neg_params', b4)]
-                    mses = []
-                    test_preds_list = []
-                    test_true_list = []
-                    for key, dfb in buckets:
-                        if dfb.empty:
-                            continue
-                        if fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_actor'].to_numpy(dtype=float)
-                        test_preds_list.append(preds)
-                        test_true_list.append(yb)
-                        mses.append(_safe_mse(yb, preds))
-                    test_preds = np.concatenate(test_preds_list) if test_preds_list else np.array([])
-                    test_true = np.concatenate(test_true_list) if test_true_list else np.array([])
-                    test_metrics = _compute_metrics(test_true, test_preds) if test_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-
-                    if sp == 'driver':
-                        tr_pos = train_df[(train_df['s_init_action'] * train_df['s_init_target']) > 0]
-                        tr_neg = train_df[(train_df['s_init_action'] * train_df['s_init_target']) <= 0]
-                        tr_buckets = [
-                            ('pos_driver_params', tr_pos),
-                            ('neg_driver_params', tr_neg),
-                        ]
-                    elif sp == 'action_target':
-                        tb1 = train_df[(train_df['s_init_action'] > 0) & (train_df['s_init_target'] > 0)]
-                        tb2 = train_df[(train_df['s_init_action'] > 0) & (train_df['s_init_target'] <= 0)]
-                        tb3 = train_df[(train_df['s_init_action'] <= 0) & (train_df['s_init_target'] > 0)]
-                        tb4 = train_df[(train_df['s_init_action'] <= 0) & (train_df['s_init_target'] <= 0)]
-                        tr_buckets = [('pos_pos_params', tb1), ('pos_neg_params', tb2), ('neg_pos_params', tb3), ('neg_neg_params', tb4)]
-                    else:
-                        tr_buckets = []
-                    train_preds_list = []
-                    train_true_list = []
-                    for key, dfb in tr_buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_actor'].to_numpy(dtype=float)
-                        train_preds_list.append(preds)
-                        train_true_list.append(yb)
-                    train_preds = np.concatenate(train_preds_list) if train_preds_list else np.array([])
-                    train_true = np.concatenate(train_true_list) if train_true_list else np.array([])
-                    train_metrics = _compute_metrics(train_true, train_preds) if train_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-
-                    if len(train_preds) and len(test_preds):
-                        all_preds = np.concatenate([train_preds, test_preds])
-                        all_true = np.concatenate([train_true, test_true])
-                    else:
-                        all_preds = test_preds if len(test_preds) else train_preds
-                        all_true = test_true if len(test_true) else train_true
-                    all_metrics = _compute_metrics(all_true, all_preds) if (len(all_preds)) else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                if sp == 'none':
-                    fitted_mse = fitted.get('mse', float('inf')) if fitted else float('inf')
-                else:
-                    if fitted:
-                        sub_mses = [v.get('mse', float('inf')) for k, v in fitted.items() if isinstance(v, dict) and 'mse' in v]
-                        fitted_mse = float(np.mean(sub_mses)) if sub_mses else float('inf')
-                    else:
-                        fitted_mse = float('inf')
-                test_mse_val = test_metrics['mse'] if test_metrics else float('inf')
-                if np.isfinite(fitted_mse):
-                    avg_mse = (fitted_mse + test_mse_val) / 2
-                else:
-                    fitted_mse = test_mse_val
-                    avg_mse = test_mse_val
-                results.append({
+                def fold_eval(tr, te):
+                    fitted = determine_actor_parameters(tr, func, ro, sp, print_process=False)
+                    y_true = te['s_user_actor'].to_numpy(dtype=float)
+                    y_pred = np.array([actor_skeleton_formula(r['s_init_actor'], r['s_init_action'], r['s_init_target'], sp, func, fitted) for _, r in te.iterrows()], dtype=float)
+                    return y_true, y_pred
+                cv = _cv_evaluate(action_df, fold_eval)
+                fitted_full = determine_actor_parameters(action_df, func, ro, sp, print_process=False)
+                rec = {
                     "model": func.__name__,
                     "split": sp,
                     "remove_outliers": ro,
-                    "fitted_mse": fitted_mse,
-                    "test_mse": test_mse_val,
-                    "avg_mse": avg_mse,
                     "score_key": score_key,
-                    "fitted": fitted,
-                    "train_metrics": train_metrics,
-                    "test_metrics": test_metrics,
-                    "all_metrics": all_metrics,
-                })
-                _vprint(f"actor | {func.__name__} | split={sp} | outliers={ro} | fitted_MSE={fitted_mse:.4f} | test_MSE={test_mse_val:.4f} | avg_MSE={avg_mse:.4f}")
+                    "fitted": fitted_full,
+                    "cv_mean_mse": cv['cv_mean_mse'],
+                    "cv_std_mse": cv['cv_std_mse'],
+                    "cv_mean_r2": cv['cv_mean_r2'],
+                    "cv_std_r2": cv['cv_std_r2'],
+                    "cv_mean_spearman": cv['cv_mean_spearman'],
+                    "cv_std_spearman": cv['cv_std_spearman'],
+                    "fold_mse": cv['fold_mse'],
+                    "fold_r2": cv['fold_r2'],
+                    "fold_spearman": cv['fold_spearman'],
+                }
+                results.append(rec)
+                _vprint(f"actor | {func.__name__} | split={sp} | outliers={ro} | cv_mse={rec['cv_mean_mse']:.4f}±{rec['cv_std_mse']:.4f} | cv_r2={(rec['cv_mean_r2'] if rec['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(rec['cv_mean_spearman'] if rec['cv_mean_spearman'] is not None else float('nan')):.4f}")
     if not results:
         return {}
-    best_fitted = min(results, key=lambda x: x["fitted_mse"]) 
-    best_test = min(results, key=lambda x: x["test_mse"]) 
-    best_avg = min(results, key=lambda x: x["avg_mse"]) 
-    def _spearman_val(rec):
-        m = rec.get('test_metrics', {})
-        s = m.get('spearman') if isinstance(m, dict) else None
+    best_avg = min(results, key=lambda x: x["cv_mean_mse"]) 
+    def _sval(rec):
+        s = rec.get('cv_mean_spearman')
         return s if s is not None else -1e9
-    best_spearman = max(results, key=_spearman_val)
-    _vprint(f"Best actor fitted_MSE: {best_fitted}")
-    _vprint(f"Best actor test_MSE: {best_test}")
-    _vprint(f"Best actor avg_MSE: {best_avg}")
-    _vprint(f"Best actor test_Spearman: {best_spearman}")
-    return {"best_fitted": best_fitted, "best_test": best_test, "best_avg": best_avg, "best_spearman": best_spearman, "all": results}
+    best_spearman = max(results, key=_sval)
+    return {"best_avg": best_avg, "best_spearman": best_spearman, "all": results, "n_seeds": n_seeds}
 
 def test_target_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_target_parameters")
     from formulas import target_formula_v1, target_formula_v2, null_identity, null_avg, null_linear
-
     action_df = create_action_df(score_key)
     if action_df.empty:
         print("No action data available for target model.")
         return {}
-
-    action_df = action_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(action_df) * CONFIG["test_train_split"])
-    train_df = action_df.iloc[:n_train].copy()
-    test_df = action_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": target_formula_v1},
-        {"function": target_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
+    n_seeds = int(action_df['seed'].nunique()) if 'seed' in action_df.columns else 0
+    action_df = action_df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
+    candidates = [{"function": target_formula_v1}, {"function": target_formula_v2}, {"function": null_identity}, {"function": null_avg}, {"function": null_linear}]
     remove_outliers = ["none", "lsquares"]
     splits = ["none", "action"]
-
     results = []
     for cand in candidates:
         func = cand["function"]
         for ro in remove_outliers:
             for sp in splits:
-                fitted = determine_target_parameters(train_df, func, ro, sp, print_process=False)
-                if sp == 'none':
-                    test_preds = np.array([
-                        target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted)
-                        for _, r in test_df.iterrows()
-                    ], dtype=float)
-                    test_true = test_df['s_user_target'].to_numpy(dtype=float)
-                    test_metrics = _compute_metrics(test_true, test_preds)
-
-                    train_preds = np.array([
-                        target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted)
-                        for _, r in train_df.iterrows()
-                    ], dtype=float)
-                    train_true = train_df['s_user_target'].to_numpy(dtype=float)
-                    train_metrics = _compute_metrics(train_true, train_preds)
-
-                    all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-                    all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-                    all_metrics = _compute_metrics(all_true, all_preds)
-                else:
-                    buckets = []
-                    if sp == 'action':
-                        bpos = test_df[test_df['s_init_action'] > 0]
-                        bneg = test_df[test_df['s_init_action'] <= 0]
-                        buckets = [('pos_action_params', bpos), ('neg_action_params', bneg)]
-                    mses = []
-                    test_preds_list = []
-                    test_true_list = []
-                    for key, dfb in buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_target'].to_numpy(dtype=float)
-                        test_preds_list.append(preds)
-                        test_true_list.append(yb)
-                        mses.append(_safe_mse(yb, preds))
-                    test_preds = np.concatenate(test_preds_list) if test_preds_list else np.array([])
-                    test_true = np.concatenate(test_true_list) if test_true_list else np.array([])
-                    test_metrics = _compute_metrics(test_true, test_preds) if test_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-
-                    if sp == 'action':
-                        tbpos = train_df[train_df['s_init_action'] > 0]
-                        tbneg = train_df[train_df['s_init_action'] <= 0]
-                        tr_buckets = [('pos_action_params', tbpos), ('neg_action_params', tbneg)]
-                    else:
-                        tr_buckets = []
-                    train_preds_list = []
-                    train_true_list = []
-                    for key, dfb in tr_buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_target'].to_numpy(dtype=float)
-                        train_preds_list.append(preds)
-                        train_true_list.append(yb)
-                    train_preds = np.concatenate(train_preds_list) if train_preds_list else np.array([])
-                    train_true = np.concatenate(train_true_list) if train_true_list else np.array([])
-                    train_metrics = _compute_metrics(train_true, train_preds) if train_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                    if len(train_preds) and len(test_preds):
-                        all_preds = np.concatenate([train_preds, test_preds])
-                        all_true = np.concatenate([train_true, test_true])
-                    else:
-                        all_preds = test_preds if len(test_preds) else train_preds
-                        all_true = test_true if len(test_true) else train_true
-                    all_metrics = _compute_metrics(all_true, all_preds) if (len(all_preds)) else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                if sp == 'none':
-                    fitted_mse = fitted.get('mse', float('inf')) if fitted else float('inf')
-                else:
-                    if fitted:
-                        sub_mses = [v.get('mse', float('inf')) for k, v in fitted.items() if isinstance(v, dict) and 'mse' in v]
-                        fitted_mse = float(np.mean(sub_mses)) if sub_mses else float('inf')
-                    else:
-                        fitted_mse = float('inf')
-                test_mse_val = test_metrics['mse'] if test_metrics else float('inf')
-                if np.isfinite(fitted_mse):
-                    avg_mse = (fitted_mse + test_mse_val) / 2
-                else:
-                    fitted_mse = test_mse_val
-                    avg_mse = test_mse_val
-                results.append({
+                def fold_eval(tr, te):
+                    fitted = determine_target_parameters(tr, func, ro, sp, print_process=False)
+                    y_true = te['s_user_target'].to_numpy(dtype=float)
+                    y_pred = np.array([target_skeleton_formula(r['s_init_target'], r['s_init_action'], sp, func, fitted) for _, r in te.iterrows()], dtype=float)
+                    return y_true, y_pred
+                cv = _cv_evaluate(action_df, fold_eval)
+                fitted_full = determine_target_parameters(action_df, func, ro, sp, print_process=False)
+                rec = {
                     "model": func.__name__,
                     "split": sp,
                     "remove_outliers": ro,
-                    "fitted_mse": fitted_mse,
-                    "test_mse": test_mse_val,
-                    "avg_mse": avg_mse,
                     "score_key": score_key,
-                    "fitted": fitted,
-                    "train_metrics": train_metrics,
-                    "test_metrics": test_metrics,
-                    "all_metrics": all_metrics,
-                })
-                _vprint(f"target | {func.__name__} | split={sp} | outliers={ro} | fitted_MSE={fitted_mse:.4f} | test_MSE={test_mse_val:.4f} | avg_MSE={avg_mse:.4f}")
+                    "fitted": fitted_full,
+                    "cv_mean_mse": cv['cv_mean_mse'],
+                    "cv_std_mse": cv['cv_std_mse'],
+                    "cv_mean_r2": cv['cv_mean_r2'],
+                    "cv_std_r2": cv['cv_std_r2'],
+                    "cv_mean_spearman": cv['cv_mean_spearman'],
+                    "cv_std_spearman": cv['cv_std_spearman'],
+                    "fold_mse": cv['fold_mse'],
+                    "fold_r2": cv['fold_r2'],
+                    "fold_spearman": cv['fold_spearman'],
+                }
+                results.append(rec)
+                _vprint(f"target | {func.__name__} | split={sp} | outliers={ro} | cv_mse={rec['cv_mean_mse']:.4f}±{rec['cv_std_mse']:.4f} | cv_r2={(rec['cv_mean_r2'] if rec['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(rec['cv_mean_spearman'] if rec['cv_mean_spearman'] is not None else float('nan')):.4f}")
     if not results:
         return {}
-    best_fitted = min(results, key=lambda x: x["fitted_mse"]) 
-    best_test = min(results, key=lambda x: x["test_mse"]) 
-    best_avg = min(results, key=lambda x: x["avg_mse"]) 
-    def _spearman_val(rec):
-        m = rec.get('test_metrics', {})
-        s = m.get('spearman') if isinstance(m, dict) else None
+    best_avg = min(results, key=lambda x: x["cv_mean_mse"]) 
+    def _sval(rec):
+        s = rec.get('cv_mean_spearman')
         return s if s is not None else -1e9
-    best_spearman = max(results, key=_spearman_val)
-    _vprint(f"Best target fitted_MSE: {best_fitted}")
-    _vprint(f"Best target test_MSE: {best_test}")
-    _vprint(f"Best target avg_MSE: {best_avg}")
-    _vprint(f"Best target test_Spearman: {best_spearman}")
-    return {"best_fitted": best_fitted, "best_test": best_test, "best_avg": best_avg, "best_spearman": best_spearman, "all": results}
+    best_spearman = max(results, key=_sval)
+    return {"best_avg": best_avg, "best_spearman": best_spearman, "all": results, "n_seeds": n_seeds}
 
 def test_association_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_association_parameters")
     from formulas import assoc_formula_v1, assoc_formula_v2, null_identity, null_avg, null_linear
-
     assoc_df = create_association_df(score_key)
     if assoc_df.empty:
         print("No association data available.")
         return {}
-
-    assoc_df = assoc_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(assoc_df) * CONFIG["test_train_split"])
-    train_df = assoc_df.iloc[:n_train].copy()
-    test_df = assoc_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": assoc_formula_v1},
-        {"function": assoc_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
+    n_seeds = int(assoc_df['seed'].nunique()) if 'seed' in assoc_df.columns else 0
+    assoc_df = assoc_df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
+    candidates = [{"function": assoc_formula_v1}, {"function": assoc_formula_v2}, {"function": null_identity}, {"function": null_avg}, {"function": null_linear}]
     remove_outliers = ["none", "lsquares"]
     splits = ["none", "other", "entity_other"]
-
     results = []
     for cand in candidates:
         func = cand["function"]
         for ro in remove_outliers:
             for sp in splits:
-                fitted = determine_association_parameters(train_df, func, ro, sp, print_process=False)
-                if sp == 'none':
-                    test_preds = np.array([
-                        association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted)
-                        for _, r in test_df.iterrows()
-                    ], dtype=float)
-                    test_true = test_df['s_user_entity'].to_numpy(dtype=float)
-                    test_metrics = _compute_metrics(test_true, test_preds)
-
-                    train_preds = np.array([
-                        association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted)
-                        for _, r in train_df.iterrows()
-                    ], dtype=float)
-                    train_true = train_df['s_user_entity'].to_numpy(dtype=float)
-                    train_metrics = _compute_metrics(train_true, train_preds)
-
-                    all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-                    all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-                    all_metrics = _compute_metrics(all_true, all_preds)
-                else:
-                    buckets = []
-                    if sp == 'other':
-                        bpos = test_df[test_df['s_init_other'] > 0]
-                        bneg = test_df[test_df['s_init_other'] <= 0]
-                        buckets = [('pos_params', bpos), ('neg_params', bneg)]
-                    elif sp == 'entity_other':
-                        pp = test_df[(test_df['s_init_entity'] > 0) & (test_df['s_init_other'] > 0)]
-                        pn = test_df[(test_df['s_init_entity'] > 0) & (test_df['s_init_other'] <= 0)]
-                        np_ = test_df[(test_df['s_init_entity'] <= 0) & (test_df['s_init_other'] > 0)]
-                        nn = test_df[(test_df['s_init_entity'] <= 0) & (test_df['s_init_other'] <= 0)]
-                        buckets = [('pos_pos_params', pp), ('pos_neg_params', pn), ('neg_pos_params', np_), ('neg_neg_params', nn)]
-                    mses = []
-                    test_preds_list = []
-                    test_true_list = []
-                    for key, dfb in buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_entity'].to_numpy(dtype=float)
-                        test_preds_list.append(preds)
-                        test_true_list.append(yb)
-                        mses.append(_safe_mse(yb, preds))
-                    test_preds = np.concatenate(test_preds_list) if test_preds_list else np.array([])
-                    test_true = np.concatenate(test_true_list) if test_true_list else np.array([])
-                    test_metrics = _compute_metrics(test_true, test_preds) if test_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-
-                    if sp == 'other':
-                        tbpos = train_df[train_df['s_init_other'] > 0]
-                        tbneg = train_df[train_df['s_init_other'] <= 0]
-                        tr_buckets = [('pos_params', tbpos), ('neg_params', tbneg)]
-                    elif sp == 'entity_other':
-                        tpp = train_df[(train_df['s_init_entity'] > 0) & (train_df['s_init_other'] > 0)]
-                        tpn = train_df[(train_df['s_init_entity'] > 0) & (train_df['s_init_other'] <= 0)]
-                        tnp = train_df[(train_df['s_init_entity'] <= 0) & (train_df['s_init_other'] > 0)]
-                        tnn = train_df[(train_df['s_init_entity'] <= 0) & (train_df['s_init_other'] <= 0)]
-                        tr_buckets = [('pos_pos_params', tpp), ('pos_neg_params', tpn), ('neg_pos_params', tnp), ('neg_neg_params', tnn)]
-                    else:
-                        tr_buckets = []
-                    train_preds_list = []
-                    train_true_list = []
-                    for key, dfb in tr_buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_entity'].to_numpy(dtype=float)
-                        train_preds_list.append(preds)
-                        train_true_list.append(yb)
-                    train_preds = np.concatenate(train_preds_list) if train_preds_list else np.array([])
-                    train_true = np.concatenate(train_true_list) if train_true_list else np.array([])
-                    train_metrics = _compute_metrics(train_true, train_preds) if train_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                    if len(train_preds) and len(test_preds):
-                        all_preds = np.concatenate([train_preds, test_preds])
-                        all_true = np.concatenate([train_true, test_true])
-                    else:
-                        all_preds = test_preds if len(test_preds) else train_preds
-                        all_true = test_true if len(test_true) else train_true
-                    all_metrics = _compute_metrics(all_true, all_preds) if (len(all_preds)) else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                if sp == 'none':
-                    fitted_mse = fitted.get('mse', float('inf')) if fitted else float('inf')
-                else:
-                    if fitted:
-                        sub_mses = [v.get('mse', float('inf')) for k, v in fitted.items() if isinstance(v, dict) and 'mse' in v]
-                        fitted_mse = float(np.mean(sub_mses)) if sub_mses else float('inf')
-                    else:
-                        fitted_mse = float('inf')
-                test_mse_val = test_metrics['mse'] if test_metrics else float('inf')
-                if np.isfinite(fitted_mse):
-                    avg_mse = (fitted_mse + test_mse_val) / 2
-                else:
-                    fitted_mse = test_mse_val
-                    avg_mse = test_mse_val
-                results.append({
+                def fold_eval(tr, te):
+                    fitted = determine_association_parameters(tr, func, ro, sp, print_process=False)
+                    y_true = te['s_user_entity'].to_numpy(dtype=float)
+                    y_pred = np.array([association_skeleton_formula(r['s_init_entity'], r['s_init_other'], sp, func, fitted) for _, r in te.iterrows()], dtype=float)
+                    return y_true, y_pred
+                cv = _cv_evaluate(assoc_df, fold_eval)
+                fitted_full = determine_association_parameters(assoc_df, func, ro, sp, print_process=False)
+                rec = {
                     "model": func.__name__,
                     "split": sp,
                     "remove_outliers": ro,
-                    "fitted_mse": fitted_mse,
-                    "test_mse": test_mse_val,
-                    "avg_mse": avg_mse,
                     "score_key": score_key,
-                    "fitted": fitted,
-                    "train_metrics": train_metrics,
-                    "test_metrics": test_metrics,
-                    "all_metrics": all_metrics,
-                })
-                _vprint(f"assoc | {func.__name__} | split={sp} | outliers={ro} | fitted_MSE={fitted_mse:.4f} | test_MSE={test_mse_val:.4f} | avg_MSE={avg_mse:.4f}")
+                    "fitted": fitted_full,
+                    "cv_mean_mse": cv['cv_mean_mse'],
+                    "cv_std_mse": cv['cv_std_mse'],
+                    "cv_mean_r2": cv['cv_mean_r2'],
+                    "cv_std_r2": cv['cv_std_r2'],
+                    "cv_mean_spearman": cv['cv_mean_spearman'],
+                    "cv_std_spearman": cv['cv_std_spearman'],
+                    "fold_mse": cv['fold_mse'],
+                    "fold_r2": cv['fold_r2'],
+                    "fold_spearman": cv['fold_spearman'],
+                }
+                results.append(rec)
+                _vprint(f"assoc | {func.__name__} | split={sp} | outliers={ro} | cv_mse={rec['cv_mean_mse']:.4f}±{rec['cv_std_mse']:.4f} | cv_r2={(rec['cv_mean_r2'] if rec['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(rec['cv_mean_spearman'] if rec['cv_mean_spearman'] is not None else float('nan')):.4f}")
     if not results:
         return {}
-    best_fitted = min(results, key=lambda x: x["fitted_mse"]) 
-    best_test = min(results, key=lambda x: x["test_mse"]) 
-    best_avg = min(results, key=lambda x: x["avg_mse"]) 
-    def _spearman_val(rec):
-        m = rec.get('test_metrics', {})
-        s = m.get('spearman') if isinstance(m, dict) else None
+    best_avg = min(results, key=lambda x: x["cv_mean_mse"]) 
+    def _sval(rec):
+        s = rec.get('cv_mean_spearman')
         return s if s is not None else -1e9
-    best_spearman = max(results, key=_spearman_val)
-    _vprint(f"Best association fitted_MSE: {best_fitted}")
-    _vprint(f"Best association test_MSE: {best_test}")
-    _vprint(f"Best association avg_MSE: {best_avg}")
-    _vprint(f"Best association test_Spearman: {best_spearman}")
-    return {"best_fitted": best_fitted, "best_test": best_test, "best_avg": best_avg, "best_spearman": best_spearman, "all": results}
+    best_spearman = max(results, key=_sval)
+    return {"best_avg": best_avg, "best_spearman": best_spearman, "all": results, "n_seeds": n_seeds}
 
 def test_parent_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_parent_parameters")
     from formulas import belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
-
     bel_df = create_belonging_df(score_key)
     if bel_df.empty:
         print("No belonging data available for parent model.")
         return {}
-
-    bel_df = bel_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(bel_df) * CONFIG["test_train_split"])
-    train_df = bel_df.iloc[:n_train].copy()
-    test_df = bel_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": belong_formula_v1},
-        {"function": belong_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
+    n_seeds = int(bel_df['seed'].nunique()) if 'seed' in bel_df.columns else 0
+    bel_df = bel_df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
+    candidates = [{"function": belong_formula_v1}, {"function": belong_formula_v2}, {"function": null_identity}, {"function": null_avg}, {"function": null_linear}]
     remove_outliers = ["none", "lsquares"]
     splits = ["none", "child", "parent_child"]
-
     results = []
     for cand in candidates:
         func = cand["function"]
         for ro in remove_outliers:
             for sp in splits:
-                fitted = determine_parent_parameters(train_df, func, ro, sp, print_process=False)
-                if sp == 'none':
-                    test_preds = np.array([
-                        parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted)
-                        for _, r in test_df.iterrows()
-                    ], dtype=float)
-                    test_true = test_df['s_user_parent'].to_numpy(dtype=float)
-                    test_metrics = _compute_metrics(test_true, test_preds)
-
-                    train_preds = np.array([
-                        parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted)
-                        for _, r in train_df.iterrows()
-                    ], dtype=float)
-                    train_true = train_df['s_user_parent'].to_numpy(dtype=float)
-                    train_metrics = _compute_metrics(train_true, train_preds)
-
-                    all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-                    all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-                    all_metrics = _compute_metrics(all_true, all_preds)
-                else:
-                    buckets = []
-                    if sp == 'child':
-                        bpos = test_df[test_df['s_init_child'] > 0]
-                        bneg = test_df[test_df['s_init_child'] <= 0]
-                        buckets = [('pos_params', bpos), ('neg_params', bneg)]
-                    elif sp == 'parent_child':
-                        pp = test_df[(test_df['s_init_parent'] > 0) & (test_df['s_init_child'] > 0)]
-                        pn = test_df[(test_df['s_init_parent'] > 0) & (test_df['s_init_child'] <= 0)]
-                        np_ = test_df[(test_df['s_init_parent'] <= 0) & (test_df['s_init_child'] > 0)]
-                        nn = test_df[(test_df['s_init_parent'] <= 0) & (test_df['s_init_child'] <= 0)]
-                        buckets = [('pos_pos_params', pp), ('pos_neg_params', pn), ('neg_pos_params', np_), ('neg_neg_params', nn)]
-                    mses = []
-                    test_preds_list = []
-                    test_true_list = []
-                    for key, dfb in buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_parent'].to_numpy(dtype=float)
-                        test_preds_list.append(preds)
-                        test_true_list.append(yb)
-                        mses.append(_safe_mse(yb, preds))
-                    test_preds = np.concatenate(test_preds_list) if test_preds_list else np.array([])
-                    test_true = np.concatenate(test_true_list) if test_true_list else np.array([])
-                    test_metrics = _compute_metrics(test_true, test_preds) if test_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-
-                    if sp == 'child':
-                        tbpos = train_df[train_df['s_init_child'] > 0]
-                        tbneg = train_df[train_df['s_init_child'] <= 0]
-                        tr_buckets = [('pos_params', tbpos), ('neg_params', tbneg)]
-                    elif sp == 'parent_child':
-                        tpp = train_df[(train_df['s_init_parent'] > 0) & (train_df['s_init_child'] > 0)]
-                        tpn = train_df[(train_df['s_init_parent'] > 0) & (train_df['s_init_child'] <= 0)]
-                        tnp = train_df[(train_df['s_init_parent'] <= 0) & (train_df['s_init_child'] > 0)]
-                        tnn = train_df[(train_df['s_init_parent'] <= 0) & (train_df['s_init_child'] <= 0)]
-                        tr_buckets = [('pos_pos_params', tpp), ('pos_neg_params', tpn), ('neg_pos_params', tnp), ('neg_neg_params', tnn)]
-                    else:
-                        tr_buckets = []
-                    train_preds_list = []
-                    train_true_list = []
-                    for key, dfb in tr_buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_parent'].to_numpy(dtype=float)
-                        train_preds_list.append(preds)
-                        train_true_list.append(yb)
-                    train_preds = np.concatenate(train_preds_list) if train_preds_list else np.array([])
-                    train_true = np.concatenate(train_true_list) if train_true_list else np.array([])
-                    train_metrics = _compute_metrics(train_true, train_preds) if train_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                    if len(train_preds) and len(test_preds):
-                        all_preds = np.concatenate([train_preds, test_preds])
-                        all_true = np.concatenate([train_true, test_true])
-                    else:
-                        all_preds = test_preds if len(test_preds) else train_preds
-                        all_true = test_true if len(test_true) else train_true
-                    all_metrics = _compute_metrics(all_true, all_preds) if (len(all_preds)) else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                if sp == 'none':
-                    fitted_mse = fitted.get('mse', float('inf')) if fitted else float('inf')
-                else:
-                    if fitted:
-                        sub_mses = [v.get('mse', float('inf')) for k, v in fitted.items() if isinstance(v, dict) and 'mse' in v]
-                        fitted_mse = float(np.mean(sub_mses)) if sub_mses else float('inf')
-                    else:
-                        fitted_mse = float('inf')
-                test_mse_val = test_metrics['mse'] if test_metrics else float('inf')
-                if np.isfinite(fitted_mse):
-                    avg_mse = (fitted_mse + test_mse_val) / 2
-                else:
-                    fitted_mse = test_mse_val
-                    avg_mse = test_mse_val
-                results.append({
+                def fold_eval(tr, te):
+                    fitted = determine_parent_parameters(tr, func, ro, sp, print_process=False)
+                    y_true = te['s_user_parent'].to_numpy(dtype=float)
+                    y_pred = np.array([parent_skeleton_formula(r['s_init_parent'], r['s_init_child'], sp, func, fitted) for _, r in te.iterrows()], dtype=float)
+                    return y_true, y_pred
+                cv = _cv_evaluate(bel_df, fold_eval)
+                fitted_full = determine_parent_parameters(bel_df, func, ro, sp, print_process=False)
+                rec = {
                     "model": func.__name__,
                     "split": sp,
                     "remove_outliers": ro,
-                    "fitted_mse": fitted_mse,
-                    "test_mse": test_mse_val,
-                    "avg_mse": avg_mse,
                     "score_key": score_key,
-                    "fitted": fitted,
-                    "train_metrics": train_metrics,
-                    "test_metrics": test_metrics,
-                    "all_metrics": all_metrics,
-                })
-                _vprint(f"parent | {func.__name__} | split={sp} | outliers={ro} | fitted_MSE={fitted_mse:.4f} | test_MSE={test_mse_val:.4f} | avg_MSE={avg_mse:.4f}")
+                    "fitted": fitted_full,
+                    "cv_mean_mse": cv['cv_mean_mse'],
+                    "cv_std_mse": cv['cv_std_mse'],
+                    "cv_mean_r2": cv['cv_mean_r2'],
+                    "cv_std_r2": cv['cv_std_r2'],
+                    "cv_mean_spearman": cv['cv_mean_spearman'],
+                    "cv_std_spearman": cv['cv_std_spearman'],
+                    "fold_mse": cv['fold_mse'],
+                    "fold_r2": cv['fold_r2'],
+                    "fold_spearman": cv['fold_spearman'],
+                }
+                results.append(rec)
+                _vprint(f"parent | {func.__name__} | split={sp} | outliers={ro} | cv_mse={rec['cv_mean_mse']:.4f}±{rec['cv_std_mse']:.4f} | cv_r2={(rec['cv_mean_r2'] if rec['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(rec['cv_mean_spearman'] if rec['cv_mean_spearman'] is not None else float('nan')):.4f}")
     if not results:
         return {}
-    best_fitted = min(results, key=lambda x: x["fitted_mse"]) 
-    best_test = min(results, key=lambda x: x["test_mse"]) 
-    best_avg = min(results, key=lambda x: x["avg_mse"]) 
-    def _spearman_val(rec):
-        m = rec.get('test_metrics', {})
-        s = m.get('spearman') if isinstance(m, dict) else None
+    best_avg = min(results, key=lambda x: x["cv_mean_mse"]) 
+    def _sval(rec):
+        s = rec.get('cv_mean_spearman')
         return s if s is not None else -1e9
-    best_spearman = max(results, key=_spearman_val)
-    _vprint(f"Best parent fitted_MSE: {best_fitted}")
-    _vprint(f"Best parent test_MSE: {best_test}")
-    _vprint(f"Best parent avg_MSE: {best_avg}")
-    _vprint(f"Best parent test_Spearman: {best_spearman}")
-    return {"best_fitted": best_fitted, "best_test": best_test, "best_avg": best_avg, "best_spearman": best_spearman, "all": results}
+    best_spearman = max(results, key=_sval)
+    return {"best_avg": best_avg, "best_spearman": best_spearman, "all": results, "n_seeds": n_seeds}
 
 def test_child_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_child_parameters")
     from formulas import belong_formula_v1, belong_formula_v2, null_identity, null_avg, null_linear
-
     bel_df = create_belonging_df(score_key)
     if bel_df.empty:
         print("No belonging data available for child model.")
         return {}
-
-    bel_df = bel_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(bel_df) * CONFIG["test_train_split"])
-    train_df = bel_df.iloc[:n_train].copy()
-    test_df = bel_df.iloc[n_train:].copy()
-
-    candidates = [
-        {"function": belong_formula_v1},
-        {"function": belong_formula_v2},
-        {"function": null_identity},
-        {"function": null_avg},
-        {"function": null_linear},
-    ]
+    n_seeds = int(bel_df['seed'].nunique()) if 'seed' in bel_df.columns else 0
+    bel_df = bel_df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
+    candidates = [{"function": belong_formula_v1}, {"function": belong_formula_v2}, {"function": null_identity}, {"function": null_avg}, {"function": null_linear}]
     remove_outliers = ["none", "lsquares"]
     splits = ["none", "parent", "parent_child"]
-
     results = []
     for cand in candidates:
         func = cand["function"]
         for ro in remove_outliers:
             for sp in splits:
-                fitted = determine_child_parameters(train_df, func, ro, sp, print_process=False)
-                if sp == 'none':
-                    test_preds = np.array([
-                        child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted)
-                        for _, r in test_df.iterrows()
-                    ], dtype=float)
-                    test_true = test_df['s_user_child'].to_numpy(dtype=float)
-                    test_metrics = _compute_metrics(test_true, test_preds)
-
-                    train_preds = np.array([
-                        child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted)
-                        for _, r in train_df.iterrows()
-                    ], dtype=float)
-                    train_true = train_df['s_user_child'].to_numpy(dtype=float)
-                    train_metrics = _compute_metrics(train_true, train_preds)
-
-                    all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-                    all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-                    all_metrics = _compute_metrics(all_true, all_preds)
-                else:
-                    buckets = []
-                    if sp == 'parent':
-                        bpos = test_df[test_df['s_init_parent'] > 0]
-                        bneg = test_df[test_df['s_init_parent'] <= 0]
-                        buckets = [('pos_params', bpos), ('neg_params', bneg)]
-                    elif sp == 'parent_child':
-                        pp = test_df[(test_df['s_init_child'] > 0) & (test_df['s_init_parent'] > 0)]
-                        pn = test_df[(test_df['s_init_child'] > 0) & (test_df['s_init_parent'] <= 0)]
-                        np_ = test_df[(test_df['s_init_child'] <= 0) & (test_df['s_init_parent'] > 0)]
-                        nn = test_df[(test_df['s_init_child'] <= 0) & (test_df['s_init_parent'] <= 0)]
-                        buckets = [('pos_pos_params', pp), ('pos_neg_params', pn), ('neg_pos_params', np_), ('neg_neg_params', nn)]
-                    mses = []
-                    test_preds_list = []
-                    test_true_list = []
-                    for key, dfb in buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_child'].to_numpy(dtype=float)
-                        test_preds_list.append(preds)
-                        test_true_list.append(yb)
-                        mses.append(_safe_mse(yb, preds))
-                    test_preds = np.concatenate(test_preds_list) if test_preds_list else np.array([])
-                    test_true = np.concatenate(test_true_list) if test_true_list else np.array([])
-                    test_metrics = _compute_metrics(test_true, test_preds) if test_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-
-                    if sp == 'parent':
-                        tbpos = train_df[train_df['s_init_parent'] > 0]
-                        tbneg = train_df[train_df['s_init_parent'] <= 0]
-                        tr_buckets = [('pos_params', tbpos), ('neg_params', tbneg)]
-                    elif sp == 'parent_child':
-                        tpp = train_df[(train_df['s_init_child'] > 0) & (train_df['s_init_parent'] > 0)]
-                        tpn = train_df[(train_df['s_init_child'] > 0) & (train_df['s_init_parent'] <= 0)]
-                        tnp = train_df[(train_df['s_init_child'] <= 0) & (train_df['s_init_parent'] > 0)]
-                        tnn = train_df[(train_df['s_init_child'] <= 0) & (train_df['s_init_parent'] <= 0)]
-                        tr_buckets = [('pos_pos_params', tpp), ('pos_neg_params', tpn), ('neg_pos_params', tnp), ('neg_neg_params', tnn)]
-                    else:
-                        tr_buckets = []
-                    train_preds_list = []
-                    train_true_list = []
-                    for key, dfb in tr_buckets:
-                        if dfb.empty or fitted.get(key) is None:
-                            continue
-                        preds = np.array([
-                            child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted)
-                            for _, r in dfb.iterrows()
-                        ], dtype=float)
-                        yb = dfb['s_user_child'].to_numpy(dtype=float)
-                        train_preds_list.append(preds)
-                        train_true_list.append(yb)
-                    train_preds = np.concatenate(train_preds_list) if train_preds_list else np.array([])
-                    train_true = np.concatenate(train_true_list) if train_true_list else np.array([])
-                    train_metrics = _compute_metrics(train_true, train_preds) if train_preds_list else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                    if len(train_preds) and len(test_preds):
-                        all_preds = np.concatenate([train_preds, test_preds])
-                        all_true = np.concatenate([train_true, test_true])
-                    else:
-                        all_preds = test_preds if len(test_preds) else train_preds
-                        all_true = test_true if len(test_true) else train_true
-                    all_metrics = _compute_metrics(all_true, all_preds) if (len(all_preds)) else {'mse': float('inf'), 'mae': None, 'r2': None, 'spearman': None}
-                if sp == 'none':
-                    fitted_mse = fitted.get('mse', float('inf')) if fitted else float('inf')
-                else:
-                    if fitted:
-                        sub_mses = [v.get('mse', float('inf')) for k, v in fitted.items() if isinstance(v, dict) and 'mse' in v]
-                        fitted_mse = float(np.mean(sub_mses)) if sub_mses else float('inf')
-                    else:
-                        fitted_mse = float('inf')
-                test_mse_val = test_metrics['mse'] if test_metrics else float('inf')
-                if np.isfinite(fitted_mse):
-                    avg_mse = (fitted_mse + test_mse_val) / 2
-                else:
-                    fitted_mse = test_mse_val
-                    avg_mse = test_mse_val
-                results.append({
+                def fold_eval(tr, te):
+                    fitted = determine_child_parameters(tr, func, ro, sp, print_process=False)
+                    y_true = te['s_user_child'].to_numpy(dtype=float)
+                    y_pred = np.array([child_skeleton_formula(r['s_init_child'], r['s_init_parent'], sp, func, fitted) for _, r in te.iterrows()], dtype=float)
+                    return y_true, y_pred
+                cv = _cv_evaluate(bel_df, fold_eval)
+                fitted_full = determine_child_parameters(bel_df, func, ro, sp, print_process=False)
+                rec = {
                     "model": func.__name__,
                     "split": sp,
                     "remove_outliers": ro,
-                    "fitted_mse": fitted_mse,
-                    "test_mse": test_mse_val,
-                    "avg_mse": avg_mse,
                     "score_key": score_key,
-                    "fitted": fitted,
-                    "train_metrics": train_metrics,
-                    "test_metrics": test_metrics,
-                    "all_metrics": all_metrics,
-                })
-                _vprint(f"child | {func.__name__} | split={sp} | outliers={ro} | fitted_MSE={fitted_mse:.4f} | test_MSE={test_mse_val:.4f} | avg_MSE={avg_mse:.4f}")
+                    "fitted": fitted_full,
+                    "cv_mean_mse": cv['cv_mean_mse'],
+                    "cv_std_mse": cv['cv_std_mse'],
+                    "cv_mean_r2": cv['cv_mean_r2'],
+                    "cv_std_r2": cv['cv_std_r2'],
+                    "cv_mean_spearman": cv['cv_mean_spearman'],
+                    "cv_std_spearman": cv['cv_std_spearman'],
+                    "fold_mse": cv['fold_mse'],
+                    "fold_r2": cv['fold_r2'],
+                    "fold_spearman": cv['fold_spearman'],
+                }
+                results.append(rec)
+                _vprint(f"child | {func.__name__} | split={sp} | outliers={ro} | cv_mse={rec['cv_mean_mse']:.4f}±{rec['cv_std_mse']:.4f} | cv_r2={(rec['cv_mean_r2'] if rec['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(rec['cv_mean_spearman'] if rec['cv_mean_spearman'] is not None else float('nan')):.4f}")
     if not results:
         return {}
-    best_fitted = min(results, key=lambda x: x["fitted_mse"]) 
-    best_test = min(results, key=lambda x: x["test_mse"]) 
-    best_avg = min(results, key=lambda x: x["avg_mse"]) 
-    def _spearman_key(rec):
-        m = rec.get('test_metrics', {})
-        s = m.get('spearman') if isinstance(m, dict) else None
-        return -(s if s is not None else -1e9)
-    best_spearman = max(results, key=_spearman_key)
-    _vprint(f"Best child fitted_MSE: {best_fitted}")
-    _vprint(f"Best child test_MSE: {best_test}")
-    _vprint(f"Best child avg_MSE: {best_avg}")
-    _vprint(f"Best child test_Spearman: {best_spearman}")
-    return {"best_fitted": best_fitted, "best_test": best_test, "best_avg": best_avg, "best_spearman": best_spearman, "all": results}
+    best_avg = min(results, key=lambda x: x["cv_mean_mse"]) 
+    def _sval(rec):
+        s = rec.get('cv_mean_spearman')
+        return s if s is not None else -1e9
+    best_spearman = max(results, key=_sval)
+    return {"best_avg": best_avg, "best_spearman": best_spearman, "all": results, "n_seeds": n_seeds}
 
 def test_aggregate_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_aggregate_parameters")
@@ -1727,97 +1282,79 @@ def test_aggregate_parameters(score_key: str = 'user_sentiment_score_mapped') ->
     if agg_df.empty:
         print("No aggregate data available.")
         return {}
-    agg_df = agg_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(len(agg_df) * CONFIG["test_train_split"])
-    train_df = agg_df.iloc[:n_train].copy()
-    test_df = agg_df.iloc[n_train:].copy()
+    n_seeds = int(agg_df['seed'].nunique()) if 'seed' in agg_df.columns else 0
+    agg_df = agg_df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
     losses = [aggregate_error_mse, aggregate_error_softl1, aggregate_error_dynamic_mse, aggregate_error_dynamic_softl1, aggregate_error_logistic_mse, aggregate_error_logistic_softl1]
     results = []
     null_avg_name = 'aggregate_null_average'
-    if not agg_df.empty:
-        test_preds = []
-        for _, r in test_df.iterrows():
-            test_preds.append(np.mean(r['s_inits']))
-        test_preds = np.array(test_preds, dtype=float)
-        test_true = test_df['s_user'].to_numpy(dtype=float)
-        test_metrics = _compute_metrics(test_true, test_preds)
-        train_preds = []
-        for _, r in train_df.iterrows():
-            train_preds.append(np.mean(r['s_inits']))
-        train_preds = np.array(train_preds, dtype=float)
-        train_true = train_df['s_user'].to_numpy(dtype=float)
-        train_metrics = _compute_metrics(train_true, train_preds)
-        all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-        all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-        all_metrics = _compute_metrics(all_true, all_preds)
-        results.append({
-            "model": null_avg_name,
-            "split": "none",
-            "remove_outliers": "none",
-        "fitted_mse": test_metrics['mse'],
-        "test_mse": test_metrics['mse'],
-        "avg_mse": test_metrics['mse'],
-            "score_key": score_key,
-            "params": [],
-            "train_metrics": train_metrics,
-            "test_metrics": test_metrics,
-            "all_metrics": all_metrics,
-        })
-    _vprint(f"aggregate | {null_avg_name} | fitted_MSE={test_metrics['mse']:.4f} | test_MSE={test_metrics['mse']:.4f} | avg_MSE={test_metrics['mse']:.4f}")
+    def fold_eval_null(tr, te):
+        yt = te['s_user'].to_numpy(dtype=float)
+        yp = np.array([float(np.mean(r['s_inits'])) for _, r in te.iterrows()], dtype=float)
+        return yt, yp
+    cv_null = _cv_evaluate(agg_df, fold_eval_null)
+    results.append({
+        "model": null_avg_name,
+        "split": "none",
+        "remove_outliers": "none",
+        "score_key": score_key,
+        "params": [],
+        "cv_mean_mse": cv_null['cv_mean_mse'],
+        "cv_std_mse": cv_null['cv_std_mse'],
+        "cv_mean_r2": cv_null['cv_mean_r2'],
+        "cv_std_r2": cv_null['cv_std_r2'],
+        "cv_mean_spearman": cv_null['cv_mean_spearman'],
+        "cv_std_spearman": cv_null['cv_std_spearman'],
+        "fold_mse": cv_null['fold_mse'],
+        "fold_r2": cv_null['fold_r2'],
+        "fold_spearman": cv_null['fold_spearman'],
+    })
+    _vprint(f"aggregate | {null_avg_name} | cv_mse={cv_null['cv_mean_mse']:.4f}±{cv_null['cv_std_mse']:.4f} | cv_r2={(cv_null['cv_mean_r2'] if cv_null['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(cv_null['cv_mean_spearman'] if cv_null['cv_mean_spearman'] is not None else float('nan')):.4f}")
     for loss_fn in losses:
-        fitted = determine_aggregate_parameters(train_df, loss_fn, print_process=False)
         name = loss_fn.__name__
+        def fold_eval(tr, te):
+            fitted = determine_aggregate_parameters(tr, loss_fn, print_process=False)
+            if 'dynamic' in loss_fn.__name__:
+                func = aggregate_formula_dynamic
+            elif 'logistic' in loss_fn.__name__:
+                func = aggregate_formula_logistic
+            else:
+                func = aggregate_formula
+            yt = te['s_user'].to_numpy(dtype=float)
+            yp = np.array([func(r['s_inits'], fitted['params']) for _, r in te.iterrows()], dtype=float)
+            return yt, yp
+        cv = _cv_evaluate(agg_df, fold_eval)
+        fitted_full = determine_aggregate_parameters(agg_df, loss_fn, print_process=False)
         if 'dynamic' in loss_fn.__name__:
             func = aggregate_formula_dynamic
         elif 'logistic' in loss_fn.__name__:
             func = aggregate_formula_logistic
         else:
             func = aggregate_formula
-        test_preds = []
-        for _, r in test_df.iterrows():
-            test_preds.append(func(r['s_inits'], fitted['params']))
-        test_preds = np.array(test_preds, dtype=float)
-        test_true = test_df['s_user'].to_numpy(dtype=float)
-        test_metrics = _compute_metrics(test_true, test_preds)
-        train_preds = []
-        for _, r in train_df.iterrows():
-            train_preds.append(func(r['s_inits'], fitted['params']))
-        train_preds = np.array(train_preds, dtype=float)
-        train_true = train_df['s_user'].to_numpy(dtype=float)
-        train_metrics = _compute_metrics(train_true, train_preds)
-        all_preds = np.concatenate([train_preds, test_preds]) if len(train_preds) and len(test_preds) else test_preds
-        all_true = np.concatenate([train_true, test_true]) if len(train_preds) and len(test_preds) else test_true
-        all_metrics = _compute_metrics(all_true, all_preds)
-        fitted_loss = fitted['loss']
-        if not np.isfinite(fitted_loss):
-            fitted_loss = test_metrics['mse']
         results.append({
             "model": name,
             "split": "none",
             "remove_outliers": "none",
-            "fitted_mse": fitted_loss,
-            "test_mse": test_metrics['mse'],
-            "avg_mse": (fitted_loss + test_metrics['mse']) / 2,
             "score_key": score_key,
-            "params": fitted['params'],
-            "train_metrics": train_metrics,
-            "test_metrics": test_metrics,
-            "all_metrics": all_metrics,
+            "params": fitted_full['params'],
+            "cv_mean_mse": cv['cv_mean_mse'],
+            "cv_std_mse": cv['cv_std_mse'],
+            "cv_mean_r2": cv['cv_mean_r2'],
+            "cv_std_r2": cv['cv_std_r2'],
+            "cv_mean_spearman": cv['cv_mean_spearman'],
+            "cv_std_spearman": cv['cv_std_spearman'],
+            "fold_mse": cv['fold_mse'],
+            "fold_r2": cv['fold_r2'],
+            "fold_spearman": cv['fold_spearman'],
         })
-        _vprint(f"aggregate | {name} | fitted_MSE={fitted_loss:.4f} | test_MSE={test_metrics['mse']:.4f} | avg_MSE={(fitted_loss + test_metrics['mse']) / 2:.4f}")
-    best_fitted = min(results, key=lambda x: x["fitted_mse"]) if results else {}
-    best_test = min(results, key=lambda x: x["test_mse"]) if results else {}
-    best_avg = min(results, key=lambda x: x["avg_mse"]) if results else {}
-    def _spearman_val(rec):
-        m = rec.get('test_metrics', {})
-        s = m.get('spearman') if isinstance(m, dict) else None
+        _vprint(f"aggregate | {name} | cv_mse={cv['cv_mean_mse']:.4f}±{cv['cv_std_mse']:.4f} | cv_r2={(cv['cv_mean_r2'] if cv['cv_mean_r2'] is not None else float('nan')):.4f} | cv_spearman={(cv['cv_mean_spearman'] if cv['cv_mean_spearman'] is not None else float('nan')):.4f}")
+    if not results:
+        return {}
+    best_avg = min(results, key=lambda x: x["cv_mean_mse"]) if results else {}
+    def _sval(rec):
+        s = rec.get('cv_mean_spearman')
         return s if s is not None else -1e9
-    best_spearman = max(results, key=_spearman_val) if results else {}
-    _vprint(f"Best aggregate fitted_MSE: {best_fitted}")
-    _vprint(f"Best aggregate test_MSE: {best_test}")
-    _vprint(f"Best aggregate avg_MSE: {best_avg}")
-    _vprint(f"Best aggregate test_Spearman: {best_spearman}")
-    return {"best_fitted": best_fitted, "best_test": best_test, "best_avg": best_avg, "best_spearman": best_spearman, "all": results}
+    best_spearman = max(results, key=_sval) if results else {}
+    return {"best_avg": best_avg, "best_spearman": best_spearman, "all": results, "n_seeds": n_seeds}
 
 
 def _serialize_fitted(fitted: dict) -> dict:
@@ -1843,26 +1380,34 @@ def save_optimal_parameters(all_results: dict, out_path: str = "src/survey/optim
         for category, data in summary.items():
             if not data:
                 continue
-            best = data.get('best_spearman') or data.get('best_avg') or data.get('best_test') or data.get('best_fitted')
+            all_runs = data.get('all') or []
+            ranked = _rank_models_by_spearman(all_runs)
+            if ranked:
+                best = ranked[0].get('best_run')
+                selected_by = 'pareto_topsis_cv'
+            else:
+                best = None
+                selected_by = 'none'
             if not best:
                 continue
+            n_seeds = int(data.get('n_seeds') or 0)
             entry = {
                 "category": category,
                 "score_key": score_key,
                 "model": best.get("model"),
                 "split": best.get("split", "none"),
                 "remove_outliers": best.get("remove_outliers", "none"),
-                "fitted_mse": float(best.get("fitted_mse", float('inf'))),
-                "test_mse": float(best.get("test_mse", float('inf'))),
-                "avg_mse": float(best.get("avg_mse", float('inf'))),
-                "selected_by": "test_spearman" if data.get('best_spearman') == best else (
-                    'avg_mse' if data.get('best_avg') == best else (
-                        'test_mse' if data.get('best_test') == best else 'fitted_mse'
-                    )
-                ),
-                "train_metrics": best.get('train_metrics'),
-                "test_metrics": best.get('test_metrics'),
-                "all_metrics": best.get('all_metrics'),
+                "cv_mean_mse": float(best.get("cv_mean_mse", float('inf'))),
+                "cv_std_mse": float(best.get("cv_std_mse", 0.0)),
+                "cv_mean_r2": best.get("cv_mean_r2"),
+                "cv_std_r2": float(best.get("cv_std_r2", 0.0)),
+                "cv_mean_spearman": best.get("cv_mean_spearman"),
+                "cv_std_spearman": float(best.get("cv_std_spearman", 0.0)),
+                "n_seeds": n_seeds,
+                "selected_by": selected_by,
+                "fold_mse": best.get('fold_mse'),
+                "fold_r2": best.get('fold_r2'),
+                "fold_spearman": best.get('fold_spearman'),
             }
             if category == 'aggregate':
                 params = best.get('params')
@@ -2042,40 +1587,115 @@ def _rank_models_by_average_mse(results_list: list[dict], mse_key: str = "avg_ms
 def _rank_models_by_spearman(results_list: list[dict]) -> list[dict]:
     if not results_list:
         return []
-    buckets: dict[str, list[dict]] = {}
-    for r in results_list:
-        m = r.get('model')
-        if not m:
-            continue
-        buckets.setdefault(m, []).append(r)
-    ranked = []
-    for model, runs in buckets.items():
-        vals = []
-        best_run = None
-        best_val = -1e9
-        for x in runs:
-            tm = x.get('test_metrics') or {}
-            s = tm.get('spearman') if isinstance(tm, dict) else None
-            if s is None:
+    def _valid(r):
+        s = r.get('cv_mean_spearman')
+        r2 = r.get('cv_mean_r2')
+        mse = r.get('cv_mean_mse', float('inf'))
+        return (s is not None) and np.isfinite(mse) and (r2 is not None)
+    runs = [r for r in results_list if r.get('model') and _valid(r)]
+    if not runs:
+        return []
+    objs = []
+    for r in runs:
+        objs.append((r, float(r.get('cv_mean_spearman')), float(r.get('cv_mean_mse')), float(r.get('cv_mean_r2'))))
+    pareto = []
+    for i, (ri, si, mi, r2i) in enumerate(objs):
+        dominated = False
+        for j, (rj, sj, mj, r2j) in enumerate(objs):
+            if i == j:
                 continue
-            vals.append(float(s))
-            if s > best_val:
-                best_val = float(s)
-                best_run = x
-        if not vals:
-            continue
-        avg_s = float(np.mean(vals))
+            if (mj <= mi) and (sj >= si) and (r2j >= r2i) and ((mj < mi) or (sj > si) or (r2j > r2i)):
+                dominated = True
+                break
+        if not dominated:
+            pareto.append((ri, si, mi, r2i))
+    if not pareto:
+        pareto = objs
+    X = np.array([[s, m, r2] for (_, s, m, r2) in pareto], dtype=float)
+    if len(X) == 0:
+        return []
+    norm = np.linalg.norm(X, axis=0)
+    norm[norm == 0] = 1.0
+    R = X / norm
+    w = np.array([1.0, 1.0, 1.0], dtype=float)
+    V = R * w
+    ideal_best = np.array([np.max(V[:, 0]), np.min(V[:, 1]), np.max(V[:, 2])], dtype=float)
+    ideal_worst = np.array([np.min(V[:, 0]), np.max(V[:, 1]), np.min(V[:, 2])], dtype=float)
+    S_plus = np.linalg.norm(V - ideal_best, axis=1)
+    S_minus = np.linalg.norm(V - ideal_worst, axis=1)
+    CC = S_minus / (S_plus + S_minus + 1e-12)
+    ranked = []
+    for idx, (r, s, m, r2) in enumerate(pareto):
         ranked.append({
-            'model': model,
-            'avg_spearman': avg_s,
-            'n_configs': len(vals),
-            'best_spearman': best_val,
-            'best_split': best_run.get('split', 'none') if best_run else 'none',
-            'best_outliers': best_run.get('remove_outliers', 'none') if best_run else 'none',
-            'best_run': best_run,
+            'model': r.get('model'),
+            's': s,
+            'cv_mean_mse': m,
+            'cv_mean_r2': r2,
+            'n_configs': int(sum(1 for q in runs if q.get('model') == r.get('model'))),
+            'best_split': r.get('split', 'none'),
+            'best_outliers': r.get('remove_outliers', 'none'),
+            'best_run': r,
+            'topsis': float(CC[idx]),
         })
-    ranked.sort(key=lambda x: x['avg_spearman'], reverse=True)
-    return ranked
+    best_by_model = {}
+    for row in ranked:
+        key = row['model']
+        prev = best_by_model.get(key)
+        if (prev is None) or (row['topsis'] > prev['topsis']):
+            best_by_model[key] = row
+    ranked_unique = list(best_by_model.values())
+    ranked_unique.sort(key=lambda x: x['topsis'], reverse=True)
+    return ranked_unique
+
+def _rank_models_by_topsis_all(results_list: list[dict]) -> list[dict]:
+    if not results_list:
+        return []
+    runs = []
+    for r in results_list:
+        if not r.get('model'):
+            continue
+        s = r.get('cv_mean_spearman')
+        r2 = r.get('cv_mean_r2')
+        mse = r.get('cv_mean_mse', float('inf'))
+        if not np.isfinite(mse) or s is None:
+            continue
+        r2v = float(r2) if (isinstance(r2, (int, float)) and not isinstance(r2, bool)) else -1e9
+        runs.append((r, float(s), float(mse), r2v))
+    if not runs:
+        return []
+    X = np.array([[s, m, r2] for (_, s, m, r2) in runs], dtype=float)
+    norm = np.linalg.norm(X, axis=0)
+    norm[norm == 0] = 1.0
+    R = X / norm
+    w = np.array([1.0, 1.0, 1.0], dtype=float)
+    V = R * w
+    ideal_best = np.array([np.max(V[:, 0]), np.min(V[:, 1]), np.max(V[:, 2])], dtype=float)
+    ideal_worst = np.array([np.min(V[:, 0]), np.max(V[:, 1]), np.min(V[:, 2])], dtype=float)
+    S_plus = np.linalg.norm(V - ideal_best, axis=1)
+    S_minus = np.linalg.norm(V - ideal_worst, axis=1)
+    CC = S_minus / (S_plus + S_minus + 1e-12)
+    ranked = []
+    for idx, (r, s, m, r2) in enumerate(runs):
+        ranked.append({
+            'model': r.get('model'),
+            's': s,
+            'cv_mean_mse': m,
+            'cv_mean_r2': r2 if r2 > -1e9/2 else None,
+            'n_configs': int(sum(1 for q in results_list if q.get('model') == r.get('model'))),
+            'best_split': r.get('split', 'none'),
+            'best_outliers': r.get('remove_outliers', 'none'),
+            'best_run': r,
+            'topsis': float(CC[idx]),
+        })
+    best_by_model = {}
+    for row in ranked:
+        key = row['model']
+        prev = best_by_model.get(key)
+        if (prev is None) or (row['topsis'] > prev['topsis']):
+            best_by_model[key] = row
+    ranked_unique = list(best_by_model.values())
+    ranked_unique.sort(key=lambda x: x['topsis'], reverse=True)
+    return ranked_unique
 
 def print_ranked_summary(all_results: dict) -> None:
     if not all_results:
@@ -2091,12 +1711,13 @@ def print_ranked_summary(all_results: dict) -> None:
             ranked_by_s = _rank_models_by_spearman(payload['all'])
             if not ranked_by_s:
                 continue
-            table = Table(title=f"{category} — Spearman Rankings (higher is better)")
+            n_seeds = int(payload.get('n_seeds') or 0)
+            table = Table(title=f"{category} — Pareto + TOPSIS Rankings (N={n_seeds})")
             table.add_column("Rank", justify="right")
             table.add_column("Model", style="bold")
             table.add_column("S", justify="right")
-            table.add_column("Test MSE", justify="right")
-            table.add_column("Test R2", justify="right")
+            table.add_column("CV MSE", justify="right")
+            table.add_column("CV R2", justify="right")
             table.add_column("Configs", justify="right")
             table.add_column("Best Config", justify="left")
             table.add_column("Params/IO", justify="left", overflow="fold")
@@ -2104,9 +1725,10 @@ def print_ranked_summary(all_results: dict) -> None:
             for i, row in enumerate(ranked_by_s, start=1):
                 mark = "⭐" if i == 1 else ""
                 best_detail = row['best_run']
-                tm = best_detail.get('test_metrics', {}) if best_detail else {}
-                test_mse = tm.get('mse', float('inf')) if isinstance(tm, dict) else float('inf')
-                test_r2 = tm.get('r2') if isinstance(tm, dict) else None
+                test_mse = row.get('cv_mean_mse', float('inf'))
+                test_mse_std = row['best_run'].get('cv_std_mse') if row.get('best_run') else None
+                test_r2 = row.get('cv_mean_r2')
+                test_r2_std = row['best_run'].get('cv_std_r2') if row.get('best_run') else None
 
                 pview, io = '', ''
                 if best_detail:
@@ -2157,8 +1779,12 @@ def print_ranked_summary(all_results: dict) -> None:
                     config_str = "none/none"
 
                 test_mse_str = f"{test_mse:.4f}" if np.isfinite(test_mse) else "inf"
+                if isinstance(test_mse_std, (int, float)) and np.isfinite(test_mse_std) and test_mse_std > 0:
+                    test_mse_str += f" ±{test_mse_std:.3f}"
                 test_r2_str = f"{test_r2:.4f}" if isinstance(test_r2, (int, float)) and not isinstance(test_r2, bool) and np.isfinite(test_r2) else "-"
-                s_str = f"{row.get('avg_spearman'):.4f}" if row.get('avg_spearman') is not None else "-"
+                if isinstance(test_r2_std, (int, float)) and np.isfinite(test_r2_std) and test_r2_std > 0:
+                    test_r2_str += f" ±{test_r2_std:.3f}"
+                s_str = f"{row.get('s'):.4f}" if row.get('s') is not None else "-"
 
                 table.add_row(
                     str(i),
@@ -2171,6 +1797,93 @@ def print_ranked_summary(all_results: dict) -> None:
                     f"{pview} {io}",
                 )
             console.print(table)
+
+            all_ranked = _rank_models_by_topsis_all(payload['all'])
+            if all_ranked and len(all_ranked) > len(ranked_by_s):
+                table2 = Table(title=f"{category} — All models (including dominated) — TOPSIS (N={n_seeds})")
+                table2.add_column("Rank", justify="right")
+                table2.add_column("Model", style="bold")
+                table2.add_column("S", justify="right")
+                table2.add_column("CV MSE", justify="right")
+                table2.add_column("CV R2", justify="right")
+                table2.add_column("Configs", justify="right")
+                table2.add_column("Best Config", justify="left")
+                table2.add_column("Params/IO", justify="left", overflow="fold")
+
+                for i, row in enumerate(all_ranked, start=1):
+                    mark = "⭐" if i == 1 else ""
+                    best_detail = row['best_run']
+                    test_mse = row.get('cv_mean_mse', float('inf'))
+                    test_mse_std = row['best_run'].get('cv_std_mse') if row.get('best_run') else None
+                    test_r2 = row.get('cv_mean_r2')
+                    test_r2_std = row['best_run'].get('cv_std_r2') if row.get('best_run') else None
+
+                    pview, io = '', ''
+                    if best_detail:
+                        split = best_detail.get('split', 'none')
+                        outliers = best_detail.get('remove_outliers', 'none')
+                        config_str = f"{split}/{outliers}"
+                        if category != 'aggregate':
+                            fitted = best_detail.get('fitted', {})
+                            parts = []
+                            for k, v in fitted.items():
+                                if v is None:
+                                    continue
+                                arr = v.get('params') if isinstance(v, dict) else v
+                                if isinstance(arr, np.ndarray):
+                                    arr = arr.tolist()
+                                if isinstance(arr, (list, tuple)):
+                                    arr_str = '[' + ','.join(f"{float(x):.3f}" for x in arr) + ']'
+                                elif arr is None:
+                                    arr_str = 'None'
+                                else:
+                                    arr_str = str(arr)
+                                parts.append(f"{k}={arr_str}")
+                            pview = '; '.join(parts) if parts else 'params'
+                            if category == 'actor':
+                                io = "(s_actor, s_action*s_target)->s_user_actor"
+                            elif category == 'target':
+                                io = "(s_target, s_action)->s_user_target"
+                            elif category == 'association':
+                                io = "(s_entity, s_other)->s_user_entity"
+                            elif category == 'parent':
+                                io = "(s_parent, s_child)->s_user_parent"
+                            elif category == 'child':
+                                io = "(s_child, s_parent)->s_user_child"
+                        else:
+                            params = best_detail.get('params')
+                            if isinstance(params, np.ndarray):
+                                params = params.tolist()
+                            if isinstance(params, (list, tuple)):
+                                pview = '[' + ','.join(f"{float(x):.3f}" for x in params) + ']'
+                            else:
+                                pview = str(params)
+                            io = "(s_inits)->s_user"
+                            config_str = "none/none"
+                        if len(pview) > 80:
+                            pview = pview[:80] + '…'
+                    else:
+                        config_str = "none/none"
+
+                    test_mse_str = f"{test_mse:.4f}" if np.isfinite(test_mse) else "inf"
+                    if isinstance(test_mse_std, (int, float)) and np.isfinite(test_mse_std) and test_mse_std > 0:
+                        test_mse_str += f" ±{test_mse_std:.3f}"
+                    test_r2_str = f"{test_r2:.4f}" if isinstance(test_r2, (int, float)) and not isinstance(test_r2, bool) and np.isfinite(test_r2) else "-"
+                    if isinstance(test_r2_std, (int, float)) and np.isfinite(test_r2_std) and test_r2_std > 0:
+                        test_r2_str += f" ±{test_r2_std:.3f}"
+                    s_str = f"{row.get('s'):.4f}" if row.get('s') is not None else "-"
+
+                    table2.add_row(
+                        str(i),
+                        f"{row['model']} {mark}",
+                        s_str,
+                        test_mse_str,
+                        test_r2_str,
+                        str(row['n_configs']),
+                        config_str,
+                        f"{pview} {io}",
+                    )
+                console.print(table2)
 
 
 if __name__ == '__main__':
