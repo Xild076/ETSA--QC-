@@ -121,16 +121,21 @@ def main():
         print(f"{Fore.YELLOW}Running ttw.py...{Style.RESET_ALL}")
         subprocess.run([sys.executable, "src/sentiment/ttw.py"], cwd=os.path.dirname(__file__))
     elif args.command == "benchmark":
-        print(f"{Fore.YELLOW}Running v2 benchmark...{Style.RESET_ALL}")
-        subprocess.run([
-            sys.executable, "-m", "src.graph.benchmark_v2",
-            "--input", args.input,
-            "--limit", str(args.limit) if args.limit else "0",
-            "--pos-thresh", str(args.pos_thresh),
-            "--neg-thresh", str(args.neg_thresh),
-            "--out-json", os.path.join(args.output_dir, f"v2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"),
-            "--out-csv", os.path.join(args.output_dir, f"v2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"),
-        ], cwd=os.path.dirname(__file__))
+        run_benchmark(
+            dataset=args.dataset,
+            input_path=args.input,
+            limit=args.limit,
+            pos_thresh=args.pos_thresh,
+            neg_thresh=args.neg_thresh,
+            rpm=args.rpm,
+            output_dir=args.output_dir,
+            ablate=args.ablate,
+            sent_model=args.sent_model,
+            formula=args.formula,
+            score_key=args.score_key,
+            with_pyabsa=args.with_pyabsa,
+            pyabsa_checkpoint=args.pyabsa_checkpoint,
+        )
 
 if __name__ == "__main__":
     main()

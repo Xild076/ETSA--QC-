@@ -111,11 +111,6 @@ neg_desc = extract_word_list(loaded_lexicons, "neg_desc")
 
 neutral_actions_together = ['ate', 'talked', 'worked', 'walked']
 
-# Very (1 - 0.7)
-# ___ (0.7 - 0.5)
-# Somewhat (0.5 - 0.3)
-# Slightly (0.3 - 0.1)
-# Neutral (0.1 - -0.1)
 
 parent_child = {
     "phone": ["battery", "screen", "camera"],
@@ -142,19 +137,15 @@ desc = {
 }
 
 """
-##### Question 1:
 **Purpose:** To check x-x-y relationships.
 **Text or Structure:**
 "{+ actor} {+ action} {- victim}"
-##### Question 2:
 **Purpose:** To check y-x-x relationships
 **Text or Structure:**
 "{+ actor} {- action} {- victim}"
-##### Question 3:
 **Purpose:** To check x-x-x relationships
 **Text or Structure:**
 "{- actor} {- action} {- victim}"
-##### Question 4:
 **Purpose:** To check negativity biases, compared to x-y-x.
 **Text or Structure:**
 "{+ actor} {- action} {+ victim}"
@@ -221,11 +212,9 @@ def generate_compound_action_sentences(used_names, used_words_in_survey):
     return out
 
 """
-##### Question 1:
 **Purpose:** To check intra-sentence opposite direction association
 **Text or Structure:**
 "{+ entity} and {- entity} {+ action} together."
-##### Question 2:
 **Purpose:** To check inter-sentence association and negativity bias. (Has some relation to aggregate sentiments, maybe there is an overlap). When doing calculations, maybe do aggregate sentiment first to get a formula for that, then cross-apply with this one to check for no temporal biases.
 **Text or Structure:**
 "{- entity} did {- action}. {+ entity} did it with them."
@@ -358,11 +347,9 @@ def generate_compound_association_sentences(used_names, used_words_in_survey):
     return out
 
 """
-##### Question 1:
 **Purpose:** To check intra-sentence association
 **Text or Structure:**
 "{+ parent entity}'s {- child entity} was {- description}."
-##### Question 2:
 **Purpose:** To check inter-sentence association and negativity bias. (Has some relation to aggregate sentiments, maybe there is an overlap). When doing calculations, maybe do aggregate sentiment first to get a formula for that, then cross-apply with this one to check for no temporal biases.
 **Text or Structure:**
 "{- parent entity} was {- descriptor}. {+ child entity} was {+ description}."
@@ -492,14 +479,12 @@ def generate_compound_belonging_sentences(used_objects, used_words_in_survey):
     return out
 
 """
-##### Packet 1:
 *3 questions*
 **Purpose:** To check shorter aggregate sentiment shifts.
 **Text or Structure:**
 1. "xxx was good."
 2. "xxx was bad."
 3. "xxx was good."
-##### Packet 2:
 *5 questions*
 **Purpose:** To check longer aggregate sentiment shifts and possible negative biases.
 **Text or Structure:**
@@ -810,4 +795,3 @@ def survey_gen(seed=None):
         "packets": packets
     }
 
-# json.dump(survey_gen(), open("survey_data.json", "w"), indent=4, ensure_ascii=False)

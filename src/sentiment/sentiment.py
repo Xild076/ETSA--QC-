@@ -101,6 +101,116 @@ def get_vader_sentiment(text: str) -> float:
         if not text or not text.strip():
             return 0.0
         
+        # Handle implicit sentiment in short, suggestive phrases
+        implicit_sentiment_map = {
+            "recommend": 0.8,
+            "stay away": -0.9,
+            "worth the": 0.7,
+            "must try": 0.85,
+            "must-try": 0.85,
+            "must have": 0.85,
+            "must-have": 0.85,
+            "go for": 0.6,
+            "look for": 0.5,
+            "avoid": -0.8,
+            "skip": -0.7,
+            "pass on": -0.6,
+            "don't miss": 0.75,
+            "do not miss": 0.75,
+            "can't miss": 0.75,
+            "cannot miss": 0.75,
+            "a must": 0.85,
+            "a plus": 0.7,
+            "a bonus": 0.65,
+            "a gem": 0.9,
+            "a joke": -0.8,
+            "a mess": -0.7,
+            "a shame": -0.6,
+            "a treat": 0.8,
+            "a delight": 0.85,
+            "a pleasure": 0.8,
+            "a disappointment": -0.9,
+            "a letdown": -0.85,
+            "a failure": -0.9,
+            "a success": 0.9,
+            "a win": 0.8,
+            "a loss": -0.8,
+            "a find": 0.7,
+            "a discovery": 0.6,
+            "a revelation": 0.8,
+            "a surprise": 0.5, # Can be neutral, but often positive in reviews
+            "a pleasant surprise": 0.85,
+            "an unpleasant surprise": -0.85,
+            "a pleasant experience": 0.9,
+            "an unpleasant experience": -0.9,
+            "a good choice": 0.8,
+            "a bad choice": -0.8,
+            "a great choice": 0.9,
+            "a terrible choice": -0.9,
+            "a wise choice": 0.85,
+            "a poor choice": -0.85,
+            "a solid choice": 0.75,
+            "a safe bet": 0.6,
+            "a gamble": -0.4,
+            "a risk": -0.5,
+            "a safe choice": 0.6,
+            "a safe option": 0.6,
+            "a good option": 0.7,
+            "a bad option": -0.7,
+            "a great option": 0.8,
+            "a terrible option": -0.8,
+            "a decent option": 0.5,
+            "a viable option": 0.4,
+            "an option": 0.1, # Neutral
+            "an alternative": 0.1, # Neutral
+            "a backup": 0.0, # Neutral
+            "a substitute": -0.1, # Slightly negative
+            "a replacement": -0.1, # Slightly negative
+            "a copy": -0.2,
+            "an imitation": -0.4,
+            "a fake": -0.8,
+            "a fraud": -0.9,
+            "a scam": -0.95,
+            "a ripoff": -0.9,
+            "a steal": 0.9, # Positive (good value)
+            "a bargain": 0.85,
+            "a deal": 0.8,
+            "overpriced": -0.7,
+            "underpriced": 0.5, # Can be good
+            "pricey": -0.6,
+            "costly": -0.5,
+            "expensive": -0.4, # VADER handles this, but we can boost it
+            "cheap": -0.3, # VADER handles this, but can be ambiguous
+            "affordable": 0.6,
+            "reasonable": 0.5,
+            "fair price": 0.6,
+            "good value": 0.8,
+            "great value": 0.9,
+            "bad value": -0.8,
+            "poor value": -0.9,
+            "not worth it": -0.85,
+            "not worth the money": -0.9,
+            "not worth the price": -0.9,
+            "worth every penny": 0.95,
+            "worth every cent": 0.95,
+            "acceptable": 0.4,
+            "decent": 0.5,
+            "adequate": 0.3,
+            "sufficient": 0.2,
+            "satisfactory": 0.45,
+            "passable": 0.25,
+            "tolerable": 0.15,
+            "unacceptable": -0.7,
+            "inadequate": -0.6,
+            "insufficient": -0.5,
+            "unsatisfactory": -0.65
+        }
+        
+        text_lower = text.lower()
+        for phrase, score in implicit_sentiment_map.items():
+            if phrase in text_lower:
+                return score
+
         analyzer = SentimentIntensityAnalyzer()
         result = analyzer.polarity_scores(text)
     except:
@@ -175,6 +285,39 @@ def get_finiteautomata_sentiment(text: str) -> float:
         return _get_hf_pipeline_score(results, is_confidence_only=False, model_name="finiteautomata")
     except:
         return 0.0
+
+def context_aware_sentiment_adjustment(text: str, modifier_text: str, base_sentiment: float) -> float:
+    """
+    Adjust sentiment based on context to handle cases like 'I miss X' where X should be positive.
+    """
+    text_lower = text.lower()
+    modifier_lower = modifier_text.lower()
+    
+    # Handle "miss" in positive contexts
+    if "miss" in modifier_lower:
+        # Patterns that indicate positive sentiment despite "miss"
+        positive_miss_patterns = [
+            r'\bi\s+miss\s+',  # "I miss"
+            r'\bwe\s+miss\s+', # "we miss"
+            r'\byou\s+miss\s+', # "you miss" 
+            r'\bmiss\s+.+\s+(so\s+much|a\s+lot|terribly)',  # "miss X so much"
+            r'\breally\s+miss\s+',  # "really miss"
+            r'\bdefinitely\s+miss\s+',  # "definitely miss"
+        ]
+        
+        for pattern in positive_miss_patterns:
+            if re.search(pattern, text_lower):
+                # If we detect positive "miss", invert the negative sentiment
+                return abs(base_sentiment) if base_sentiment < 0 else base_sentiment
+    
+    # Handle "wait" in contexts like "worth the wait"
+    if "wait" in modifier_lower and ("worth" in text_lower or "value" in text_lower):
+        # "worth the wait" should be positive
+        return abs(base_sentiment) if base_sentiment < 0 else base_sentiment
+    
+    # Handle other context adjustments here as needed
+    
+    return base_sentiment
 
 def get_ProsusAI_sentiment(text: str) -> float:
     logger.info(f"Analyzing sentiment using ProsusAI for text: {text}")

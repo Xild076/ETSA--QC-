@@ -342,7 +342,6 @@ def initialize_session_state():
 
     hide_menu_style = """
     <style>
-    #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     </style>

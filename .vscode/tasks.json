@@ -2,41 +2,15 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "run unit tests",
+			"label": "pytest (quoted venv)",
 			"type": "shell",
-			"command": "pytest -q",
-			"args": [],
-			"isBackground": false,
-			"problemMatcher": [
-				"$pytest-stylish"
-			],
-			"group": "build"
-		},
-		{
-			"label": "run unit tests (venv)",
-			"type": "shell",
-			"command": "/Users/harry/Documents/Python_Projects/ETSA_(QC)/.venv/bin/python",
+			"command": "zsh",
 			"args": [
-				"-m",
-				"pytest",
-				"-q"
+				"-lc",
+				"\"${workspaceFolder}/.venv/bin/python\" -m pytest -q"
 			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$pytest"
-			],
-			"group": "build"
-		},
-		{
-			"label": "run unit tests (script)",
-			"type": "shell",
-			"command": "scripts/run_pytest.sh",
-			"args": [],
-			"isBackground": false,
-			"problemMatcher": [
-				"$pytest"
-			],
-			"group": "build"
+			"group": "build",
+			"problemMatcher": ["$python"]
 		},
 		{
 			"label": "run unit tests (script via zsh)",
@@ -45,26 +19,8 @@
 			"args": [
 				"scripts/run_pytest.sh"
 			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$pytest"
-			],
-			"group": "build"
-		},
-		{
-			"label": "pytest (venv)",
-			"type": "shell",
-			"command": "/Users/harry/Documents/Python_Projects/ETSA_(QC)/.venv/bin/python",
-			"args": [
-				"-m",
-				"pytest",
-				"-q"
-			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$pytest-python"
-			],
-			"group": "build"
+			"group": "build",
+			"problemMatcher": ["$python"]
 		}
 	]
 }

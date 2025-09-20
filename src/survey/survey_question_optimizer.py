@@ -8,7 +8,7 @@ import ast
 import numpy as np
 from scipy.optimize import curve_fit, minimize, least_squares
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, ttest_rel, wilcoxon, t as t_dist
 import re
 from rich import print
 from rich.table import Table
@@ -1020,6 +1020,670 @@ def _cv_evaluate(df_in: pd.DataFrame, fold_eval: Callable[[pd.DataFrame, pd.Data
         'fold_spearman': [float(x) if x is not None else None for x in sps],
     }
 
+def _fisher_z(r: float) -> float | None:
+    if r is None or not isinstance(r, (int, float)) or np.isnan(r) or r <= -1.0 or r >= 1.0:
+        if isinstance(r, (int, float)) and not np.isnan(r):
+            r = float(np.clip(r, -0.999999, 0.999999))
+        else:
+            return None
+    return float(np.arctanh(r))
+
+def _mean_std_ci(values: list[float]) -> dict:
+    arr = np.array([v for v in values if isinstance(v, (int, float)) and np.isfinite(v)], dtype=float)
+    n = len(arr)
+    if n == 0:
+        return {"mean": None, "std": 0.0, "ci_low": None, "ci_high": None, "n": 0}
+    mean = float(np.mean(arr))
+    std = float(np.std(arr, ddof=1)) if n > 1 else 0.0
+    if n > 1:
+        tcrit = float(t_dist.ppf(0.975, df=n-1))
+        half = tcrit * (std / np.sqrt(n)) if std > 0 else 0.0
+        return {"mean": mean, "std": std, "ci_low": mean - half, "ci_high": mean + half, "n": n}
+    return {"mean": mean, "std": std, "ci_low": mean, "ci_high": mean, "n": n}
+
+def _paired_stats(x: list[float], y: list[float]) -> dict:
+    a = np.array([v for v in x if isinstance(v, (int, float))])
+    b = np.array([v for v in y if isinstance(v, (int, float))])
+    n = min(len(a), len(b))
+    if n == 0:
+        return {"n": 0, "ttest_p": None, "wilcoxon_p": None, "cohens_d": None, "mean_diff": None}
+    a = a[:n]
+    b = b[:n]
+    diff = a - b
+    d_mean = float(np.mean(diff))
+    sd = float(np.std(diff, ddof=1)) if n > 1 else 0.0
+    d = (d_mean / sd) if sd > 0 else None
+    try:
+        t_p = float(ttest_rel(a, b, nan_policy='omit').pvalue)
+    except Exception:
+        t_p = None
+    try:
+        if np.allclose(diff, 0):
+            w_p = None
+        else:
+            w_p = float(wilcoxon(a, b, zero_method='wilcox', correction=False, alternative='two-sided').pvalue)
+    except Exception:
+        w_p = None
+    return {"n": n, "ttest_p": t_p, "wilcoxon_p": w_p, "cohens_d": d, "mean_diff": d_mean}
+
+def _to_01(x: np.ndarray) -> np.ndarray:
+    return np.clip((x + 1.0) / 2.0, 0.0, 1.0)
+
+def _ece_and_bins(y_true: np.ndarray, y_pred: np.ndarray, n_bins: int = 10) -> dict:
+    yt = _to_01(y_true.astype(float))
+    yp = _to_01(y_pred.astype(float))
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    inds = np.digitize(yp, bins) - 1
+    ece = 0.0
+    bin_summary = []
+    m = len(yp)
+    for b in range(n_bins):
+        sel = inds == b
+        if not np.any(sel):
+            bin_summary.append({"bin": b, "count": 0, "mean_pred": None, "mean_true": None})
+            continue
+        mean_pred = float(np.mean(yp[sel]))
+        mean_true = float(np.mean(yt[sel]))
+        weight = float(np.sum(sel)) / m
+        ece += weight * abs(mean_pred - mean_true)
+        bin_summary.append({"bin": b, "count": int(np.sum(sel)), "mean_pred": mean_pred, "mean_true": mean_true})
+    brier = float(np.mean((yt - yp) ** 2))
+    return {"ece": float(ece), "brier": brier, "bins": bin_summary}
+
+def _plot_calibration(y_true: np.ndarray, y_pred: np.ndarray, title: str, out_path: str, n_bins: int = 10) -> str | None:
+    try:
+        yt = _to_01(y_true.astype(float))
+        yp = _to_01(y_pred.astype(float))
+        bins = np.linspace(0.0, 1.0, n_bins + 1)
+        inds = np.digitize(yp, bins) - 1
+        xs, ys = [], []
+        for b in range(n_bins):
+            sel = inds == b
+            if not np.any(sel):
+                continue
+            xs.append(float(np.mean(yp[sel])))
+            ys.append(float(np.mean(yt[sel])))
+        plt.figure(figsize=(4, 4))
+        if xs:
+            plt.plot(xs, ys, marker='o', label='binned')
+        plt.plot([0, 1], [0, 1], '--', color='gray', label='ideal')
+        plt.xlabel('Predicted (mapped to [0,1])')
+        plt.ylabel('Observed (mapped to [0,1])')
+        plt.title(title)
+        plt.legend()
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(out_path)
+        plt.close()
+        return out_path
+    except Exception:
+        return None
+
+def _ensure_optimal_params_saved() -> None:
+    opt_path = "src/survey/optimal_formulas/all_optimal_parameters.json"
+    if not os.path.exists(opt_path):
+        all_results = test_all_parameterizations()
+        save_optimal_parameters(all_results)
+
+def _baseline_predict_row(category: str, row: pd.Series) -> float:
+    if category == 'actor':
+        return float(np.mean([row['s_init_actor'], row['s_init_action'] * row['s_init_target']]))
+    if category == 'target':
+        return float(np.mean([row['s_init_target'], row['s_init_action']]))
+    if category == 'association':
+        return float(np.mean([row['s_init_entity'], row['s_init_other']]))
+    if category == 'parent':
+        return float(np.mean([row['s_init_parent'], row['s_init_child']]))
+    if category == 'child':
+        return float(np.mean([row['s_init_child'], row['s_init_parent']]))
+    if category == 'aggregate':
+        s_inits = row['s_inits'] if isinstance(row['s_inits'], (list, tuple, np.ndarray)) else []
+        return float(np.mean(s_inits)) if len(s_inits) else 0.0
+    return np.nan
+
+def _candidate_predict_fn(category: str, score_key: str) -> Callable | None:
+    if category == 'actor':
+        return get_actor_function(score_key)
+    if category == 'target':
+        return get_target_function(score_key)
+    if category == 'association':
+        return get_association_function(score_key)
+    if category == 'parent':
+        return get_parent_function(score_key)
+    if category == 'child':
+        return get_child_function(score_key)
+    if category == 'aggregate':
+        return get_aggregate_function(score_key)
+    return None
+
+def _category_dataframe(category: str, score_key: str) -> tuple[pd.DataFrame, str, Callable[[pd.Series], float]]:
+    if category == 'actor' or category == 'target':
+        df_cat = create_action_df(score_key)
+    elif category == 'association':
+        df_cat = create_association_df(score_key)
+    elif category == 'parent' or category == 'child':
+        df_cat = create_belonging_df(score_key)
+    elif category == 'aggregate':
+        df_cat = create_aggregate_df(score_key)
+    else:
+        return pd.DataFrame(), '', lambda r: np.nan
+    if category == 'actor':
+        y_col = 's_user_actor'
+        def pred_row_fn_cand(r, f):
+            return f(r['s_init_actor'], r['s_init_action'], r['s_init_target']) if f else np.nan
+    elif category == 'target':
+        y_col = 's_user_target'
+        def pred_row_fn_cand(r, f):
+            return f(r['s_init_target'], r['s_init_action']) if f else np.nan
+    elif category == 'association':
+        y_col = 's_user_entity'
+        def pred_row_fn_cand(r, f):
+            return f(r['s_init_entity'], r['s_init_other']) if f else np.nan
+    elif category == 'parent':
+        y_col = 's_user_parent'
+        def pred_row_fn_cand(r, f):
+            return f(r['s_init_parent'], r['s_init_child']) if f else np.nan
+    elif category == 'child':
+        y_col = 's_user_child'
+        def pred_row_fn_cand(r, f):
+            return f(r['s_init_child'], r['s_init_parent']) if f else np.nan
+    else:  # aggregate
+        y_col = 's_user'
+        def pred_row_fn_cand(r, f):
+            return f(r['s_inits']) if f else np.nan
+    return df_cat, y_col, pred_row_fn_cand
+
+def evaluate_category_per_participant(category: str, score_key: str, n_bins_calib: int = 10, out_dir: str = "outputs/benchmark") -> dict:
+    _ensure_optimal_params_saved()
+    df_cat, y_col, pred_row_fn_cand = _category_dataframe(category, score_key)
+    if df_cat.empty:
+        return {"category": category, "score_key": score_key, "per_participant": [], "aggregate": {}, "calibration": {}}
+    cand_fn = _candidate_predict_fn(category, score_key)
+    preds_c, preds_b, y = [], [], []
+    seeds = []
+    per_seed = {}
+    for seed, g in df_cat.groupby('seed'):
+        y_true = pd.to_numeric(g[y_col], errors='coerce').to_numpy(dtype=float)
+        y_pred_c = np.array([pred_row_fn_cand(r, cand_fn) for _, r in g.iterrows()], dtype=float)
+        y_pred_b = np.array([_baseline_predict_row(category, r) for _, r in g.iterrows()], dtype=float)
+        mask = ~np.isnan(y_true)
+        y_true = y_true[mask]
+        y_pred_c = y_pred_c[mask]
+        y_pred_b = y_pred_b[mask]
+        if len(y_true) == 0:
+            continue
+        m_c = _compute_metrics(y_true, y_pred_c)
+        m_b = _compute_metrics(y_true, y_pred_b)
+        rho_c = m_c['spearman']
+        rho_b = m_b['spearman']
+        z_c = _fisher_z(rho_c)
+        z_b = _fisher_z(rho_b)
+        rec = {
+            "seed": seed,
+            "n": int(len(y_true)),
+            "mse_c": m_c['mse'], "mae_c": m_c['mae'], "r2_c": m_c['r2'], "rho_c": rho_c, "z_c": z_c,
+            "mse_b": m_b['mse'], "mae_b": m_b['mae'], "r2_b": m_b['r2'], "rho_b": rho_b, "z_b": z_b,
+        }
+        per_seed[seed] = rec
+        preds_c.append(y_pred_c)
+        preds_b.append(y_pred_b)
+        y.append(y_true)
+        seeds.append(seed)
+    per_list = list(per_seed.values())
+    mse_c_list = [r['mse_c'] for r in per_list if isinstance(r['mse_c'], (int, float)) and np.isfinite(r['mse_c'])]
+    mse_b_list = [r['mse_b'] for r in per_list if isinstance(r['mse_b'], (int, float)) and np.isfinite(r['mse_b'])]
+    mae_c_list = [r['mae_c'] for r in per_list if isinstance(r['mae_c'], (int, float)) and np.isfinite(r['mae_c'])]
+    mae_b_list = [r['mae_b'] for r in per_list if isinstance(r['mae_b'], (int, float)) and np.isfinite(r['mae_b'])]
+    rho_c_list = [r['rho_c'] for r in per_list if r['rho_c'] is not None]
+    rho_b_list = [r['rho_b'] for r in per_list if r['rho_b'] is not None]
+    z_c_list = [r['z_c'] for r in per_list if r['z_c'] is not None]
+    z_b_list = [r['z_b'] for r in per_list if r['z_b'] is not None]
+
+    agg = {
+        "mse_c": _mean_std_ci(mse_c_list),
+        "mse_b": _mean_std_ci(mse_b_list),
+        "mae_c": _mean_std_ci(mae_c_list),
+        "mae_b": _mean_std_ci(mae_b_list),
+        "rho_c": _mean_std_ci(rho_c_list),
+        "rho_b": _mean_std_ci(rho_b_list),
+        "z_c": _mean_std_ci(z_c_list),
+        "z_b": _mean_std_ci(z_b_list),
+        "paired_mse": _paired_stats(mse_c_list, mse_b_list),
+        "paired_z": _paired_stats(z_c_list, z_b_list),
+        "n_participants": len(per_list),
+    }
+
+    if len(y) > 0:
+        y_all = np.concatenate(y)
+        yp_all_c = np.concatenate(preds_c)
+        yp_all_b = np.concatenate(preds_b)
+        calib_c = _ece_and_bins(y_all, yp_all_c)
+        calib_b = _ece_and_bins(y_all, yp_all_b)
+        ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        out_base = os.path.join(out_dir, "calibration")
+        os.makedirs(out_base, exist_ok=True)
+        p1 = _plot_calibration(y_all, yp_all_c, f"Calibration {category} cand ({score_key})", os.path.join(out_base, f"calib_{category}_{score_key}_cand_{ts}.png"))
+        p2 = _plot_calibration(y_all, yp_all_b, f"Calibration {category} base ({score_key})", os.path.join(out_base, f"calib_{category}_{score_key}_base_{ts}.png"))
+        calibration = {"candidate": calib_c, "baseline": calib_b, "plots": {"candidate": p1, "baseline": p2}}
+    else:
+        calibration = {}
+
+    return {"category": category, "score_key": score_key, "per_participant": per_list, "aggregate": agg, "calibration": calibration}
+
+def evaluate_all_per_participant(score_keys: list[str] | None = None, categories: list[str] | None = None, out_dir: str = "outputs/benchmark") -> dict:
+    if score_keys is None:
+        score_keys = ['user_sentiment_score', 'user_sentiment_score_mapped', 'user_normalized_sentiment_scores']
+    if categories is None:
+        categories = ['actor', 'target', 'association', 'parent', 'child', 'aggregate']
+    out = {}
+    for sk in score_keys:
+        out[sk] = {}
+        for cat in categories:
+            out[sk][cat] = evaluate_category_per_participant(cat, sk, out_dir=out_dir)
+    return out
+
+def robustness_summary() -> dict:
+    _ensure_optimal_params_saved()
+    confs = load_optimal_parameters()
+    by_cat: dict[str, dict[str, str]] = {}
+    for (cat, sk), entry in confs.items():
+        by_cat.setdefault(cat, {})[sk] = entry.get('model')
+    stability = {}
+    for cat, m in by_cat.items():
+        unique = set(m.values())
+        stability[cat] = {"unique_models": len(unique), "models": m}
+    return {"by_category": by_cat, "stability": stability}
+
+
+
+def _fmt_num(x) -> str:
+    try:
+        xf = float(x)
+        s = f"{xf:.4g}"
+        if s.startswith('.'): s = '0' + s
+        if s.startswith('-.'): s = s.replace('-.', '-0.')
+        return s
+    except Exception:
+        return str(x)
+
+def _format_actor(model: str, params: list[float]) -> tuple[str, str]:
+    if model == 'actor_formula_v1':
+        la, w, b = params
+        eq = "y = tanh(λ_a·s_actor + (1−λ_a)·w·(s_action·s_target) + b)"
+        vals = f"λ_a={_fmt_num(la)}, w={_fmt_num(w)}, b={_fmt_num(b)}"
+    elif model == 'actor_formula_v2':
+        w_actor, w_driver, b = params
+        eq = "y = tanh(w_actor·s_actor + w_driver·(s_action·s_target) + b)"
+        vals = f"w_actor={_fmt_num(w_actor)}, w_driver={_fmt_num(w_driver)}, b={_fmt_num(b)}"
+    elif model == 'null_identity':
+        eq, vals = "y = s_actor", "(null identity)"
+    elif model == 'null_avg':
+        eq, vals = "y = (s_actor + s_action + s_target)/3", "(null avg)"
+    elif model == 'null_linear':
+        w1, w2, b = params
+        eq = "y = w1·s_actor + w2·(s_action·s_target) + b"
+        vals = f"w1={_fmt_num(w1)}, w2={_fmt_num(w2)}, b={_fmt_num(b)}"
+    else:
+        eq, vals = model, ''
+    return eq, vals
+
+def _format_target(model: str, params: list[float]) -> tuple[str, str]:
+    if model == 'target_formula_v1':
+        lt, w, b = params
+        eq = "y = tanh(λ_t·s_target + (1−λ_t)·w·s_action + b)"
+        vals = f"λ_t={_fmt_num(lt)}, w={_fmt_num(w)}, b={_fmt_num(b)}"
+    elif model == 'target_formula_v2':
+        wt, wa, b = params
+        eq = "y = tanh(w_target·s_target + w_action·s_action + b)"
+        vals = f"w_target={_fmt_num(wt)}, w_action={_fmt_num(wa)}, b={_fmt_num(b)}"
+    elif model == 'null_identity':
+        eq, vals = "y = s_target", "(null identity)"
+    elif model == 'null_avg':
+        eq, vals = "y = (s_target + s_action)/2", "(null avg)"
+    elif model == 'null_linear':
+        w1, w2, b = params
+        eq = "y = w1·s_target + w2·s_action + b"
+        vals = f"w1={_fmt_num(w1)}, w2={_fmt_num(w2)}, b={_fmt_num(b)}"
+    else:
+        eq, vals = model, ''
+    return eq, vals
+
+def _format_assoc(model: str, params: list[float]) -> tuple[str, str]:
+    if model == 'assoc_formula_v1':
+        lmb, w, b = params
+        eq = "y = tanh(λ·s_entity + (1−λ)·w·s_other + b)"
+        vals = f"λ={_fmt_num(lmb)}, w={_fmt_num(w)}, b={_fmt_num(b)}"
+    elif model == 'assoc_formula_v2':
+        we, wo, b = params
+        eq = "y = tanh(w_entity·s_entity + w_other·s_other + b)"
+        vals = f"w_entity={_fmt_num(we)}, w_other={_fmt_num(wo)}, b={_fmt_num(b)}"
+    elif model == 'null_identity':
+        eq, vals = "y = s_entity", "(null identity)"
+    elif model == 'null_avg':
+        eq, vals = "y = (s_entity + s_other)/2", "(null avg)"
+    elif model == 'null_linear':
+        w1, w2, b = params
+        eq = "y = w1·s_entity + w2·s_other + b"
+        vals = f"w1={_fmt_num(w1)}, w2={_fmt_num(w2)}, b={_fmt_num(b)}"
+    else:
+        eq, vals = model, ''
+    return eq, vals
+
+def _format_belong(model: str, params: list[float], parent_side: bool) -> tuple[str, str]:
+    a, btxt = ("s_parent", "s_child") if parent_side else ("s_child", "s_parent")
+    if model == 'belong_formula_v1':
+        lmb, w, b = params
+        eq = f"y = tanh(λ·{a} + (1−λ)·w·{btxt} + b)"
+        vals = f"λ={_fmt_num(lmb)}, w={_fmt_num(w)}, b={_fmt_num(b)}"
+    elif model == 'belong_formula_v2':
+        w1, w2, b = params
+        eq = f"y = tanh(w1·{a} + w2·{btxt} + b)"
+        vals = f"w1={_fmt_num(w1)}, w2={_fmt_num(w2)}, b={_fmt_num(b)}"
+    elif model == 'null_identity':
+        eq, vals = f"y = {a}", "(null identity)"
+    elif model == 'null_avg':
+        eq, vals = f"y = ({a} + {btxt})/2", "(null avg)"
+    elif model == 'null_linear':
+        w1, w2, b = params
+        eq = f"y = w1·{a} + w2·{btxt} + b"
+        vals = f"w1={_fmt_num(w1)}, w2={_fmt_num(w2)}, b={_fmt_num(b)}"
+    else:
+        eq, vals = model, ''
+    return eq, vals
+
+def _format_aggregate(model: str, params: list[float]) -> list[str]:
+    lines = []
+    if model == 'aggregate_error_mse' or model == 'aggregate_error_softl1' or model == 'aggregate_normal':
+        if len(params) >= 2:
+            alpha, beta = params[:2]
+            lines.append("y = Σ_i w_i·s_i, where w_i ∝ i^(α−1)·(N−i+1)^(β−1) normalized")
+            lines.append(f"α={_fmt_num(alpha)}, β={_fmt_num(beta)}")
+        else:
+            lines.append("y = Σ_i w_i·s_i (Beta weights)")
+    elif 'dynamic' in model:
+        if len(params) >= 4:
+            m_a, c_a, m_b, c_b = params[:4]
+            lines.append("y = Σ_i w_i·s_i, w_i from Beta(α,β) with α=m_a·N+c_a, β=m_b·N+c_b")
+            lines.append(f"m_a={_fmt_num(m_a)}, c_a={_fmt_num(c_a)}, m_b={_fmt_num(m_b)}, c_b={_fmt_num(c_b)}")
+        else:
+            lines.append("y = Σ_i w_i·s_i (dynamic α,β)")
+    elif 'logistic' in model:
+        if len(params) >= 8:
+            L_a, k_a, N0_a, b_a, L_b, k_b, N0_b, b_b = params[:8]
+            lines.append("y = Σ_i w_i·s_i, with α=b_a+L_a/(1+e^{−k_a(N−N0_a)}), β=b_b+L_b/(1+e^{−k_b(N−N0_b)})")
+            lines.append(f"L_a={_fmt_num(L_a)}, k_a={_fmt_num(k_a)}, N0_a={_fmt_num(N0_a)}, b_a={_fmt_num(b_a)}")
+            lines.append(f"L_b={_fmt_num(L_b)}, k_b={_fmt_num(k_b)}, N0_b={_fmt_num(N0_b)}, b_b={_fmt_num(b_b)}")
+        else:
+            lines.append("y = Σ_i w_i·s_i (logistic α,β)")
+    elif model == 'aggregate_null_average':
+        lines.append("y = mean(s_i)")
+    else:
+        lines.append(model)
+    return lines
+
+def _simplify_linear(terms: list[tuple[float, str]], bias: float | None, drop_thresh: float = 1e-6) -> str:
+    parts = []
+    for c, name in terms:
+        if not isinstance(c, (int, float)) or np.isnan(c) or abs(c) < drop_thresh:
+            continue
+        sign = '+' if c >= 0 else '-'
+        coef = abs(c)
+        parts.append(f" {sign} {_fmt_num(coef)}·{name}")
+    s = ''.join(parts).lstrip()
+    if not s:
+        s = '0'
+    if isinstance(bias, (int, float)) and not np.isnan(bias) and abs(bias) >= drop_thresh:
+        sign = '+' if bias >= 0 else '-'
+        s += f" {sign} {_fmt_num(abs(bias))}"
+    return s
+
+def _numeric_eq(cat: str, model: str, params: list[float]) -> list[str]:
+    lines: list[str] = []
+    try:
+        if cat == 'actor':
+            if model == 'actor_formula_v1' and len(params) >= 3:
+                la, w, b = params[:3]
+                c_actor = la
+                c_driver = (1 - la) * w
+                inner = _simplify_linear([(c_actor, 's_actor'), (c_driver, '(s_action·s_target)')], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'actor_formula_v2' and len(params) >= 3:
+                w_actor, w_driver, b = params[:3]
+                inner = _simplify_linear([(w_actor, 's_actor'), (w_driver, '(s_action·s_target)')], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'null_identity':
+                lines.append("y = s_actor")
+            elif model == 'null_avg':
+                lines.append("y = (s_actor + s_action + s_target)/3")
+            elif model == 'null_linear' and len(params) >= 3:
+                w1, w2, b = params[:3]
+                inner = _simplify_linear([(w1, 's_actor'), (w2, '(s_action·s_target)')], b)
+                lines.append(f"y = {inner}")
+        elif cat == 'target':
+            if model == 'target_formula_v1' and len(params) >= 3:
+                lt, w, b = params[:3]
+                inner = _simplify_linear([(lt, 's_target'), ((1 - lt) * w, 's_action')], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'target_formula_v2' and len(params) >= 3:
+                wt, wa, b = params[:3]
+                inner = _simplify_linear([(wt, 's_target'), (wa, 's_action')], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'null_identity':
+                lines.append("y = s_target")
+            elif model == 'null_avg':
+                lines.append("y = (s_target + s_action)/2")
+            elif model == 'null_linear' and len(params) >= 3:
+                w1, w2, b = params[:3]
+                inner = _simplify_linear([(w1, 's_target'), (w2, 's_action')], b)
+                lines.append(f"y = {inner}")
+        elif cat == 'association':
+            if model == 'assoc_formula_v1' and len(params) >= 3:
+                lmb, w, b = params[:3]
+                inner = _simplify_linear([(lmb, 's_entity'), ((1 - lmb) * w, 's_other')], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'assoc_formula_v2' and len(params) >= 3:
+                we, wo, b = params[:3]
+                inner = _simplify_linear([(we, 's_entity'), (wo, 's_other')], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'null_identity':
+                lines.append("y = s_entity")
+            elif model == 'null_avg':
+                lines.append("y = (s_entity + s_other)/2")
+            elif model == 'null_linear' and len(params) >= 3:
+                w1, w2, b = params[:3]
+                inner = _simplify_linear([(w1, 's_entity'), (w2, 's_other')], b)
+                lines.append(f"y = {inner}")
+        elif cat in ('parent','child'):
+            a, bname = ("s_parent","s_child") if cat == 'parent' else ("s_child","s_parent")
+            if model == 'belong_formula_v1' and len(params) >= 3:
+                lmb, w, b = params[:3]
+                inner = _simplify_linear([(lmb, a), ((1 - lmb) * w, bname)], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'belong_formula_v2' and len(params) >= 3:
+                w1, w2, b = params[:3]
+                inner = _simplify_linear([(w1, a), (w2, bname)], b)
+                lines.append(f"y = tanh({inner})")
+            elif model == 'null_identity':
+                lines.append(f"y = {a}")
+            elif model == 'null_avg':
+                lines.append(f"y = ({a} + {bname})/2")
+            elif model == 'null_linear' and len(params) >= 3:
+                w1, w2, b = params[:3]
+                inner = _simplify_linear([(w1, a), (w2, bname)], b)
+                lines.append(f"y = {inner}")
+        elif cat == 'aggregate':
+            pass
+    except Exception:
+        return []
+    return lines
+
+def _render_piecewise(split: str, parts: dict[str, list[float]], build_eq: Callable[[list[float]], tuple[str, str]], conditions: dict[str, str]) -> list[str]:
+    lines = [f"Split: {split}", "Piecewise:"]
+    order = ['pos_driver_params','neg_driver_params','pos_pos_params','pos_neg_params','neg_pos_params','neg_neg_params','pos_action_params','neg_action_params','pos_params','neg_params']
+    for key in order:
+        if key not in parts:
+            continue
+        params = parts[key]
+        eq, vals = build_eq(params)
+        cond = conditions.get(key, key)
+        lines.append(f"  if {cond}: {eq}")
+        if vals:
+            lines.append(f"    with {vals}")
+    return lines
+
+def print_optimal_formulas_math(score_keys: list[str] | None = None) -> dict:
+    _ensure_optimal_params_saved()
+    opt = load_optimal_parameters()
+    if not opt:
+        print("[red]No optimal parameters found.[/red]")
+        return {}
+    console = Console()
+    categories = ['actor','target','association','parent','child','aggregate']
+    if score_keys is None:
+        score_keys = ['user_sentiment_score','user_sentiment_score_mapped','user_normalized_sentiment_scores']
+    rendered: dict = {}
+    for cat in categories:
+        for sk in score_keys:
+            entry = opt.get((cat, sk))
+            if not entry:
+                continue
+            model = entry.get('model')
+            split = entry.get('split', 'none')
+            console.rule(f"{cat} — {sk} — {model} ({split})")
+            params_by_key = entry.get('params_by_key', {}) or {}
+            lines: list[str] = []
+            if cat == 'aggregate':
+                params = params_by_key.get('params') or []
+                lines.extend(_format_aggregate(model, params))
+            else:
+                def _as_list(v):
+                    if isinstance(v, dict) and 'params' in v: v = v['params']
+                    return list(v) if isinstance(v, (list, tuple, np.ndarray)) else []
+                flat = {k: _as_list(v) for k, v in params_by_key.items()}
+                if cat == 'actor':
+                    def build(p): return _format_actor(model, p)
+                    conds = {
+                        'pos_driver_params': 'driver > 0',
+                        'neg_driver_params': 'driver ≤ 0',
+                        'pos_pos_params': 's_action > 0 ∧ s_target > 0',
+                        'pos_neg_params': 's_action > 0 ∧ s_target ≤ 0',
+                        'neg_pos_params': 's_action ≤ 0 ∧ s_target > 0',
+                        'neg_neg_params': 's_action ≤ 0 ∧ s_target ≤ 0',
+                        'params': 'no split',
+                    }
+                elif cat == 'target':
+                    def build(p): return _format_target(model, p)
+                    conds = {'pos_action_params': 's_action > 0', 'neg_action_params': 's_action ≤ 0', 'params': 'no split'}
+                elif cat == 'association':
+                    def build(p): return _format_assoc(model, p)
+                    conds = {
+                        'pos_params': 's_other > 0', 'neg_params': 's_other ≤ 0',
+                        'pos_pos_params': 's_entity > 0 ∧ s_other > 0',
+                        'pos_neg_params': 's_entity > 0 ∧ s_other ≤ 0',
+                        'neg_pos_params': 's_entity ≤ 0 ∧ s_other > 0',
+                        'neg_neg_params': 's_entity ≤ 0 ∧ s_other ≤ 0',
+                        'params': 'no split',
+                    }
+                elif cat == 'parent':
+                    def build(p): return _format_belong(model, p, parent_side=True)
+                    conds = {
+                        'pos_params': 's_child > 0', 'neg_params': 's_child ≤ 0',
+                        'pos_pos_params': 's_parent > 0 ∧ s_child > 0',
+                        'pos_neg_params': 's_parent > 0 ∧ s_child ≤ 0',
+                        'neg_pos_params': 's_parent ≤ 0 ∧ s_child > 0',
+                        'neg_neg_params': 's_parent ≤ 0 ∧ s_child ≤ 0',
+                        'params': 'no split',
+                    }
+                else:
+                    def build(p): return _format_belong(model, p, parent_side=False)
+                    conds = {
+                        'pos_params': 's_parent > 0', 'neg_params': 's_parent ≤ 0',
+                        'pos_pos_params': 's_child > 0 ∧ s_parent > 0',
+                        'pos_neg_params': 's_child > 0 ∧ s_parent ≤ 0',
+                        'neg_pos_params': 's_child ≤ 0 ∧ s_parent > 0',
+                        'neg_neg_params': 's_child ≤ 0 ∧ s_parent ≤ 0',
+                        'params': 'no split',
+                    }
+                if split == 'none' or ('params' in flat and len(flat) == 1):
+                    plist = flat.get('params') or []
+                    eq, vals = build(plist)
+                    lines.append(eq)
+                    if vals: lines.append(f"with {vals}")
+                    num = _numeric_eq(cat, model, plist)
+                    lines.extend(num)
+                else:
+                    lines.extend(_render_piecewise(split, flat, build, conds))
+                    order = ['pos_driver_params','neg_driver_params','pos_pos_params','pos_neg_params','neg_pos_params','neg_neg_params','pos_action_params','neg_action_params','pos_params','neg_params']
+                    for key in order:
+                        if key in flat:
+                            num = _numeric_eq(cat, model, flat[key])
+                            for ln in num:
+                                lines.append(f"  {ln}")
+            for ln in lines:
+                console.print(ln)
+            rendered[(cat, sk)] = {"model": model, "split": split, "lines": lines}
+    return rendered
+
+def _aggregate_weights(model: str, params: list[float], N: int) -> np.ndarray:
+    N = int(max(1, N))
+    if model == 'aggregate_null_average':
+        w = np.ones(N)
+    elif 'dynamic' in model and len(params) >= 4:
+        m_a, c_a, m_b, c_b = params[:4]
+        alpha = m_a * N + c_a
+        beta = m_b * N + c_b
+        w = calculate_weights(N, alpha, beta)
+        return w
+    elif 'logistic' in model and len(params) >= 8:
+        L_a, k_a, N0_a, b_a, L_b, k_b, N0_b, b_b = params[:8]
+        alpha = logistic_function(N, L_a, k_a, N0_a, b_a)
+        beta = logistic_function(N, L_b, k_b, N0_b, b_b)
+        w = calculate_weights(N, alpha, beta)
+        return w
+    else:
+        if len(params) >= 2:
+            alpha, beta = params[:2]
+            w = calculate_weights(N, alpha, beta)
+        else:
+            w = np.ones(N)
+    return w / np.sum(w)
+
+def show_aggregate_weight_slider(score_keys: list[str] | None = None, maxN: int = 12) -> None:
+    _ensure_optimal_params_saved()
+    if score_keys is None:
+        score_keys = ['user_sentiment_score','user_sentiment_score_mapped','user_normalized_sentiment_scores']
+    opt = load_optimal_parameters()
+    for sk in score_keys:
+        entry = opt.get(('aggregate', sk))
+        if not entry:
+            continue
+        model = entry.get('model')
+        params = (entry.get('params_by_key', {}) or {}).get('params') or []
+        N0 = 6
+        w = _aggregate_weights(model, params, N0)
+        fig, ax = plt.subplots(figsize=(6, 4))
+        plt.subplots_adjust(bottom=0.25)
+        bars = ax.bar(np.arange(1, len(w)+1), w)
+        ax.set_ylim(0, max(0.01, max(w)*1.2))
+        ax.set_xlabel('i (position)')
+        ax.set_ylabel('weight w_i')
+        ax.set_title(f'Aggregate weights — {sk} — {model}')
+        axN = plt.axes([0.15, 0.1, 0.7, 0.03])
+        sN = Slider(axN, 'N', 2, maxN, valinit=N0, valstep=1)
+        def update(val):
+            Nv = int(sN.val)
+            wv = _aggregate_weights(model, params, Nv)
+            ax.clear()
+            ax.bar(np.arange(1, Nv+1), wv)
+            ax.set_ylim(0, max(0.01, max(wv)*1.2))
+            ax.set_xlabel('i (position)')
+            ax.set_ylabel('weight w_i')
+            ax.set_title(f'Aggregate weights — {sk} — {model} — N={Nv}')
+            fig.canvas.draw_idle()
+        sN.on_changed(update)
+        ax.set_title(f'Aggregate weights — {sk} — {model} — N={N0}')
+        plt.show()
+
 
 def test_actor_parameters(score_key: str = 'user_sentiment_score_mapped') -> dict:
     logger.info("test_actor_parameters")
@@ -1887,5 +2551,9 @@ def print_ranked_summary(all_results: dict) -> None:
 
 
 if __name__ == '__main__':
-    results = test_all_parameterizations()
-    print_ranked_summary(results)
+
+    print_optimal_formulas_math()
+    try:
+        show_aggregate_weight_slider()
+    except Exception as e:
+        print(f"[yellow]Could not show aggregate weight slider: {e}[/yellow]")

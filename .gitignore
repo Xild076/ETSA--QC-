@@ -14,3 +14,4 @@ data/dataset.csv
 /.pytest_cache
 integrated_graph.html
 pytest.ini
+/outputs
