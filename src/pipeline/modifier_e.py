@@ -1,23 +1,71 @@
-import os
 import json
 import re
-from typing import Dict, Any, List
+import time
+import os
+import random
+from typing import Dict, Any, List, Optional
 from functools import lru_cache
-from .re_e import GemmaRelationExtractor, _RateLimiter, _GLOBAL_GENAI_LIMITER
 import logging
-if not logging.getLogger().handlers:
-    logging.basicConfig(level=logging.WARNING)
 
 try:
     import spacy
 except Exception:
     spacy = None
 
+try:
+    import google.generativeai as genai
+except Exception:
+    genai = None
+
+from src.utility import get_env
+
+logger = logging.getLogger(__name__)
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.WARNING)
+
+
+class _RateLimiter:
+    def __init__(self, max_calls: int = 20, period_seconds: int = 60):
+        self.max_calls = max_calls
+        self.period_seconds = period_seconds
+        self.timestamps: List[float] = []
+
+    def acquire(self) -> None:
+        now = time.time()
+        self.timestamps = [t for t in self.timestamps if now - t < self.period_seconds]
+        if len(self.timestamps) >= self.max_calls:
+            sleep_time = self.period_seconds - (now - self.timestamps[0])
+            if sleep_time > 0:
+                time.sleep(sleep_time + min(0.25, random.random() * 0.25))
+        self.timestamps.append(time.time())
+
+
+_GLOBAL_MODIFIER_LIMITER: Optional[_RateLimiter] = None
+
+
+def _ensure_modifier_rate_limiter(max_calls: int = 20, period_seconds: int = 60) -> _RateLimiter:
+    global _GLOBAL_MODIFIER_LIMITER
+    if (
+        _GLOBAL_MODIFIER_LIMITER is None
+        or _GLOBAL_MODIFIER_LIMITER.max_calls != max_calls
+        or _GLOBAL_MODIFIER_LIMITER.period_seconds != period_seconds
+    ):
+        _GLOBAL_MODIFIER_LIMITER = _RateLimiter(max_calls=max_calls, period_seconds=period_seconds)
+    return _GLOBAL_MODIFIER_LIMITER
+
+class ModifierExtractor:
+    def extract(self, text: str, entity: str) -> Dict[str, Any]:
+        raise NotImplementedError
+
+class DummyModifierExtractor(ModifierExtractor):
+    def extract(self, text: str, entity: str) -> Dict[str, Any]:
+        return {"entity": entity, "modifiers": [], "approach_used": "dummy", "justification": "empty"}
+
 @lru_cache(maxsize=1)
 def _get_spacy_nlp():
     if not spacy:
         return None
-    for name in ("en_core_web_sm", "en_core_web_lg"):
+    for name in ("en_core_web_sm", "en_core_web_md", "en_core_web_lg"):
         try:
             return spacy.load(name)
         except Exception:
@@ -27,419 +75,229 @@ def _get_spacy_nlp():
     except Exception:
         return None
 
-class ModifierExtractor:
-    def extract(self, text: str, entity: str) -> Dict[str, Any]:
-        raise NotImplementedError("This method should be overridden by subclasses.")
-
-class DummyModifierExtractor(ModifierExtractor):
-    def extract(self, text: str, entity: str) -> Dict[str, Any]:
-        return {
-            "entity": entity,
-            "modifiers": [],
-            "justification": "Dummy extractor: no modifiers extracted.",
-            "approach_used": "dummy_extractor"
-        }
+def _parse_json_payload(txt: str) -> Optional[Dict[str, Any]]:
+    if not txt:
+        return None
+    m = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", txt)
+    s = m.group(1) if m else None
+    if not s:
+        m2 = re.search(r"\{[\s\S]*\}", txt)
+        s = m2.group(0) if m2 else None
+    if not s:
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        try:
+            s2 = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", s)
+            return json.loads(s2)
+        except Exception:
+            return None
 
 class GemmaModifierExtractor(ModifierExtractor):
-    def __init__(self, api_key: str = None, rate_limiter: _RateLimiter = None):
-        self._gemma_handler = GemmaRelationExtractor(api_key, rate_limiter)
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "gemma-3-27b-it",
+        temperature: float = 0.0,
+        top_p: float = 0.95,
+        top_k: int = 40,
+        max_output_tokens: int = 768,
+        backoff: float = 0.8,
+        retries: int = 2,
+        rate_limiter: Optional[_RateLimiter] = None,
+    ):
+        self.model = model
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
+        self.max_output_tokens = max_output_tokens
+        self.backoff = backoff
+        self.retries = retries
+        self.rate_limiter = rate_limiter or _ensure_modifier_rate_limiter()
+        if genai is None:
+            raise RuntimeError("google-generativeai not available")
+        key = api_key or get_env("GOOGLE_API_KEY") or get_env("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not key:
+            raise RuntimeError("No API key provided for GemmaModifierExtractor")
+        genai.configure(api_key=key)
 
-    def _create_prompt(self, sentence: str, entity: str) -> str:
-        return f"""You are a precise information extraction engine. First, analyze the sentence structure and identify the target entity.
+    def _prompt(self, passage: str, entity: str) -> str:
+        return (
+            "<<SYS>>\n"
+            "Extract ALL modifiers that affect the sentiment or perception of the entity. Include:\n"
+            "1. Quality-describing adjectives (good/bad/fast/slow)\n"
+            "2. Action-based modifiers showing capability/performance (\"would not fix\", \"failed to\", \"successfully completed\")\n" 
+            "3. Behavioral descriptors (\"was helpful\", \"refused to\", \"managed to\")\n"
+            "4. Performance indicators through actions (\"broke down\", \"works perfectly\", \"struggles with\")\n"
+            "5. Negation patterns that affect entity perception (\"did not work\", \"would not\", \"cannot\")\n"
+            "The modifier must be grammatically connected to the entity and convey evaluative meaning.\n"
+            "EXCLUDE: entity names themselves, pronouns, articles, pure facts without evaluative meaning, numbers, locations, temporal references.\n"
+            "Use exact text from passage or reconstruct meaningful phrases. Return strict JSON.\n"
+            "<</SYS>>\n\n"
+            f"<<PASSAGE>>\n{passage}\n<</PASSAGE>>\n\n"
+            f"<<ENTITY>>\n{entity}\n<</ENTITY>>\n\n"
+            "<<SCHEMA>>\n"
+            "{\n"
+            '  "entity": string,\n'
+            '  "justification": string,\n'
+            '  "modifiers": [string],\n'
+            f'  "approach_used": "{self.model}",\n'
+            "}\n"
+            "<</SCHEMA>>\n\n"
+            "<<EXAMPLES>>\n"
+            "P: The performance is excellent. E: performance -> modifiers: [\"excellent\"]\n"
+            "P: Boot time is super fast, around 35 seconds. E: Boot time -> modifiers: [\"super fast\"]\n"
+            "P: I did not enjoy the new Windows 8 functions. E: Windows 8 -> modifiers: [\"did not enjoy\"]\n"
+            "P: The tech support was unhelpful. E: tech support -> modifiers: [\"unhelpful\"]\n"
+            "P: tech support would not fix the problem. E: tech support -> modifiers: [\"would not fix the problem\"]\n"
+            "P: The screen failed to turn on properly. E: screen -> modifiers: [\"failed to turn on properly\"]\n"
+            "P: Battery life cannot last more than 2 hours. E: Battery life -> modifiers: [\"cannot last more than 2 hours\"]\n"
+            "P: Amazing performance for anything I throw at it. E: performance -> modifiers: [\"Amazing\"]\n"
+            "P: The receiver was full of superlatives for quality. E: quality -> modifiers: []\n"
+            "P: I bought a computer yesterday. E: computer -> modifiers: []\n"
+            "<</EXAMPLES>>\n\n"
+            "<<RESPONSE>>\n"
+            "```json\n"
+            "{\n"
+            f'  "entity": "{entity}",\n'
+            f'  "justification": "explain how and why you chose the modifiers for {entity}",\n'
+            '  "modifiers": [],\n'
+            f'  "approach_used": "{self.model}",\n'
+            "}\n"
+            "```\n"
+        )
 
-Text: "{sentence}"
-Entity: "{entity}"
-
-Step 1: Locate the entity in the text and understand its role.
-Step 2: Identify all adjectival and adverbial modifiers that directly describe this entity's QUALITIES.
-Step 3: EXCLUDE factual context, parenthetical information, and location references.
-Step 4: Include negation only when it directly negates a quality (not when it's factual info).
-Step 5: Extract modifiers as exact text spans - do not paraphrase.
-
-CRITICAL RULES:
-- Parenthetical information like "(not on menu)" = EXCLUDE (factual context)
-- "Try X" commands = EXCLUDE any negation modifiers (recommendation context)
-- "not the best" = include as quality modifier for the actual entity being rated
-- Location/availability info = EXCLUDE (e.g., "in New York", "on menu")
-- Only include quality-describing words that affect sentiment
-
-Examples:
-1. "The staff should be more friendly" with entity "staff"
-   → modifiers: ["should be more", "friendly"]
-
-2. "BEST spicy tuna roll" with entity "roll"  
-   → modifiers: ["BEST", "spicy", "tuna"]
-
-3. "The ambiance was not welcoming" with entity "ambiance"
-   → modifiers: ["not welcoming"]
-
-4. "Try the rose roll (not on menu)" with entity "rose roll"
-   → modifiers: [] (parenthetical is factual, not quality)
-
-5. "Certainly not the best sushi in New York" with entity "sushi"
-   → modifiers: ["Certainly not the best"] (quality assessment, exclude location)
-
-6. "The service was disappointing and slow" with entity "service"
-   → modifiers: ["disappointing", "slow"]
-
-7. "Great asian salad" with entity "salad"
-   → modifiers: ["Great", "asian"]
-
-Rules:
-1. Extract ONLY quality-describing modifiers that affect sentiment
-2. EXCLUDE factual context, location info, parenthetical remarks
-3. Include negation words only when they negate qualities, not facts
-4. Be conservative - when in doubt, exclude rather than include
-5. If the entity is not being qualitatively described, return empty modifiers list
-
-Provide your output in STRICT JSON format:
-{{"justification": "reasoning", "approach_used": "gemma-3-27b-it", "entity": "{entity}", "modifiers": ["modifier1", "modifier2"]}}
-"""
-
-    def _parse_modifier_response(self, text: str, entity: str) -> Dict[str, Any]:
-        try:
-            data = json.loads(re.search(r"\{[\s\S]*\}", text).group(0))
-        except Exception:
-            data = {}
-        mods = []
-        entity_clean = entity.lower().strip()
-        
-        # Define sentiment-bearing phrases that should be preserved even if they overlap
-        sentiment_phrases = [
-            'not the best', 'not good', 'not great', 'not bad', 'very good', 'very bad',
-            'top notch', 'high quality', 'poor quality', 'excellent', 'terrible',
-            'outstanding', 'disappointing', 'amazing', 'awful', 'fantastic', 'horrible',
-            'best', 'worst', 'great', 'bad', 'good', 'poor', 'fresh', 'stale'
-        ]
-        
-        for m in data.get("modifiers", []) or []:
-            mm = (m or "").strip()
-            if mm:
-                modifier_clean = mm.lower().strip()
-                
-                # Check if this is a sentiment-bearing phrase that should be preserved
-                is_sentiment_phrase = any(phrase in modifier_clean for phrase in sentiment_phrases)
-                
-                if is_sentiment_phrase:
-                    # Always include sentiment-bearing phrases
-                    mods.append(mm)
-                    continue
-                
-                # For non-sentiment phrases, apply stricter overlap detection
-                # 1. Check if modifier is identical to entity
-                if modifier_clean == entity_clean:
-                    continue
-                    
-                # 2. Check if modifier is just a substring of entity without adding value
-                if modifier_clean in entity_clean and len(modifier_clean) < len(entity_clean) * 0.8:
-                    continue
-                    
-                # 3. Check if entity is a substring of modifier (modifier is longer version)
-                if entity_clean in modifier_clean and len(entity_clean) < len(modifier_clean) * 0.8:
-                    continue
-                
-                mods.append(mm)
-        return {
-            "entity": entity,
-            "modifiers": mods,
-            "justification": data.get("justification", ""),
-            "approach_used": data.get("approach_used", "gemma-3-27b-it")
-        }
+    def _call(self, prompt: str) -> str:
+        if self.rate_limiter:
+            self.rate_limiter.acquire()
+        model = genai.GenerativeModel(
+            model_name=self.model,
+            generation_config=genai.types.GenerationConfig(
+                temperature=self.temperature,
+                top_p=self.top_p,
+                top_k=self.top_k,
+                max_output_tokens=self.max_output_tokens,
+                response_mime_type="text/plain",
+            )
+        )
+        resp = model.generate_content(prompt)
+        text = getattr(resp, "text", None)
+        if not text:
+            try:
+                text = str(resp)
+            except Exception:
+                text = ""
+        return text
 
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
         if not text or not entity:
-            return {"entity": entity, "modifiers": [], "justification": "No input provided."}
-        prompt = self._create_prompt(text, entity)
-        try:
-            response = self._gemma_handler._query_gemma(prompt)
-            return self._parse_modifier_response(response, entity)
-        except Exception as e:
-            raise
+            return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": "empty input"}
+        p = self._prompt(text, entity)
+        last_err = None
+        for i in range(self.retries + 1):
+            try:
+                raw = self._call(p)
+                data = _parse_json_payload(raw) or {}
+                mods = data.get("modifiers", [])
+                if not isinstance(mods, list):
+                    mods = []
+                norm = []
+                seen = set()
+                irrelevant_words = {"the", "a", "an", "this", "that", "of", "in", "on", "at", "to", "for", "with", 
+                                  "is", "are", "was", "were", "been", "be", "have", "has", "had", "do", "does", "did",
+                                  "will", "would", "could", "should", "may", "might", "can", "must", "shall"}
+                
+                for m in mods:
+                    if not isinstance(m, str):
+                        continue
+                    s = re.sub(r"\s+", " ", m.strip())
+                    if not s or len(s) < 2:
+                        continue
+                    
+                    if s.lower() in irrelevant_words:
+                        continue
+                    
+                    if s.lower() == entity.lower() or entity.lower() in s.lower():
+                        if s.lower() == entity.lower():
+                            continue
+                    
+                    words = s.lower().split()
+                    if all(word in irrelevant_words for word in words):
+                        continue
+                    
+                    if s.lower() in seen:
+                        continue
+                    seen.add(s.lower())
+                    norm.append(s)
+                return {
+                    "entity": entity,
+                    "modifiers": norm,
+                    "approach_used": self.model,
+                    "justification": data.get("justification", "")[:500]
+                }
+            except Exception as e:
+                last_err = e
+                if i < self.retries:
+                    sleep = self.backoff * (2 ** i)
+                    sleep += min(0.25, random.random() * 0.25)
+                    time.sleep(sleep)
+        return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": f"failure: {last_err}"}
 
 class SpacyModifierExtractor(ModifierExtractor):
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
         nlp = _get_spacy_nlp()
         if not nlp or not text or not entity:
-            return {"entity": entity, "modifiers": [], "approach_used": "spacy_enhanced", "justification": "no spacy or empty input"}
-        
+            return {"entity": entity, "modifiers": [], "approach_used": "spacy_fallback", "justification": "unavailable"}
         doc = nlp(text)
-        ent_lower = entity.lower()
+        t = text.lower()
+        e = entity.strip()
+        if not e:
+            return {"entity": entity, "modifiers": [], "approach_used": "spacy_fallback", "justification": "empty"}
+        idx = t.find(e.lower())
+        tokens = []
+        if idx >= 0:
+            start = idx
+            end = idx + len(e)
+            for tok in doc:
+                if tok.idx >= start and tok.idx + len(tok.text) <= end:
+                    tokens.append(tok)
+        if not tokens:
+            words = {w for w in e.lower().split() if w not in {"the","a","an","this","that"}}
+            for tok in doc:
+                if tok.text.lower() in words:
+                    tokens.append(tok)
+        heads = set(tokens)
+        adjs = []
+        for tok in doc:
+            if tok.dep_ in ("amod", "compound") and tok.head in heads:
+                adjs.append(tok.text)
+        preds = []
+        for tok in doc:
+            if tok.dep_ in ("acomp", "attr") and tok.head.pos_ in ("VERB","AUX"):
+                for ch in tok.head.children:
+                    if ch.dep_ in ("nsubj","nsubjpass") and ch in heads:
+                        preds.append(tok.text)
+                        break
+        directives = []
+        if idx >= 0:
+            pre = doc[max(0, doc[start:end].start - 3):doc[start:end].start] if hasattr(doc, "start") else []
+        for tok in doc:
+            if tok.lemma_.lower() in {"try","skip","avoid","recommend"}:
+                directives.append(tok.text)
         mods = []
-        negations = {"not", "n't", "no", "never", "hardly", "scarcely", "barely", "rarely"}
-
-        def get_enhanced_modifier(token) -> str:
-            """Get modifier with context, avoiding redundant entity words."""
-            prefix_parts = []
-            
-            # Add meaningful negations and intensifiers
-            for child in token.children:
-                if child.dep_ == "neg":
-                    prefix_parts.append(child.text)
-                elif child.dep_ == "advmod" and child.text.lower() not in {"as", "the", "a", "an", "that", "this"}:
-                    prefix_parts.append(child.text)
-            
-            # Look for nearby negations
-            window_start = max(0, token.i - 3)
-            window_end = min(len(doc), token.i)
-            window_tokens = [t.text.lower() for t in doc[window_start:window_end]]
-            
-            for neg in negations:
-                if neg in window_tokens and neg not in [p.lower() for p in prefix_parts]:
-                    prefix_parts.insert(0, neg)
-                    break
-            
-            # Clean result
-            if prefix_parts:
-                result = " ".join(prefix_parts) + " " + token.text
-            else:
-                result = token.text
-            
-            # Remove filler words
-            result = re.sub(r'\b(as|the|a|an|that|this)\b', '', result, flags=re.IGNORECASE)
-            result = re.sub(r'\s+', ' ', result).strip()
-            
-            return result if result else token.text
-
-        def find_entity_token(doc, entity_text):
-            entity_tokens = []
-            ent_words = entity_text.lower().split()
-            
-            # First try to find exact multiword spans
-            entity_text_clean = entity_text.lower().strip()
-            doc_text_lower = doc.text.lower()
-            
-            if entity_text_clean in doc_text_lower:
-                start_char = doc_text_lower.find(entity_text_clean)
-                end_char = start_char + len(entity_text_clean)
-                
-                for token in doc:
-                    if (token.idx >= start_char and 
-                        token.idx + len(token.text) <= end_char):
-                        entity_tokens.append(token)
-            
-            # Fallback to individual word matching, but only include substantive words
-            if not entity_tokens:
-                substantive_words = [word for word in ent_words if word not in {"the", "a", "an", "this", "that"}]
-                for i, token in enumerate(doc):
-                    if token.text.lower() in substantive_words:
-                        entity_tokens.append(token)
-            
-            return entity_tokens
-
-        entity_tokens = find_entity_token(doc, entity)
-        
-        for token in doc:
-            if token.dep_ in ("amod", "advmod") and token.head in entity_tokens:
-                mods.append(get_enhanced_modifier(token))
-            
-            elif token.dep_ in ("acomp", "attr") and token.head.pos_ in ("VERB", "AUX"):
-                for child in token.head.children:
-                    if child.dep_ in ("nsubj", "nsubjpass") and child in entity_tokens:
-                        mods.append(get_enhanced_modifier(token))
-                        break
-            
-            elif token.pos_ == "VERB":
-                subj = next((c for c in token.children if c.dep_ in ("nsubj", "nsubjpass")), None)
-                obj = next((c for c in token.children if c.dep_ in ("dobj", "pobj")), None)
-                
-                # When entity is object of verb
-                if obj and obj in entity_tokens:
-                    mods.append(get_enhanced_modifier(token))
-                
-                # When entity is subject of verb - check for semantically meaningful verbs
-                elif subj and subj in entity_tokens:
-                    acomp = next((c for c in token.children if c.dep_ == "acomp"), None)
-                    if acomp:
-                        mods.append(get_enhanced_modifier(acomp))
-                    
-                    # Handle semantically meaningful verbs when entity is subject
-                    verb_lemma = token.lemma_.lower()
-                    negative_verbs = {
-                        'slow', 'delay', 'hinder', 'impede', 'block', 'prevent', 'stop', 'break', 'fail',
-                        'crash', 'freeze', 'lag', 'stutter', 'drop', 'decrease', 'reduce', 'worsen',
-                        'deteriorate', 'degrade', 'corrupt', 'damage', 'harm', 'hurt', 'annoy', 'frustrate',
-                        'disappoint', 'bore', 'tire', 'exhaust', 'overwhelm', 'confuse', 'complicate'
-                    }
-                    positive_verbs = {
-                        'accelerate', 'speed', 'enhance', 'improve', 'boost', 'increase', 'strengthen',
-                        'optimize', 'streamline', 'facilitate', 'help', 'assist', 'enable', 'empower',
-                        'delight', 'please', 'satisfy', 'impress', 'amaze', 'excel', 'succeed', 'shine',
-                        'perform', 'deliver', 'work', 'function', 'operate', 'run', 'execute'
-                    }
-                    
-                    if verb_lemma in negative_verbs or verb_lemma in positive_verbs:
-                        # Build full verb phrase including particles and adverbs
-                        verb_parts = [token.text]
-                        
-                        # Add particles (like "down" in "slows down")
-                        for child in token.children:
-                            if child.dep_ == "prt":
-                                verb_parts.append(child.text)
-                            elif child.dep_ == "advmod" and child.text.lower() not in {"as", "the", "a", "an", "that", "this"}:
-                                verb_parts.append(child.text)
-                        
-                        verb_phrase = " ".join(verb_parts)
-                        mods.append(verb_phrase)
-            
-            elif token.dep_ == "compound" and token.head in entity_tokens:
-                mods.append(get_enhanced_modifier(token))
-
         seen = set()
-        unique_mods = []
-        entity_clean = entity.lower().strip()
-        
-        # Define sentiment-bearing phrases that should be preserved even if they overlap
-        sentiment_phrases = [
-            'not the best', 'not good', 'not great', 'not bad', 'very good', 'very bad',
-            'top notch', 'high quality', 'poor quality', 'excellent', 'terrible',
-            'outstanding', 'disappointing', 'amazing', 'awful', 'fantastic', 'horrible',
-            'best', 'worst', 'great', 'bad', 'good', 'poor', 'fresh', 'stale'
-        ]
-        
-        for m in mods:
-            if m.lower() not in seen:
-                modifier_clean = m.lower().strip()
-                
-                # Check if this is a sentiment-bearing phrase that should be preserved
-                is_sentiment_phrase = any(phrase in modifier_clean for phrase in sentiment_phrases)
-                
-                if is_sentiment_phrase:
-                    # Always include sentiment-bearing phrases
-                    seen.add(m.lower())
-                    unique_mods.append(m)
-                    continue
-                
-                # For non-sentiment phrases, apply stricter overlap detection
-                # 1. Check if modifier is identical to entity
-                if modifier_clean == entity_clean:
-                    continue
-                    
-                # 2. Check if modifier is just a substring of entity without adding value
-                if modifier_clean in entity_clean and len(modifier_clean) < len(entity_clean) * 0.8:
-                    continue
-                    
-                # 3. Check if entity is a substring of modifier (modifier is longer version)
-                if entity_clean in modifier_clean and len(entity_clean) < len(modifier_clean) * 0.8:
-                    continue
-                
-                seen.add(m.lower())
-                unique_mods.append(m)
-        
-        return {
-            "entity": entity,
-            "modifiers": unique_mods,
-            "approach_used": "spacy_enhanced",
-            "justification": f"Found {len(unique_mods)} modifiers via enhanced syntactic analysis"
-        }
-
-class RuleBasedModifierExtractor(ModifierExtractor):
-    def extract(self, text: str, entity: str) -> Dict[str, Any]:
-        nlp = _get_spacy_nlp()
-        if not nlp or not text or not entity:
-            return {"entity": entity, "modifiers": [], "approach_used": "rule_based", "justification": "no spacy"}
-        doc = nlp(text)
-        ent_lower = (entity or "").lower()
-        mods: List[str] = []
-        negations = {"not", "n't", "no", "never", "hardly", "scarcely"}
-
-        def get_full_modifier(token) -> str:
-            prefix = ""
-            for child in token.children:
-                if child.dep_ == "neg":
-                    prefix += child.text + " "
-                    break
-            window = [t.text.lower() for t in doc[max(0, token.i - 2) : token.i]]
-            if any(neg in window for neg in negations):
-                 if "not" not in prefix:
-                    prefix += "not "
-
-            for child in token.children:
-                if child.dep_ == "advmod":
-                    prefix += child.text + " "
-            
-            return prefix + token.lemma_
-
-        for token in doc:
-            if token.dep_ in ("amod", "advmod") and token.head.text.lower() in ent_lower:
-                mods.append(get_full_modifier(token))
-
-            elif token.dep_ in ("acomp", "attr") and token.head.pos_ == "VERB":
-                for child in token.head.children:
-                    if child.dep_ in ("nsubj", "nsubjpass") and child.text.lower() in ent_lower:
-                        mods.append(get_full_modifier(token))
-                        break
-            
-            elif token.pos_ == "VERB":
-                subj = next((c for c in token.children if c.dep_ in ("nsubj", "nsubjpass")), None)
-                obj = next((c for c in token.children if c.dep_ in ("dobj", "pobj")), None)
-                
-                if obj and obj.text.lower() in ent_lower:
-                    mods.append(get_full_modifier(token))
-                
-                elif subj and subj.text.lower() in ent_lower:
-                    acomp = next((c for c in token.children if c.dep_ == "acomp"), None)
-                    if acomp:
-                        mods.append(get_full_modifier(acomp))
-        
-        seen = set()
-        uniq = []
-        entity_clean = entity.lower().strip()
-        
-        # Define sentiment-bearing phrases that should be preserved even if they overlap
-        sentiment_phrases = [
-            'not the best', 'not good', 'not great', 'not bad', 'very good', 'very bad',
-            'top notch', 'high quality', 'poor quality', 'excellent', 'terrible',
-            'outstanding', 'disappointing', 'amazing', 'awful', 'fantastic', 'horrible',
-            'best', 'worst', 'great', 'bad', 'good', 'poor', 'fresh', 'stale'
-        ]
-        
-        for m in mods:
-            if m not in seen:
-                modifier_clean = m.lower().strip()
-                
-                # Check if this is a sentiment-bearing phrase that should be preserved
-                is_sentiment_phrase = any(phrase in modifier_clean for phrase in sentiment_phrases)
-                
-                if is_sentiment_phrase:
-                    # Always include sentiment-bearing phrases
-                    seen.add(m)
-                    uniq.append(m)
-                    continue
-                
-                # For non-sentiment phrases, apply stricter overlap detection
-                # 1. Check if modifier is identical to entity
-                if modifier_clean == entity_clean:
-                    continue
-                    
-                # 2. Check if modifier is just a substring of entity without adding value
-                if modifier_clean in entity_clean and len(modifier_clean) < len(entity_clean) * 0.8:
-                    continue
-                    
-                # 3. Check if entity is a substring of modifier (modifier is longer version)
-                if entity_clean in modifier_clean and len(entity_clean) < len(modifier_clean) * 0.8:
-                    continue
-                
-                seen.add(m)
-                uniq.append(m)
-        
-        return {
-            "entity": entity,
-            "modifiers": uniq,
-            "approach_used": "rule_based",
-            "justification": f"Found {len(uniq)} modifiers via syntactic analysis."
-        }
-
-class CombinedModifierExtractor(ModifierExtractor):
-    def __init__(self, api_key: str = None):
-        self._gemma_extractor = GemmaModifierExtractor(api_key=api_key, rate_limiter=_GLOBAL_GENAI_LIMITER)
-        self._rule_extractor = RuleBasedModifierExtractor()
-
-    def extract(self, text: str, entity: str) -> Dict[str, Any]:
-        try:
-            gemma_result = self._gemma_extractor.extract(text, entity)
-            if gemma_result and gemma_result.get("modifiers"):
-                return gemma_result
-        except Exception as e:
-            logging.warning(f"Gemma extractor failed for entity '{entity}': {e}. Falling back to rule-based.")
-        
-        return self._rule_extractor.extract(text, entity)
+        for s in adjs + preds:
+            k = s.lower().strip()
+            if k and k not in seen:
+                seen.add(k)
+                mods.append(s.strip())
+        for s in directives:
+            k = s.lower().strip()
+            if k and k not in seen:
+                seen.add(k)
+                if s.lower() in {"try","skip","avoid","recommend"}:
+                    mods.append(s + " the")
+                else:
+                    mods.append(s)
+        return {"entity": entity, "modifiers": mods, "approach_used": "spacy_fallback", "justification": f"{len(mods)} cues"}

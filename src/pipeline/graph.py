@@ -68,18 +68,59 @@ class RelationGraph:
             new_id += 1
         return new_id
 
+    def _combine_entity_with_modifiers(self, head: str, modifiers: List[str]) -> str:
+        """
+        Combine entity with modifiers in appropriate order for sentiment analysis.
+        
+        Different types of modifiers need different positioning:
+        - Adjective modifiers: before entity ("excellent tech support")
+        - Action/behavior modifiers: after entity ("tech support would not fix")
+        - Quality descriptors: before entity ("unhelpful tech support")
+        """
+        if not modifiers:
+            return head
+            
+        # Categorize modifiers by type
+        prefix_modifiers = []  # adjectives, quality descriptors
+        suffix_modifiers = []  # actions, behaviors
+        
+        for modifier in modifiers:
+            modifier_lower = modifier.lower()
+            
+            # Action/behavior patterns that should come after the entity
+            action_patterns = [
+                'would not', 'could not', 'did not', 'cannot', 'does not',
+                'failed to', 'refused to', 'managed to', 'struggled to',
+                'works', 'broke', 'functions', 'operates', 'performs'
+            ]
+            
+            # Check if modifier contains action patterns
+            is_action_modifier = any(pattern in modifier_lower for pattern in action_patterns)
+            
+            if is_action_modifier:
+                suffix_modifiers.append(modifier)
+            else:
+                prefix_modifiers.append(modifier)
+        
+        # Combine in natural order
+        parts = []
+        if prefix_modifiers:
+            parts.extend(prefix_modifiers)
+        parts.append(head)
+        if suffix_modifiers:
+            parts.extend(suffix_modifiers)
+            
+        return " ".join(parts)
+
     def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int) -> None:
         logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
         key = self._node_key(id, clause_layer)
-        if modifier:
-            text_for_sent = (", ".join(modifier) + " " + head).strip()
-        else:
-            try:
-                text_for_sent = self.clauses[clause_layer]
-            except Exception:
-                text_for_sent = head
+        
+        # Use improved modifier combination logic
+        text_for_sent = self._combine_entity_with_modifiers(head, modifier)
+        
         sentiment = self._sent(text_for_sent)
         logger.debug("Entity %s sentiment %.4f context %s", id, sentiment, text_for_sent)
         self.graph.add_node(

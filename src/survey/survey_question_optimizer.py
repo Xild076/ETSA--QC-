@@ -2126,7 +2126,7 @@ def _formula_by_name(name: str) -> Callable:
     }
     return m.get(name)
 
-def get_actor_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+def get_actor_function(score_key: str = 'user_normalized_sentiment_scores') -> Callable:
     confs = load_optimal_parameters()
     conf = confs.get(('actor', score_key)) or confs.get(('actor', 'user_sentiment_score_mapped'))
     if not conf:
@@ -2138,9 +2138,9 @@ def get_actor_function(score_key: str = 'user_sentiment_score_mapped') -> Callab
         return actor_skeleton_formula(s_actor, s_action, s_target, split, func, fitted)
     return f
 
-def get_target_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+def get_target_function(score_key: str = 'user_normalized_sentiment_scores') -> Callable:
     confs = load_optimal_parameters()
-    conf = confs.get(('target', score_key)) or confs.get(('target', 'user_sentiment_score_mapped'))
+    conf = confs.get(('target', score_key)) or confs.get(('target', 'user_normalized_sentiment_scores'))
     if not conf:
         return None
     func = _formula_by_name(conf['model'])
@@ -2150,9 +2150,9 @@ def get_target_function(score_key: str = 'user_sentiment_score_mapped') -> Calla
         return target_skeleton_formula(s_target, s_action, split, func, fitted)
     return f
 
-def get_association_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+def get_association_function(score_key: str = 'user_normalized_sentiment_scores') -> Callable:
     confs = load_optimal_parameters()
-    conf = confs.get(('association', score_key)) or confs.get(('association', 'user_sentiment_score_mapped'))
+    conf = confs.get(('association', score_key)) or confs.get(('association', 'user_normalized_sentiment_scores'))
     if not conf:
         return None
     func = _formula_by_name(conf['model'])
@@ -2162,9 +2162,9 @@ def get_association_function(score_key: str = 'user_sentiment_score_mapped') -> 
         return association_skeleton_formula(s_entity, s_other, split, func, fitted)
     return f
 
-def get_parent_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+def get_parent_function(score_key: str = 'user_normalized_sentiment_scores') -> Callable:
     confs = load_optimal_parameters()
-    conf = confs.get(('parent', score_key)) or confs.get(('parent', 'user_sentiment_score_mapped'))
+    conf = confs.get(('parent', score_key)) or confs.get(('parent', 'user_normalized_sentiment_scores'))
     if not conf:
         return None
     func = _formula_by_name(conf['model'])
@@ -2174,9 +2174,9 @@ def get_parent_function(score_key: str = 'user_sentiment_score_mapped') -> Calla
         return parent_skeleton_formula(s_parent, s_child, split, func, fitted)
     return f
 
-def get_child_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+def get_child_function(score_key: str = 'user_normalized_sentiment_scores') -> Callable:
     confs = load_optimal_parameters()
-    conf = confs.get(('child', score_key)) or confs.get(('child', 'user_sentiment_score_mapped'))
+    conf = confs.get(('child', score_key)) or confs.get(('child', 'user_normalized_sentiment_scores'))
     if not conf:
         return None
     func = _formula_by_name(conf['model'])
@@ -2186,9 +2186,9 @@ def get_child_function(score_key: str = 'user_sentiment_score_mapped') -> Callab
         return child_skeleton_formula(s_child, s_parent, split, func, fitted)
     return f
 
-def get_aggregate_function(score_key: str = 'user_sentiment_score_mapped') -> Callable:
+def get_aggregate_function(score_key: str = 'user_normalized_sentiment_scores') -> Callable:
     confs = load_optimal_parameters()
-    conf = confs.get(('aggregate', score_key)) or confs.get(('aggregate', 'user_sentiment_score_mapped'))
+    conf = confs.get(('aggregate', score_key)) or confs.get(('aggregate', 'user_normalized_sentiment_scores'))
     if not conf:
         return None
     model = conf['model']

@@ -192,6 +192,11 @@ class BeneparClauseSplitter:
         return uniq
 
     def _assign_tokens(self, seg_tokens, heads):
+        if not heads:
+            seg_list = list(seg_tokens)
+            if not seg_list:
+                return {}
+            heads = [seg_list[0]]
         head_set = set(heads)
         groups = {h: set() for h in heads}
         idx_heads = [h.i for h in heads]
