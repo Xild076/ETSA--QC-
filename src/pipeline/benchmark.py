@@ -1,699 +1,832 @@
-import logging
-import sys
+from __future__ import annotations
 
-# Configure basic logging at the very top
-logging.basicConfig(level=logging.INFO, stream=sys.stdout, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.info("Benchmark script started.")
-
-import os
+import csv
 import json
 import logging
+import math
+import re
 import xml.etree.ElementTree as ET
-from typing import Dict, Any, List, Callable, Optional
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, balanced_accuracy_score
-import pandas as pd
+import traceback
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CHECKING
+
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    classification_report,
+    confusion_matrix,
+)
+from networkx.readwrite import json_graph
 from tqdm import tqdm
-import warnings
-from dotenv import load_dotenv
-import random
 
-import sys
-SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if SRC_DIR not in sys.path:
-    sys.path.insert(0, SRC_DIR)
+try:
+    from .pipeline import SentimentPipeline, build_default_pipeline
+except Exception:
+    from pipeline import SentimentPipeline, build_default_pipeline
 
-# Load environment variables
-load_dotenv(os.path.join(SRC_DIR, '.env'))
-
-from src.run_pipeline import run_pipeline_for_text
-
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
 
 logger = logging.getLogger(__name__)
 
-def load_semeval_2016_task5(file_path: str) -> List[Dict[str, Any]]:
-    tree = ET.parse(file_path)
-    root = tree.getroot()
-    data = []
-    for review in root.findall('Review'):
-        sentences = review.findall('sentences/sentence')
-        sentences_with_aspects = []
-        all_aspects = []
-        
-        for sentence in sentences:
-            text_elem = sentence.find('text')
-            if text_elem is None or not text_elem.text:
-                continue
-                
-            sentence_text = text_elem.text.strip()
-            sentence_aspects = []
-            
-            for opinion in sentence.findall('.//Opinion'):
-                category = opinion.get('category')
-                polarity = opinion.get('polarity')
-                target = opinion.get('target', 'NULL')
-                
-                if not category or not polarity or polarity == 'conflict':
-                    continue
-                
-                parts = category.split('#')
-                if len(parts) != 2:
-                    continue
-                
-                entity, aspect_term = parts
-                
-                if target and target != 'NULL':
-                    term = target
-                else:
-                    term = aspect_term
-                
-                aspect_data = {
-                    "term": term, 
-                    "polarity": polarity, 
-                    "entity": entity,
-                    "sentence_id": sentence.get('id')
-                }
-                sentence_aspects.append(aspect_data)
-                all_aspects.append(aspect_data)
-            
-            if sentence_aspects:
-                sentences_with_aspects.append({
-                    "text": sentence_text,
-                    "aspects": sentence_aspects,
-                    "sentence_id": sentence.get('id')
-                })
-        
-        if sentences_with_aspects:
-            full_text = " ".join(s["text"] for s in sentences_with_aspects)
-            
-            data.append({
-                "text": full_text, 
-                "aspects": all_aspects, 
-                "id": review.get('rid'),
-                "sentences": sentences_with_aspects,
-                "is_long_document": len(sentences_with_aspects) > 1
-            })
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data" / "dataset"
+OUTPUT_ROOT = PROJECT_ROOT / "output" / "benchmarks"
+
+if TYPE_CHECKING:
+    from .graph import RelationGraph
+
+STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "with",
+    "is",
+    "are",
+    "be",
+    "was",
+    "were",
+    "it",
+    "its",
+    "this",
+    "that",
+    "these",
+    "those",
+    "my",
+    "your",
+    "our",
+    "their",
+    "very",
+    "too",
+    "so",
+    "just",
+    "but",
+}
+
+SPACE_RE = re.compile(r"\s+")
+PUNCT_RE = re.compile(r"[^a-z0-9\s]")
+
+
+@dataclass
+class AspectAnnotation:
+    term: str
+    polarity: str
+    start: int
+    end: int
+
+
+@dataclass
+class DatasetItem:
+    sentence_id: str
+    text: str
+    aspects: List[AspectAnnotation]
+
+
+@dataclass
+class PredictedAspect:
+    entity_id: int
+    canonical: str
+    polarity: str
+    score: float
+    mentions: List[Dict[str, Any]]
+    norm: str
+    tokens: Tuple[str, ...]
+    head: str
+
+
+@dataclass
+class GoldAspect:
+    annotation: AspectAnnotation
+    norm: str
+    tokens: Tuple[str, ...]
+    head: str
+
+
+def _safe_filename(*segments: str) -> str:
+    names: List[str] = []
+    for segment in segments:
+        cleaned = re.sub(r"[^0-9a-zA-Z_-]+", "_", segment or "").strip("_")
+        if cleaned:
+            names.append(cleaned)
+    return "_".join(names) if names else "report"
+
+
+def _graph_snapshot(graph: Optional["RelationGraph"]) -> Dict[str, Any]:
+    if graph is None:
+        return {}
+    try:
+        data = json_graph.node_link_data(graph.graph)
+    except Exception:
+        return {}
+    data["clauses"] = list(getattr(graph, "clauses", []))
+    data["text"] = getattr(graph, "text", "")
+    data["aggregate_sentiments"] = dict(getattr(graph, "aggregate_sentiments", {}))
     return data
 
-def load_semeval_2014_task4(file_path: str) -> List[Dict[str, Any]]:
-    """Loads SemEval 2014 Task 4 datasets with sentiment polarity labels."""
-    tree = ET.parse(file_path)
-    root = tree.getroot()
-    data = []
-    
-    for sentence in root.findall('sentence'):
-        text_elem = sentence.find('text')
-        if text_elem is None or not text_elem.text:
-            continue
-            
-        sentence_text = text_elem.text.strip()
-        sentence_aspects = []
-        
-        # Extract aspect terms with polarity
-        aspect_terms = sentence.find('aspectTerms')
-        if aspect_terms is not None:
-            for aspect_term in aspect_terms.findall('aspectTerm'):
-                term = aspect_term.get('term')
-                polarity = aspect_term.get('polarity')
-                
-                if term and polarity and polarity != 'conflict':
-                    aspect_data = {
-                        "term": term,
-                        "polarity": polarity,
-                        "entity": "NULL",  # 2014 format doesn't have entity categories
-                        "sentence_id": sentence.get('id')
-                    }
-                    sentence_aspects.append(aspect_data)
-        
-        # Also extract aspect categories if available
-        aspect_categories = sentence.find('aspectCategories')
-        if aspect_categories is not None:
-            for aspect_category in aspect_categories.findall('aspectCategory'):
-                category = aspect_category.get('category')
-                polarity = aspect_category.get('polarity')
-                
-                if category and polarity and polarity != 'conflict':
-                    aspect_data = {
-                        "term": category,
-                        "polarity": polarity,
-                        "entity": category,
-                        "sentence_id": sentence.get('id')
-                    }
-                    sentence_aspects.append(aspect_data)
-        
-        if sentence_aspects:
-            data.append({
-                "text": sentence_text,
-                "aspects": sentence_aspects,
-                "id": sentence.get('id'),
-                "sentences": [{
-                    "text": sentence_text,
-                    "aspects": sentence_aspects,
-                    "sentence_id": sentence.get('id')
-                }],
-                "is_long_document": False
-            })
-    
-    return data
 
-def get_dataset_loader(dataset_name: str) -> Callable:
-    """Returns the correct dataset loader based on the name."""
-    if "2016" in dataset_name:
-        return load_semeval_2016_task5
-    return load_semeval_2014_task4
-
-def get_dataset_path(dataset_name: str) -> str:
-    """Maps a dataset name to its file path."""
-    mapping = {
-        "test_laptop_2014": "data/dataset/test_laptop_2014.xml",
-        "test_restaurant_2014": "data/dataset/test_restaurant_2014.xml",
-        "test_laptop_2016": "data/dataset/test_laptop_2016.xml", 
-        "test_restaurant_2016": "data/dataset/test_restaurant_2016.xml",
-        # Unified datasets
-        "unified_2014": ["data/dataset/test_restaurant_2014.xml", "data/dataset/test_laptop_2014.xml"],
-        "unified_2016": ["data/dataset/test_restaurant_2016.xml", "data/dataset/test_laptop_2016.xml"],
-    }
-    path = mapping.get(dataset_name)
-    if isinstance(path, list):
-        # Multi-file dataset
-        for p in path:
-            if not os.path.exists(p):
-                raise FileNotFoundError(f"Dataset file not found: {p}")
-        return path
-    elif not path or not os.path.exists(path):
-        raise FileNotFoundError(f"Dataset '{dataset_name}' not found at path: {path}")
+def _persist_graph_snapshot(snapshot: Dict[str, Any], directory: Path, sequence: int, sentence_id: str, issue_type: str) -> Optional[Path]:
+    if not snapshot:
+        return None
+    filename = f"{sequence:05d}_{_safe_filename(sentence_id, issue_type)}.json"
+    path = directory / filename
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(snapshot, handle, indent=2)
     return path
 
-def score_to_polarity(score: float, pos_thresh: float, neg_thresh: float) -> str:
-    if score > pos_thresh: return "positive"
-    if score < neg_thresh: return "negative"
-    return "neutral"
 
-def find_best_from_names(entity_names: List[str], aspect_term: str) -> str:
-    a_raw = aspect_term or ""
-    a = a_raw.lower().strip()
-    if not a: return a_raw
-
-    # Handle spelling variations and synonyms
-    spelling_variants = {
-        'ambience': ['ambiance', 'atmosphere'],
-        'ambiance': ['ambience', 'atmosphere'], 
-        'anecdotes/miscellaneous': ['place', 'restaurant', 'location'],
-        'place': ['anecdotes/miscellaneous', 'restaurant', 'location'],
-        'restaurant': ['place', 'anecdotes/miscellaneous', 'location']
+def _module_hypothesis(issue_type: str) -> List[str]:
+    mapping = {
+        "missing_aspect": ["aspect_extractor", "relation_extractor"],
+        "spurious_aspect": ["relation_extractor", "modifier_extractor"],
+        "wrong_polarity": ["sentiment_analysis", "aggregate_sentiment_model"],
+        "pipeline_exception": ["pipeline"],
     }
-    
-    # Category mapping for specific items to general categories
-    category_mappings = {
-        'food': ['bread', 'coffee', 'tea', 'wine', 'beer', 'drink', 'drinks', 'meal', 'dish', 'dishes', 
-                'pasta', 'pizza', 'burger', 'sandwich', 'salad', 'soup', 'dessert', 'appetizer', 
-                'entree', 'main course', 'seafood', 'chicken', 'beef', 'pork', 'fish', 'sushi',
-                'rice', 'noodles', 'sauce', 'cheese', 'vegetable', 'fruit', 'meat', 'cuisine',
-                'noodles', 'portions'],
-        'service': ['waiter', 'waitress', 'server', 'staff', 'waitstaff', 'manager', 'host', 'hostess',
-                   'delivery', 'takeout', 'reservation', 'wait time', 'waiting', 'service', 'attendant'],
-        'ambience': ['atmosphere', 'ambiance', 'environment', 'setting', 'decor', 'decoration',
-                    'music', 'noise', 'lighting', 'seating', 'tables', 'chairs', 'interior'],
-        'price': ['cost', 'price', 'expensive', 'cheap', 'affordable', 'value', 'money', 'bill', 'tab'],
-        'anecdotes/miscellaneous': ['place', 'restaurant', 'location', 'establishment', 'experience', 'service', 'food', 'ambience', 'staff', 'it', 'everything'],
-        # 2016 dataset abstract categories - map to broader contexts
-        'GENERAL': ['place', 'restaurant', 'location', 'establishment', 'this', 'it', 'here', 'overall', 'experience'],
-        'QUALITY': ['quality', 'food', 'dish', 'meal', 'service', 'staff', 'ambience', 'decor', 'taste', 'flavor', 'performance', 'speed', 'battery'],
-        'PRICES': ['price', 'cost', 'expensive', 'cheap', 'affordable', 'value', 'money', 'bill', 'tab', 'tip'],
-        'MISCELLANEOUS': ['everything', 'nothing', 'anything', 'something', 'all', 'none', 'other']
+    return mapping.get(issue_type, ["unknown"])
+
+
+def _predicted_to_dict(pred: PredictedAspect) -> Dict[str, Any]:
+    return {
+        "entity_id": pred.entity_id,
+        "canonical": pred.canonical,
+        "polarity": pred.polarity,
+        "score": pred.score,
+        "mentions": pred.mentions,
+        "norm": pred.norm,
+        "tokens": list(pred.tokens),
+        "head": pred.head,
     }
-    
-    # Check for exact matches including variants
-    for name in entity_names:
-        n_raw = name or ""
-        n = n_raw.lower().strip()
-        if not n: continue
-        
-        if n == a: return n_raw
-        
-        # Check spelling variants
-        if a in spelling_variants:
-            if n in spelling_variants[a]:
-                return n_raw
-        if n in spelling_variants:
-            if a in spelling_variants[n]:
-                return n_raw
 
-    a_tokens = set(a.split())
-    best_name, best_score = a_raw, 0.0
 
-    for name in entity_names:
-        n_raw = name or ""
-        n = n_raw.lower().strip()
-        if not n: continue
-        
-        if n == a: return n_raw
-        
-        n_tokens = set(n.split())
-        
-        overlap = len(a_tokens & n_tokens)
-        union = len(a_tokens | n_tokens)
-        jaccard_score = overlap / union if union > 0 else 0
-        
-        aspect_tokens_covered = len(a_tokens & n_tokens)
-        aspect_coverage = aspect_tokens_covered / len(a_tokens) if a_tokens else 0
-        
-        pred_tokens_relevant = len(a_tokens & n_tokens)
-        pred_precision = pred_tokens_relevant / len(n_tokens) if n_tokens else 0
-        
-        exact_substring_score = 0.0
-        if a in n:
-            exact_substring_score = 0.8
-        elif n in a:
-            exact_substring_score = 0.6
-        
-        affix_score = 0.0
-        if a.startswith(n[:3]) and len(n) >= 3:
-            affix_score += 0.3
-        if a.endswith(n[-3:]) and len(n) >= 3:
-            affix_score += 0.3
-        if n.startswith(a[:3]) and len(a) >= 3:
-            affix_score += 0.2
-        if n.endswith(a[-3:]) and len(a) >= 3:
-            affix_score += 0.2
-        
-        word_order_score = 0.0
-        if len(a_tokens & n_tokens) >= 2:
-            common_tokens = sorted(list(a_tokens & n_tokens))
-            if len(common_tokens) >= 2:
-                a_positions = {token: i for i, token in enumerate(a.split()) if token in common_tokens}
-                n_positions = {token: i for i, token in enumerate(n.split()) if token in common_tokens}
-                
-                order_preserved = 0
-                for i in range(len(common_tokens) - 1):
-                    token1, token2 = common_tokens[i], common_tokens[i + 1]
-                    if (a_positions.get(token1, 0) < a_positions.get(token2, 0) and 
-                        n_positions.get(token1, 0) < n_positions.get(token2, 0)):
-                        order_preserved += 1
-                word_order_score = order_preserved / max(1, len(common_tokens) - 1)
-        
-        combined_score = (
-            0.3 * jaccard_score +
-            0.25 * aspect_coverage +
-            0.15 * pred_precision +
-            0.2 * exact_substring_score +
-            0.1 * affix_score +
-            0.0 * word_order_score
+def _gold_to_dict(gold: GoldAspect) -> Dict[str, Any]:
+    return {
+        "term": gold.annotation.term,
+        "polarity": gold.annotation.polarity,
+        "start": gold.annotation.start,
+        "end": gold.annotation.end,
+        "norm": gold.norm,
+        "tokens": list(gold.tokens),
+        "head": gold.head,
+    }
+
+
+def _closest_pred_for_gold(gold: GoldAspect, predicted: Sequence[PredictedAspect]) -> Tuple[Optional[PredictedAspect], float]:
+    best: Optional[PredictedAspect] = None
+    best_score = 0.0
+    for pred in predicted:
+        score = _lenient_similarity(pred, gold)
+        if score > best_score:
+            best_score = score
+            best = pred
+    return best, best_score
+
+
+def _closest_gold_for_pred(pred: PredictedAspect, golds: Sequence[GoldAspect]) -> Tuple[Optional[GoldAspect], float]:
+    best: Optional[GoldAspect] = None
+    best_score = 0.0
+    for gold in golds:
+        score = _lenient_similarity(pred, gold)
+        if score > best_score:
+            best_score = score
+            best = gold
+    return best, best_score
+
+
+_PIPELINE_CACHE: Dict[str, SentimentPipeline] = {}
+
+
+def get_dataset_path(dataset_name: str) -> str:
+    if dataset_name not in DATASET_REGISTRY:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+    filename, _ = DATASET_REGISTRY[dataset_name]
+    dataset_path = DATA_DIR / filename
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
+    return str(dataset_path)
+
+
+def get_dataset_loader(dataset_name: str) -> Callable[[Path], List[DatasetItem]]:
+    if dataset_name not in DATASET_REGISTRY:
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+    _, loader = DATASET_REGISTRY[dataset_name]
+    return loader
+
+
+def _normalize_text(text: str) -> str:
+    lowered = text.lower()
+    cleaned = PUNCT_RE.sub(" ", lowered)
+    collapsed = SPACE_RE.sub(" ", cleaned).strip()
+    return collapsed
+
+
+def _tokens(text: str) -> Tuple[str, ...]:
+    norm = _normalize_text(text)
+    tokens = [tok for tok in norm.split(" ") if tok and tok not in STOPWORDS]
+    return tuple(tokens)
+
+
+def _head(tokens: Sequence[str], fallback: str) -> str:
+    if tokens:
+        return tokens[-1]
+    norm = _normalize_text(fallback)
+    return norm.split(" ")[-1] if norm else ""
+
+
+def _lenient_similarity(pred: PredictedAspect, gold: GoldAspect) -> float:
+    if not pred.norm or not gold.norm:
+        return 0.0
+    if pred.norm == gold.norm:
+        return 1.0
+    score = 0.0
+    if pred.norm in gold.norm or gold.norm in pred.norm:
+        score = max(score, 0.92)
+    if pred.head and pred.head == gold.head:
+        score = max(score, 0.88)
+    common = set(pred.tokens) & set(gold.tokens)
+    if common:
+        coverage = len(common) / max(len(pred.tokens), len(gold.tokens), 1)
+        score = max(score, 0.6 + 0.4 * coverage)
+    seq_ratio = SequenceMatcher(None, pred.norm, gold.norm).ratio()
+    score = max(score, seq_ratio)
+    return score
+
+
+def _match_aspects(
+    predicted: List[PredictedAspect],
+    golds: List[GoldAspect],
+    min_score: float = 0.58,
+) -> Tuple[List[Tuple[GoldAspect, PredictedAspect, float]], List[GoldAspect], List[PredictedAspect]]:
+    if not predicted or not golds:
+        return [], list(golds), list(predicted)
+    scores: List[Tuple[int, int, float]] = []
+    for gi, g in enumerate(golds):
+        for pi, p in enumerate(predicted):
+            sim = _lenient_similarity(p, g)
+            if sim >= min_score:
+                scores.append((gi, pi, sim))
+    used_gold = set()
+    used_pred = set()
+    matches: List[Tuple[GoldAspect, PredictedAspect, float]] = []
+    for gi, pi, sim in sorted(scores, key=lambda x: x[2], reverse=True):
+        if gi in used_gold or pi in used_pred:
+            continue
+        used_gold.add(gi)
+        used_pred.add(pi)
+        matches.append((golds[gi], predicted[pi], sim))
+    unmatched_gold = [g for idx, g in enumerate(golds) if idx not in used_gold]
+    unmatched_pred = [p for idx, p in enumerate(predicted) if idx not in used_pred]
+    return matches, unmatched_gold, unmatched_pred
+
+
+def _load_semeval_xml(path: Path) -> List[DatasetItem]:
+    tree = ET.parse(path)
+    root = tree.getroot()
+    dataset: List[DatasetItem] = []
+    for sentence_el in root.iterfind("sentence"):
+        sid = sentence_el.get("id", "")
+        text_el = sentence_el.find("text")
+        text = text_el.text.strip() if text_el is not None and text_el.text else ""
+        aspects: List[AspectAnnotation] = []
+        aspects_el = sentence_el.find("aspectTerms")
+        if aspects_el is not None:
+            for term_el in aspects_el.findall("aspectTerm"):
+                term = term_el.get("term", "").strip()
+                if not term or term.lower() == "null":
+                    continue
+                polarity = term_el.get("polarity", "neutral").lower()
+                start = int(term_el.get("from", 0))
+                end = int(term_el.get("to", 0))
+                aspects.append(AspectAnnotation(term=term, polarity=polarity, start=start, end=end))
+        dataset.append(DatasetItem(sentence_id=sid, text=text, aspects=aspects))
+    return dataset
+
+DATASET_REGISTRY: Dict[str, Tuple[str, Callable[[Path], List[DatasetItem]]]] = {
+    "test_laptop_2014": ("test_laptop_2014.xml", _load_semeval_xml),
+    "test_restaurant_2014": ("test_restaurant_2014.xml", _load_semeval_xml),
+}
+
+
+def _prepare_gold(aspects: Iterable[AspectAnnotation]) -> List[GoldAspect]:
+    prepared: List[GoldAspect] = []
+    for asp in aspects:
+        tokens = _tokens(asp.term)
+        prepared.append(
+            GoldAspect(
+                annotation=asp,
+                norm=_normalize_text(asp.term),
+                tokens=tokens,
+                head=_head(tokens, asp.term),
+            )
         )
-        
-        if combined_score > best_score and combined_score >= 0.2:
-            best_name, best_score = n_raw, combined_score
+    return prepared
 
-    # If no good match found, try category-based mapping
-    if best_score < 0.2:
-        # Handle abstract 2016 categories specially
-        if a.upper() in ['GENERAL', 'QUALITY', 'PRICES', 'MISCELLANEOUS']:
-            category_key = a.upper()
-            if category_key in category_mappings:
-                keywords = category_mappings[category_key]
-                
-                # For abstract categories, use fuzzy matching
-                for name in entity_names:
-                    n_lower = name.lower()
-                    # Check if any keyword appears in entity name
-                    for keyword in keywords:
-                        if keyword in n_lower or n_lower in keyword:
-                            return name
-                    
-                    # For GENERAL, also match restaurant/place-related entities
-                    if category_key == 'GENERAL':
-                        general_terms = ['place', 'restaurant', 'this', 'it', 'here', 'there']
-                        if any(term in n_lower for term in general_terms):
-                            return name
-                            
-                    # For QUALITY, match evaluative terms
-                    elif category_key == 'QUALITY':
-                        quality_indicators = ['food', 'dish', 'meal', 'cuisine', 'cooking', 'works', 'install']
-                        if any(term in n_lower for term in quality_indicators):
-                            return name
-        
-        # Original category mapping logic
-        for category, keywords in category_mappings.items():
-            if a == category:  # Looking for category directly
-                # Find entities that contain keywords from this category
-                for name in entity_names:
-                    n_lower = name.lower()
-                    for keyword in keywords:
-                        if keyword in n_lower or any(word in keyword for word in n_lower.split()):
-                            return name
-                            
-        # Also try reverse - if we have a specific item, map to category
-        for name in entity_names:
-            n_lower = name.lower()
-            for category, keywords in category_mappings.items():
-                if a == category:  # We want this category
-                    # Check if this entity contains any category keywords
-                    for keyword in keywords:
-                        if keyword in n_lower or n_lower in keyword:
-                            return name
 
-    return best_name
-
-def match_aspects(gold_aspects: list, predicted_sentiments: dict, text: str) -> list:
-    """Matches gold standard aspects with predicted sentiments."""
-    matched_results = []
-    
-    # If there are no predicted sentiments, we can't match anything.
-    if not predicted_sentiments:
-        return [{
-            'term': gold['term'],
-            'gold': gold['polarity'],
-            'matched_entity': None,
-            'score': 0.0,
-            'pred': 'neutral'
-        } for gold in gold_aspects]
-
-    predicted_entity_names = list(predicted_sentiments.keys())
-    
-    for gold in gold_aspects:
-        aspect_term = gold['term']
-        
-        # Find the best matching predicted entity for the current gold standard aspect
-        matched_entity_name = find_best_from_names(predicted_entity_names, aspect_term)
-        
-        # If a match is found, get its score and determine polarity
-        if matched_entity_name and matched_entity_name in predicted_sentiments:
-            score = predicted_sentiments[matched_entity_name]
-            
-            # Simple polarity classification
-            if score > 0.1:
-                pred = 'positive'
-            elif score < -0.1:
-                pred = 'negative'
-            else:
-                pred = 'neutral'
-        
-        # If no match is found, default to neutral
-        else:
-            matched_entity_name = None
+def _prepare_predicted(
+    aggregate_results: Dict[Any, Dict[str, Any]],
+    pos_thresh: float,
+    neg_thresh: float,
+) -> List[PredictedAspect]:
+    predicted: List[PredictedAspect] = []
+    for entity_id, data in aggregate_results.items():
+        mentions = data.get("mentions") or []
+        canonical = ""
+        if mentions:
+            canonical = mentions[0].get("text", "")
+        if not canonical:
+            canonical = f"entity_{entity_id}"
+        score = float(data.get("aggregate_sentiment", 0.0) or 0.0)
+        if math.isnan(score):
             score = 0.0
-            pred = 'neutral'
-            
-        matched_results.append({
-            'term': aspect_term,
-            'gold': gold['polarity'],
-            'matched_entity': matched_entity_name,
-            'score': score,
-            'pred': pred
-        })
-        
-    return matched_results
+        if score >= pos_thresh:
+            polarity = "positive"
+        elif score <= neg_thresh:
+            polarity = "negative"
+        else:
+            polarity = "neutral"
+        tokens = _tokens(canonical)
+        predicted.append(
+            PredictedAspect(
+                entity_id=int(entity_id),
+                canonical=canonical,
+                polarity=polarity,
+                score=score,
+                mentions=mentions,
+                norm=_normalize_text(canonical),
+                tokens=tokens,
+                head=_head(tokens, canonical),
+            )
+        )
+    return predicted
 
 
-def save_artifacts(run_dir: str, y_true: List[str], y_pred: List[str], error_analysis_data: List[Dict]):
-    """Saves all benchmark artifacts (metrics, plots, errors) to the run directory."""
-    if not y_true:
-        logger.warning("No ground truth labels found. Skipping artifact generation.")
-        return
+def _normalize_gold_polarity(polarity: str) -> str:
+    if not polarity:
+        return "neutral"
+    value = polarity.lower().strip()
+    if value not in {"positive", "negative", "neutral", "conflict"}:
+        return "neutral"
+    return value
 
-    labels = sorted(list(set(y_true) | set(y_pred)))
-    
-    # --- Start of Change: Save metrics first ---
-    # Calculate and save core metrics immediately to prevent data loss if plotting fails.
-    metrics = {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
-        "classification_report": classification_report(y_true, y_pred, labels=labels, digits=4, output_dict=True, zero_division=0)
-    }
-    metrics_path = os.path.join(run_dir, "metrics.json")
-    try:
-        with open(metrics_path, 'w') as f:
-            json.dump(metrics, f, indent=4)
-        logger.info(f"Core metrics saved to {metrics_path}")
-    except Exception as e:
-        logger.error(f"Failed to save core metrics: {e}")
-    # --- End of Change ---
 
-    report_str = classification_report(y_true, y_pred, labels=labels, digits=4, zero_division=0)
-    logger.info(f"\n--- Benchmark Results ---\n{report_str}")
-    
-    cm_path = os.path.join(run_dir, "confusion_matrix.png")
-    try:
-        cm = confusion_matrix(y_true, y_pred, labels=labels)
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels)
-        plt.title('Confusion Matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.savefig(cm_path)
-        plt.close()
-        logger.info(f"Confusion Matrix saved to {cm_path}")
-    except Exception as e:
-        logger.error(f"Failed to generate confusion matrix: {e}")
+def _classification_labels(gold_labels: List[str], pred_labels: List[str]) -> List[str]:
+    label_set = sorted(set(gold_labels) | set(pred_labels))
+    return label_set or ["neutral"]
 
-    if error_analysis_data:
-        df_errors = pd.DataFrame(error_analysis_data)
-        errors_path = os.path.join(run_dir, "error_analysis.csv")
-        df_errors.to_csv(errors_path, index=False)
-        logger.info(f"Error analysis saved to {errors_path}")
+
+def _serialize_report(report: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    serializable: Dict[str, Dict[str, Any]] = {}
+    for label, metrics in report.items():
+        if isinstance(metrics, dict):
+            entry: Dict[str, Any] = {}
+            for key, value in metrics.items():
+                if key == "support":
+                    entry[key] = int(value)
+                else:
+                    entry[key] = float(value)
+            serializable[label] = entry
+        else:
+            serializable[label] = float(metrics)
+    return serializable
+
+
+def _ensure_output_dir(run_dir: Path) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _plot_confusion_matrix(cm: List[List[int]], labels: List[str], path: Path) -> None:
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", xticklabels=labels, yticklabels=labels, cmap="Blues")
+    plt.ylabel("Gold")
+    plt.xlabel("Predicted")
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
+
+def _build_pipeline_for_mode(run_mode: str) -> SentimentPipeline:
+    if run_mode == "full_stack":
+        return build_default_pipeline()
+    logger.warning("Run mode '%s' not specialized; falling back to default pipeline.", run_mode)
+    return build_default_pipeline()
+
+
+def _get_pipeline(run_mode: str) -> SentimentPipeline:
+    pipeline = _PIPELINE_CACHE.get(run_mode)
+    if pipeline is None:
+        pipeline = _build_pipeline_for_mode(run_mode)
+        _PIPELINE_CACHE[run_mode] = pipeline
+    return pipeline
+
 
 def run_benchmark(
     run_name: str,
     dataset_name: str,
-    run_mode: str,
-    limit: int,
-    pos_thresh: float,
-    neg_thresh: float,
-    progress_callback: Optional[Callable] = None
-):
-    # Standardize run_name format: {run_name}_{dataset_name}_{mode}_{timestamp}
-    from datetime import datetime
+    run_mode: str = "full_stack",
+    limit: Optional[int] = None,
+    pos_thresh: float = 0.1,
+    neg_thresh: float = -0.1,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> Dict[str, Any]:
+    dataset_path = Path(get_dataset_path(dataset_name))
+    loader = get_dataset_loader(dataset_name)
+    items = loader(dataset_path)
+    if limit and limit > 0:
+        items = items[:limit]
+    total_items = len(items)
+    logger.info("Starting benchmark: dataset=%s, run_mode=%s, samples=%d", dataset_name, run_mode, total_items)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    standardized_run_name = f"{run_name}_{dataset_name}_{run_mode}_{timestamp}"
-    
-    run_dir = os.path.join("outputs", "benchmarks", standardized_run_name)
-    traces_dir = os.path.join(run_dir, "traces")
-    os.makedirs(traces_dir, exist_ok=True)
-    run_dir = os.path.join("outputs", "benchmarks", standardized_run_name)
-    traces_dir = os.path.join(run_dir, "traces")
-    os.makedirs(traces_dir, exist_ok=True)
-    log_file_path = os.path.join(run_dir, "benchmark.log")
-    
-    file_handler = logging.FileHandler(log_file_path)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    final_run_name = f"{run_name}_{timestamp}"
+    run_dir = OUTPUT_ROOT / final_run_name
+    _ensure_output_dir(run_dir)
+    graph_reports_dir = run_dir / "graph_reports"
+    graph_reports_dir.mkdir(parents=True, exist_ok=True)
+
+    log_path = run_dir / "benchmark.log"
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     file_handler.setFormatter(formatter)
-    
-    if not any(isinstance(h, logging.FileHandler) and h.baseFilename == log_file_path for h in logger.handlers):
-        logger.addHandler(file_handler)
-    
-    logger.propagate = False
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.INFO)
 
-    logger.info(f"Starting benchmark: {standardized_run_name}")
-    logger.info(f"Parameters: dataset={dataset_name}, mode={run_mode}, limit={limit}, pos_thresh={pos_thresh}, neg_thresh={neg_thresh}")
+    pipeline = _get_pipeline(run_mode)
 
-    # Initialize the pipeline once to avoid reloading models for every item
-    logger.info(f"Initializing pipeline in '{run_mode}' mode...")
-    pipeline = run_pipeline_for_text(text="", mode=run_mode, return_pipeline=True)
-    logger.info("Pipeline initialized.")
+    gold_labels: List[str] = []
+    pred_labels: List[str] = []
+    error_details: List[Dict[str, Any]] = []
+    error_rows: List[Dict[str, Any]] = []
+    match_rows: List[Dict[str, Any]] = []
+    sentence_records: List[Dict[str, Any]] = []
+    error_summary: Counter[str] = Counter()
+    sentence_precision_values: List[float] = []
+    sentence_recall_values: List[float] = []
+    sentence_f1_values: List[float] = []
+
+    stats = defaultdict(int)
+    stats["requested_sentences"] = total_items
+    stats["sentence_errors"] = 0
+    graph_sequence = 1
+
+    def _register_error(
+        issue_type: str,
+        sentence_item: DatasetItem,
+        snapshot: Dict[str, Any],
+        gold_entry: Optional[GoldAspect],
+        pred_entry: Optional[PredictedAspect],
+        match_score: Optional[float],
+        analysis: Dict[str, Any],
+    ) -> None:
+        nonlocal graph_sequence
+        path = _persist_graph_snapshot(snapshot, graph_reports_dir, graph_sequence, sentence_item.sentence_id, issue_type)
+        if path is not None:
+            graph_sequence += 1
+            graph_reference = str(path.relative_to(PROJECT_ROOT))
+        else:
+            graph_reference = None
+        modules = _module_hypothesis(issue_type)
+        detail = {
+            "sentence_id": sentence_item.sentence_id,
+            "text": sentence_item.text,
+            "issue_type": issue_type,
+            "probable_modules": modules,
+            "graph_report": graph_reference,
+            "gold": _gold_to_dict(gold_entry) if gold_entry else None,
+            "predicted": _predicted_to_dict(pred_entry) if pred_entry else None,
+            "match_score": match_score,
+            "analysis": analysis,
+        }
+        error_details.append(detail)
+        error_summary[issue_type] += 1
+        csv_row = {
+            "issue_type": issue_type,
+            "probable_modules": ";".join(modules),
+            "graph_report": graph_reference or "",
+            "id": sentence_item.sentence_id,
+            "text": sentence_item.text,
+            "gold_aspect": gold_entry.annotation.term if gold_entry else analysis.get("closest_gold_term", ""),
+            "gold_polarity": _normalize_gold_polarity(gold_entry.annotation.polarity) if gold_entry else analysis.get("closest_gold_polarity", ""),
+            "pred_aspect": pred_entry.canonical if pred_entry else analysis.get("closest_pred_aspect", ""),
+            "pred_polarity": pred_entry.polarity if pred_entry else analysis.get("closest_pred_polarity", ""),
+            "pred_score": pred_entry.score if pred_entry else analysis.get("closest_pred_score", ""),
+            "match_score": match_score if match_score is not None else analysis.get("similarity_score", ""),
+            "analysis": json.dumps(analysis, sort_keys=True),
+        }
+        error_rows.append(csv_row)
+        if issue_type == "pipeline_exception":
+            logger.error("Pipeline exception on sentence %s", sentence_item.sentence_id)
+        else:
+            logger.warning("Detected %s on sentence %s", issue_type, sentence_item.sentence_id)
 
     try:
-        dataset_path = get_dataset_path(dataset_name)
-        loader = get_dataset_loader(dataset_name)
-        
-        # Handle unified datasets (multiple files)
-        if isinstance(dataset_path, list):
-            data = []
-            for path in dataset_path:
-                file_data = loader(path)
-                # Add source info to each item
-                for item in file_data:
-                    item['source_file'] = os.path.basename(path)
-                data.extend(file_data)
-            logger.info(f"Loaded {len(data)} items from unified dataset {dataset_name} ({len(dataset_path)} files).")
-        else:
-            data = loader(dataset_path)
-            logger.info(f"Loaded {len(data)} items from {dataset_name}.")
-    except FileNotFoundError as e:
-        logger.error(str(e))
-        raise
-
-    # Randomize the data order to get better coverage in limited runs
-    if limit > 0 and limit < len(data):
-        # random.seed(42)  # Fixed seed for reproducibility
-        random.shuffle(data)
-        logger.info(f"Shuffled dataset for better coverage in limited runs.")
-
-    if limit > 0:
-        data = data[:limit]
-        logger.info(f"Limiting run to {len(data)} items.")
-
-    y_true, y_pred = [], []
-    error_analysis_data = []
-    processed_items = set()
-
-    for i, item in enumerate(tqdm(data, desc="Running Benchmark")):
-        text = item['text']
-        gold_aspects = item['aspects']
-        item_id = item.get('id', str(i))
-        
-        try:
-            # Use the pre-initialized pipeline to execute the analysis
-            pipeline_trace = pipeline.run(text)
-            pred_sentiments = pipeline_trace.get("final_sentiments", {})
-            matched_results = match_aspects(gold_aspects, pred_sentiments, text)
-            
-            for res in matched_results:
-                y_true.append(res['gold'])
-                y_pred.append(res['pred'])
-                
-                if res['gold'] != res['pred']:
-                    trace_path = None
-                    if item_id not in processed_items:
-                        trace_filename = f"trace_{item_id}.json"
-                        trace_path = os.path.join(traces_dir, trace_filename)
-                        
-                        detailed_trace = {
-                            "item_id": item_id,
-                            "input_text": text,
-                            "gold_aspects": gold_aspects,
-                            "pipeline_mode": run_mode,
-                            "execution_trace": pipeline_trace,
-                            "matched_results": matched_results,
-                            "thresholds": {"positive": pos_thresh, "negative": neg_thresh}
+        with tqdm(items, total=total_items, desc="Benchmark", unit="sentence", disable=total_items == 0) as progress:
+            for enumerated_index, item in enumerate(progress, start=1):
+                zero_based_index = enumerated_index - 1
+                has_error = False
+                sentence_issue_types: List[str] = []
+                graph_snapshot: Dict[str, Any] = {}
+                try:
+                    result = pipeline.process(item.text, debug=False)
+                except Exception as exc:
+                    stats["processing_errors"] += 1
+                    stats["sentence_errors"] += 1
+                    logger.exception("Failed to process sentence %s", item.sentence_id)
+                    analysis = {
+                        "exception": repr(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                    _register_error("pipeline_exception", item, {}, None, None, None, analysis)
+                    sentence_records.append(
+                        {
+                            "sentence_id": item.sentence_id,
+                            "text": item.text,
+                            "gold_count": 0,
+                            "pred_count": 0,
+                            "matched_count": 0,
+                            "issue_types": ["pipeline_exception"],
+                            "precision": 0.0,
+                            "recall": 0.0,
+                            "f1": 0.0,
                         }
-                        
-                        with open(trace_path, 'w') as f:
-                            json.dump(detailed_trace, f, indent=2, default=str)
-                        processed_items.add(item_id)
+                    )
+                    sentence_precision_values.append(0.0)
+                    sentence_recall_values.append(0.0)
+                    sentence_f1_values.append(0.0)
+                    if progress_callback:
+                        try:
+                            progress_callback(zero_based_index, total_items)
+                        except Exception:
+                            logger.debug("Progress callback raised an exception", exc_info=True)
+                    progress.set_postfix(errors=stats["sentence_errors"], matched=stats["matched_aspects"])
+                    continue
 
-                    error_analysis_data.append({
-                        "id": item_id,
-                        "text": text,
-                        "term": res['term'],
-                        "gold": res['gold'],
-                        "pred": res['pred'],
-                        "score": res['score'],
-                        "matched_entity": res['matched_entity'],
-                        "trace_path": trace_path
-                    })
-                    
-        except Exception as e:
-            logger.error(f"Failed to process item {item_id}: {e}", exc_info=True)
+                aggregate_results = result.get("aggregate_results") or {}
+                predicted_aspects = _prepare_predicted(aggregate_results, pos_thresh, neg_thresh)
+                gold_aspects = _prepare_gold(item.aspects)
+                graph_snapshot = _graph_snapshot(result.get("graph"))
 
-        if progress_callback:
-            progress_callback(i, len(data))
+                matches, unmatched_gold, unmatched_pred = _match_aspects(predicted_aspects, gold_aspects)
+                stats["total_sentences"] += 1
+                stats["gold_aspects"] += len(gold_aspects)
+                stats["pred_aspects"] += len(predicted_aspects)
+                stats["matched_aspects"] += len(matches)
+                stats["unmatched_gold"] += len(unmatched_gold)
+                stats["unmatched_pred"] += len(unmatched_pred)
 
-    logger.info("Benchmark processing complete. Generating artifacts...")
-    save_artifacts(run_dir, y_true, y_pred, error_analysis_data)
-    logger.info(f"Benchmark run '{run_name}' finished. Saved {len(processed_items)} detailed error traces.")
-    
-    logger.removeHandler(file_handler)
-    file_handler.close()
+                gold_count = len(gold_aspects)
+                pred_count = len(predicted_aspects)
+                match_count = len(matches)
+                if gold_count == 0 and pred_count == 0:
+                    sentence_precision = 1.0
+                    sentence_recall = 1.0
+                    sentence_f1 = 1.0
+                else:
+                    sentence_precision = match_count / pred_count if pred_count else 0.0
+                    sentence_recall = match_count / gold_count if gold_count else 0.0
+                    sentence_f1 = (2 * sentence_precision * sentence_recall / (sentence_precision + sentence_recall)) if (sentence_precision + sentence_recall) else 0.0
+                sentence_precision_values.append(sentence_precision)
+                sentence_recall_values.append(sentence_recall)
+                sentence_f1_values.append(sentence_f1)
 
-def main():
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        prog="benchmark", 
-        description="Run ETSA benchmark evaluation on sentiment analysis datasets"
-    )
-    parser.add_argument(
-        "--dataset", 
-        required=True, 
-        choices=["test_laptop_2014", "test_restaurant_2014", "test_laptop_2016", "test_restaurant_2016", "unified_2014", "unified_2016"],
-        help="Dataset to benchmark against"
-    )
-    parser.add_argument(
-        "--mode", 
-        default="full_stack", 
-        choices=["full_stack", "efficiency", "no_formulas", "vader_baseline", "transformer_absa", "ner_basic", "no_modifiers", "no_relations"],
-        help="Pipeline mode to run. full_stack (complete pipeline), efficiency (fast rule-based), no_formulas (ablation test - null averages), vader_baseline (VADER sentiment on all entities), transformer_absa (DeBERTa-v3 end-to-end ABSA), ner_basic (basic NER no coreference), no_modifiers (no modifier extraction), no_relations (no relation extraction)"
-    )
-    parser.add_argument(
-        "--limit", 
-        type=int, 
-        default=0,
-        help="Limit number of items to process (0 = all)"
-    )
-    parser.add_argument(
-        "--pos-threshold", 
-        type=float, 
-        default=0.1,
-        help="Positive sentiment threshold"
-    )
-    parser.add_argument(
-        "--neg-threshold", 
-        type=float, 
-        default=-0.1,
-        help="Negative sentiment threshold"
-    )
-    parser.add_argument(
-        "--run-name", 
-        default=None,
-        help="Custom name for this benchmark run (default: {dataset}_{mode})"
-    )
-    parser.add_argument(
-        "--verbose", "-v", 
-        action="store_true",
-        help="Enable verbose logging"
-    )
-    
-    args = parser.parse_args()
-    
-    # Use unified naming scheme: dataset_mode (same as app.py)
-    if args.run_name is None:
-        run_name = f"{args.dataset}_{args.mode}"
-    else:
-        run_name = args.run_name
-    
-    # Configure logging
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-        ]
-    )
-    
-    logger = logging.getLogger(__name__)
-    
+                for gold_entry, pred_entry, sim in matches:
+                    gold_pol = _normalize_gold_polarity(gold_entry.annotation.polarity)
+                    pred_pol = pred_entry.polarity
+                    gold_labels.append(gold_pol)
+                    pred_labels.append(pred_pol)
+                    record = {
+                        "issue_type": "correct",
+                        "id": item.sentence_id,
+                        "text": item.text,
+                        "gold_aspect": gold_entry.annotation.term,
+                        "gold_polarity": gold_pol,
+                        "pred_aspect": pred_entry.canonical,
+                        "pred_polarity": pred_pol,
+                        "pred_score": pred_entry.score,
+                        "match_score": sim,
+                    }
+                    if gold_pol != pred_pol:
+                        has_error = True
+                        sentence_issue_types.append("wrong_polarity")
+                        record["issue_type"] = "wrong_polarity"
+                        analysis = {
+                            "predicted_score": pred_entry.score,
+                            "positive_threshold": pos_thresh,
+                            "negative_threshold": neg_thresh,
+                            "gold_polarity": gold_pol,
+                            "predicted_polarity": pred_pol,
+                        }
+                        _register_error("wrong_polarity", item, graph_snapshot, gold_entry, pred_entry, sim, analysis)
+                    match_rows.append(record)
+
+                for gold_entry in unmatched_gold:
+                    has_error = True
+                    sentence_issue_types.append("missing_aspect")
+                    closest_pred, closest_score = _closest_pred_for_gold(gold_entry, predicted_aspects)
+                    analysis = {
+                        "detail": "gold aspect not matched by predictions",
+                        "similarity_score": closest_score,
+                        "closest_pred": _predicted_to_dict(closest_pred) if closest_pred else None,
+                        "closest_pred_aspect": closest_pred.canonical if closest_pred else "",
+                        "closest_pred_polarity": closest_pred.polarity if closest_pred else "",
+                        "closest_pred_score": closest_pred.score if closest_pred else "",
+                        "closest_gold_term": gold_entry.annotation.term,
+                        "closest_gold_polarity": gold_entry.annotation.polarity,
+                    }
+                    _register_error("missing_aspect", item, graph_snapshot, gold_entry, closest_pred, None, analysis)
+
+                for pred_entry in unmatched_pred:
+                    has_error = True
+                    sentence_issue_types.append("spurious_aspect")
+                    closest_gold, closest_score = _closest_gold_for_pred(pred_entry, gold_aspects)
+                    analysis = {
+                        "detail": "predicted aspect without gold match",
+                        "similarity_score": closest_score,
+                        "closest_gold": _gold_to_dict(closest_gold) if closest_gold else None,
+                        "closest_gold_term": closest_gold.annotation.term if closest_gold else "",
+                        "closest_gold_polarity": closest_gold.annotation.polarity if closest_gold else "",
+                        "closest_pred_aspect": pred_entry.canonical,
+                        "closest_pred_polarity": pred_entry.polarity,
+                        "closest_pred_score": pred_entry.score,
+                    }
+                    _register_error("spurious_aspect", item, graph_snapshot, closest_gold, pred_entry, None, analysis)
+
+                sentence_records.append(
+                    {
+                        "sentence_id": item.sentence_id,
+                        "text": item.text,
+                        "gold_count": gold_count,
+                        "pred_count": pred_count,
+                        "matched_count": match_count,
+                        "issue_types": sorted(set(sentence_issue_types)),
+                        "precision": sentence_precision,
+                        "recall": sentence_recall,
+                        "f1": sentence_f1,
+                    }
+                )
+
+                if has_error:
+                    stats["sentence_errors"] += 1
+
+                if progress_callback:
+                    try:
+                        progress_callback(zero_based_index, total_items)
+                    except Exception:
+                        logger.debug("Progress callback raised an exception", exc_info=True)
+
+                progress.set_postfix(errors=stats["sentence_errors"], matched=stats["matched_aspects"])
+    finally:
+        logger.removeHandler(file_handler)
+        file_handler.close()
+
+    labels = _classification_labels(gold_labels, pred_labels)
+    cm = confusion_matrix(gold_labels, pred_labels, labels=labels) if gold_labels else []
+    cm_list = cm.tolist() if hasattr(cm, "tolist") else []
+
+    accuracy = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
     try:
-        # Validate dataset exists
-        dataset_path = get_dataset_path(args.dataset)
-        logger.info(f"Running benchmark on dataset: {args.dataset}")
-        logger.info(f"Dataset path(s): {dataset_path}")
-        logger.info(f"Mode: {args.mode}")
-        logger.info(f"Run name: {run_name}")
-        logger.info(f"Thresholds: pos={args.pos_threshold}, neg={args.neg_threshold}")
-        
-        if args.limit > 0:
-            logger.info(f"Processing limit: {args.limit} items")
-        else:
-            logger.info("Processing all items")
-        
-        # Run the benchmark
-        run_benchmark(
-            run_name=run_name,
-            dataset_name=args.dataset,
-            run_mode=args.mode,
-            limit=args.limit,
-            pos_thresh=args.pos_threshold,
-            neg_thresh=args.neg_threshold
-        )
-        
-        logger.info("Benchmark completed successfully!")
-        
-    except FileNotFoundError as e:
-        logger.error(f"Dataset error: {e}")
-        return 1
-    except KeyboardInterrupt:
-        logger.warning("Benchmark interrupted by user")
-        return 1
-    except Exception as e:
-        logger.error(f"Benchmark failed: {e}", exc_info=True)
-        return 1
-    
-    return 0
+        balanced_acc = balanced_accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
+    except ValueError:
+        balanced_acc = 0.0
 
-if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+    if gold_labels:
+        report_dict = classification_report(
+            gold_labels,
+            pred_labels,
+            labels=labels,
+            output_dict=True,
+            zero_division=0,
+        )
+        report = _serialize_report(report_dict)
+    else:
+        report = {}
+
+    precision = stats["matched_aspects"] / stats["pred_aspects"] if stats["pred_aspects"] else 0.0
+    recall = stats["matched_aspects"] / stats["gold_aspects"] if stats["gold_aspects"] else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+
+    avg_sentence_precision = sum(sentence_precision_values) / len(sentence_precision_values) if sentence_precision_values else 0.0
+    avg_sentence_recall = sum(sentence_recall_values) / len(sentence_recall_values) if sentence_recall_values else 0.0
+    avg_sentence_f1 = sum(sentence_f1_values) / len(sentence_f1_values) if sentence_f1_values else 0.0
+    sentence_error_rate = stats["sentence_errors"] / total_items if total_items else 0.0
+    total_errors = sum(error_summary.values())
+
+    metrics = {
+        "run_name": final_run_name,
+        "dataset": dataset_name,
+        "mode": run_mode,
+        "pos_threshold": pos_thresh,
+        "neg_threshold": neg_thresh,
+        "total_sentences": total_items,
+        "processed_sentences": stats["total_sentences"],
+        "processing_errors": stats["processing_errors"],
+        "sentence_errors": stats["sentence_errors"],
+        "sentence_error_rate": sentence_error_rate,
+        "gold_aspects": stats["gold_aspects"],
+        "pred_aspects": stats["pred_aspects"],
+        "matched_aspects": stats["matched_aspects"],
+        "unmatched_gold": stats["unmatched_gold"],
+        "unmatched_pred": stats["unmatched_pred"],
+        "aspect_precision": precision,
+        "aspect_recall": recall,
+        "aspect_f1": f1,
+        "avg_sentence_precision": avg_sentence_precision,
+        "avg_sentence_recall": avg_sentence_recall,
+        "avg_sentence_f1": avg_sentence_f1,
+        "accuracy": accuracy,
+        "balanced_accuracy": balanced_acc,
+        "classification_report": report,
+        "error_summary": dict(error_summary),
+        "error_count": total_errors,
+        "confusion_matrix": {
+            "labels": labels,
+            "matrix": cm_list,
+        },
+        "graph_reports_dir": str(graph_reports_dir.relative_to(PROJECT_ROOT)),
+    }
+
+    metrics_path = run_dir / "metrics.json"
+    error_details_path = run_dir / "error_details.json"
+    sentence_summary_path = run_dir / "sentence_summary.json"
+    errors_path = run_dir / "error_analysis.csv"
+    matches_path = run_dir / "matches.json"
+
+    metrics.update(
+        {
+            "metrics_path": str(metrics_path.relative_to(PROJECT_ROOT)),
+            "error_details_path": str(error_details_path.relative_to(PROJECT_ROOT)),
+            "sentence_summary_path": str(sentence_summary_path.relative_to(PROJECT_ROOT)),
+            "error_analysis_csv_path": str(errors_path.relative_to(PROJECT_ROOT)),
+            "matches_path": str(matches_path.relative_to(PROJECT_ROOT)),
+        }
+    )
+
+    with metrics_path.open("w", encoding="utf-8") as handle:
+        json.dump(metrics, handle, indent=2)
+
+    if cm_list:
+        cm_path = run_dir / "confusion_matrix.png"
+        _plot_confusion_matrix(cm_list, labels, cm_path)
+
+    with error_details_path.open("w", encoding="utf-8") as handle:
+        json.dump(error_details, handle, indent=2)
+
+    with sentence_summary_path.open("w", encoding="utf-8") as handle:
+        json.dump(sentence_records, handle, indent=2)
+
+    fieldnames = [
+        "issue_type",
+        "probable_modules",
+        "graph_report",
+        "id",
+        "text",
+        "gold_aspect",
+        "gold_polarity",
+        "pred_aspect",
+        "pred_polarity",
+        "pred_score",
+        "match_score",
+        "analysis",
+    ]
+    with errors_path.open("w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        if error_rows:
+            writer.writerows(error_rows)
+
+    with matches_path.open("w", encoding="utf-8") as handle:
+        json.dump(match_rows, handle, indent=2)
+
+    logger.info(
+        "Benchmark complete: matched=%d precision=%.3f recall=%.3f accuracy=%.3f errors=%d sentences_with_errors=%d",
+        stats["matched_aspects"],
+        precision,
+        recall,
+        accuracy,
+        total_errors,
+        stats["sentence_errors"],
+    )
+
+    return metrics
+
+metrics = run_benchmark(
+    "test_laptop_2014",
+    "test_laptop_2014",
+    "full_stack",
+    None,
+    0.1,
+    -0.1
+)
+
+print(metrics)
