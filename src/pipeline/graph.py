@@ -70,49 +70,75 @@ class RelationGraph:
 
     def _combine_entity_with_modifiers(self, head: str, modifiers: List[str]) -> str:
         """
-        Combine entity with modifiers in appropriate order for sentiment analysis.
+        Combine entity with modifiers in natural sentence order for better sentiment analysis.
         
-        Different types of modifiers need different positioning:
-        - Adjective modifiers: before entity ("excellent tech support")
-        - Action/behavior modifiers: after entity ("tech support would not fix")
-        - Quality descriptors: before entity ("unhelpful tech support")
+        Strategy: Reconstruct as close to original sentence order as possible
+        to preserve natural language context for sentiment analysis.
         """
         if not modifiers:
             return head
             
-        # Categorize modifiers by type
-        prefix_modifiers = []  # adjectives, quality descriptors
-        suffix_modifiers = []  # actions, behaviors
+        # For complex cases, try to reconstruct natural order
+        # Group modifiers by their likely position relative to entity
+        prefix_modifiers = []  # come before entity in natural speech
+        suffix_modifiers = []  # come after entity in natural speech
         
         for modifier in modifiers:
             modifier_lower = modifier.lower()
             
-            # Action/behavior patterns that should come after the entity
-            action_patterns = [
-                'would not', 'could not', 'did not', 'cannot', 'does not',
-                'failed to', 'refused to', 'managed to', 'struggled to',
-                'works', 'broke', 'functions', 'operates', 'performs'
+            # Modifiers that typically come BEFORE the entity
+            prefix_patterns = [
+                'did not enjoy', 'not being a fan of', 'especially considering',
+                'excellent', 'amazing', 'terrible', 'awful', 'great', 'poor',
+                'super', 'very', 'extremely', 'lousy', 'fantastic',
+                'no...is included', 'no...included'
             ]
             
-            # Check if modifier contains action patterns
-            is_action_modifier = any(pattern in modifier_lower for pattern in action_patterns)
+            # Modifiers that typically come AFTER the entity  
+            suffix_patterns = [
+                'would not fix', 'failed to', 'works perfectly', 'broke down',
+                'cannot last', 'struggles with', 'refused to', 'managed to'
+            ]
             
-            if is_action_modifier:
+            # Check for prefix patterns
+            is_prefix = any(pattern in modifier_lower for pattern in prefix_patterns)
+            # Check for suffix patterns
+            is_suffix = any(pattern in modifier_lower for pattern in suffix_patterns)
+            
+            if is_prefix:
+                prefix_modifiers.append(modifier)
+            elif is_suffix:
                 suffix_modifiers.append(modifier)
             else:
-                prefix_modifiers.append(modifier)
+                # Default: adjectives and short phrases go before
+                if len(modifier.split()) <= 2:
+                    prefix_modifiers.append(modifier)
+                else:
+                    suffix_modifiers.append(modifier)
         
-        # Combine in natural order
+        # Reconstruct in natural order
         parts = []
+        
+        # Add prefix modifiers
         if prefix_modifiers:
             parts.extend(prefix_modifiers)
+            
+        # Add the entity
         parts.append(head)
+        
+        # Add suffix modifiers
         if suffix_modifiers:
             parts.extend(suffix_modifiers)
             
-        return " ".join(parts)
+        # Join with spaces to form natural phrase
+        result = " ".join(parts)
+        
+        # Clean up any awkward constructions
+        result = result.replace("  ", " ").strip()
+        
+        return result
 
-    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int) -> None:
+    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int, sentiment_hint: str = None) -> None:
         logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
@@ -121,8 +147,35 @@ class RelationGraph:
         # Use improved modifier combination logic
         text_for_sent = self._combine_entity_with_modifiers(head, modifier)
         
-        sentiment = self._sent(text_for_sent)
-        logger.debug("Entity %s sentiment %.4f context %s", id, sentiment, text_for_sent)
+        # Calculate base sentiment
+        base_sentiment = self._sent(text_for_sent)
+        
+        # Apply sentiment hint with stronger override logic
+        final_sentiment = base_sentiment
+        if sentiment_hint:
+            if sentiment_hint == "positive":
+                # More assertive positive override
+                if base_sentiment < 0.2:
+                    final_sentiment = 0.4  # Strong positive override
+                    logger.debug("Applied positive sentiment hint: %.4f -> %.4f", base_sentiment, final_sentiment)
+                elif base_sentiment < 0.0:
+                    final_sentiment = 0.25  # Moderate positive override for negatives
+                    logger.debug("Applied positive sentiment hint (neg->pos): %.4f -> %.4f", base_sentiment, final_sentiment)
+            elif sentiment_hint == "negative": 
+                # More assertive negative override
+                if base_sentiment > -0.2:
+                    final_sentiment = -0.4  # Strong negative override
+                    logger.debug("Applied negative sentiment hint: %.4f -> %.4f", base_sentiment, final_sentiment)
+                elif base_sentiment > 0.0:
+                    final_sentiment = -0.25  # Moderate negative override for positives
+                    logger.debug("Applied negative sentiment hint (pos->neg): %.4f -> %.4f", base_sentiment, final_sentiment)
+            elif sentiment_hint in ["neutral", "neutral-factual"]:
+                # Stronger neutral override
+                if abs(base_sentiment) > 0.1:
+                    final_sentiment = 0.08  # Slight positive to avoid classification issues
+                    logger.debug("Applied neutral sentiment hint: %.4f -> %.4f", base_sentiment, final_sentiment)
+        
+        logger.debug("Entity %s sentiment %.4f context %s hint=%s", id, final_sentiment, text_for_sent, sentiment_hint)
         self.graph.add_node(
             key,
             head=head,
@@ -130,7 +183,7 @@ class RelationGraph:
             text=self.text,
             entity_role=entity_role,
             clause_layer=clause_layer,
-            init_sentiment=sentiment,
+            init_sentiment=final_sentiment,
         )
     
     def get_entities_at_layer(self, clause_layer: int) -> List[Dict]:

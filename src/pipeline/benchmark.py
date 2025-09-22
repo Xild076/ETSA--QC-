@@ -485,9 +485,15 @@ def run_benchmark(
     dataset_path = Path(get_dataset_path(dataset_name))
     loader = get_dataset_loader(dataset_name)
     items = loader(dataset_path)
+    
+    # Shuffle dataset for broader evaluation scope
+    import random
+    shuffled_items = items.copy()
+    random.shuffle(shuffled_items)
+    
     if limit and limit > 0:
-        items = items[:limit]
-    total_items = len(items)
+        shuffled_items = shuffled_items[:limit]
+    total_items = len(shuffled_items)
     logger.info("Starting benchmark: dataset=%s, run_mode=%s, samples=%d", dataset_name, run_mode, total_items)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -573,7 +579,7 @@ def run_benchmark(
             logger.warning("Detected %s on sentence %s", issue_type, sentence_item.sentence_id)
 
     try:
-        with tqdm(items, total=total_items, desc="Benchmark", unit="sentence", disable=total_items == 0) as progress:
+        with tqdm(shuffled_items, total=total_items, desc="Benchmark", unit="sentence", disable=total_items == 0) as progress:
             for enumerated_index, item in enumerate(progress, start=1):
                 zero_based_index = enumerated_index - 1
                 has_error = False

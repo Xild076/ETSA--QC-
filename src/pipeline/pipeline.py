@@ -93,8 +93,10 @@ class SentimentPipeline:
                 mention_name = mention[0]
                 mention_clause_index = mention[1]
                 # Correct argument order: text first, then entity
-                modifiers = self.modifier_extractor.extract(clauses[mention_clause_index], mention_name)["modifiers"]
-                graph.add_entity_node(aspect_id, mention_name, modifiers, "none", mention_clause_index)
+                modifier_result = self.modifier_extractor.extract(clauses[mention_clause_index], mention_name)
+                modifiers = modifier_result["modifiers"]
+                sentiment_hint = modifier_result.get("sentiment_hint")
+                graph.add_entity_node(aspect_id, mention_name, modifiers, "none", mention_clause_index, sentiment_hint)
 
         
         for clause_index, clause in enumerate(clauses):
