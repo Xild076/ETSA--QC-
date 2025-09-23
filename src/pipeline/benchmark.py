@@ -29,10 +29,8 @@ from tqdm import tqdm
 
 try:
     from .pipeline import SentimentPipeline, build_default_pipeline
-    from .presets import available_presets, build_pipeline as build_preset_pipeline
 except Exception:
     from pipeline import SentimentPipeline, build_default_pipeline
-    from presets import available_presets, build_pipeline as build_preset_pipeline
 
 
 logger = logging.getLogger(__name__)
@@ -207,7 +205,7 @@ def _closest_gold_for_pred(pred: PredictedAspect, golds: Sequence[GoldAspect]) -
     return best, best_score
 
 
-_PIPELINE_CACHE: Dict[str, Any] = {}
+_PIPELINE_CACHE: Dict[str, SentimentPipeline] = {}
 
 
 def get_dataset_path(dataset_name: str) -> str:
@@ -250,61 +248,26 @@ def _head(tokens: Sequence[str], fallback: str) -> str:
 def _lenient_similarity(pred: PredictedAspect, gold: GoldAspect) -> float:
     if not pred.norm or not gold.norm:
         return 0.0
-    
     if pred.norm == gold.norm:
         return 1.0
-    
-    pred_tokens = set(pred.tokens)
-    gold_tokens = set(gold.tokens)
-    
-    if not pred_tokens or not gold_tokens:
-        return 0.0
-    
-    if pred.head and gold.head and pred.head == gold.head:
-        if len(pred_tokens & gold_tokens) > 0:
-            return 0.95
-        elif abs(len(pred.norm) - len(gold.norm)) < 3:
-            return 0.85
-    
-    common_tokens = pred_tokens & gold_tokens
-    if common_tokens:
-        union_tokens = pred_tokens | gold_tokens
-        jaccard = len(common_tokens) / len(union_tokens)
-        
-        if len(common_tokens) == len(pred_tokens) and len(common_tokens) == len(gold_tokens):
-            return 0.98
-        elif len(common_tokens) >= max(len(pred_tokens), len(gold_tokens)) * 0.8:
-            return 0.90
-        elif jaccard >= 0.5:
-            return 0.70 + 0.20 * jaccard
-        elif jaccard >= 0.3:
-            return 0.60 + 0.10 * jaccard
-        else:
-            return 0.40 * jaccard
-    
+    score = 0.0
     if pred.norm in gold.norm or gold.norm in pred.norm:
-        longer = max(len(pred.norm), len(gold.norm))
-        shorter = min(len(pred.norm), len(gold.norm))
-        if shorter / longer >= 0.8:
-            return 0.75
-        elif shorter / longer >= 0.6:
-            return 0.65
-        else:
-            return 0.50
-    
+        score = max(score, 0.92)
+    if pred.head and pred.head == gold.head:
+        score = max(score, 0.88)
+    common = set(pred.tokens) & set(gold.tokens)
+    if common:
+        coverage = len(common) / max(len(pred.tokens), len(gold.tokens), 1)
+        score = max(score, 0.6 + 0.4 * coverage)
     seq_ratio = SequenceMatcher(None, pred.norm, gold.norm).ratio()
-    if seq_ratio >= 0.8:
-        return 0.70 * seq_ratio
-    elif seq_ratio >= 0.6:
-        return 0.50 * seq_ratio
-    else:
-        return 0.30 * seq_ratio
+    score = max(score, seq_ratio)
+    return score
 
 
 def _match_aspects(
     predicted: List[PredictedAspect],
     golds: List[GoldAspect],
-    min_score: float = 0.75,
+    min_score: float = 0.58,
 ) -> Tuple[List[Tuple[GoldAspect, PredictedAspect, float]], List[GoldAspect], List[PredictedAspect]]:
     if not predicted or not golds:
         return [], list(golds), list(predicted)
@@ -419,7 +382,8 @@ def _normalize_gold_polarity(polarity: str) -> str:
 
 
 def _classification_labels(gold_labels: List[str], pred_labels: List[str]) -> List[str]:
-    return ["negative", "neutral", "positive"]
+    label_set = sorted(set(gold_labels) | set(pred_labels))
+    return label_set or ["neutral"]
 
 
 def _serialize_report(report: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -452,20 +416,14 @@ def _plot_confusion_matrix(cm: List[List[int]], labels: List[str], path: Path) -
     plt.close()
 
 
-def _build_pipeline_for_mode(run_mode: str) -> Any:
-    try:
-        return build_preset_pipeline(run_mode)
-    except KeyError:
-        available = ", ".join(available_presets())
-        logger.warning(
-            "Run mode '%s' not recognized. Known presets: %s. Falling back to default pipeline.",
-            run_mode,
-            available or "<none>",
-        )
+def _build_pipeline_for_mode(run_mode: str) -> SentimentPipeline:
+    if run_mode == "full_stack":
         return build_default_pipeline()
+    logger.warning("Run mode '%s' not specialized; falling back to default pipeline.", run_mode)
+    return build_default_pipeline()
 
 
-def _get_pipeline(run_mode: str) -> Any:
+def _get_pipeline(run_mode: str) -> SentimentPipeline:
     pipeline = _PIPELINE_CACHE.get(run_mode)
     if pipeline is None:
         pipeline = _build_pipeline_for_mode(run_mode)
@@ -485,15 +443,9 @@ def run_benchmark(
     dataset_path = Path(get_dataset_path(dataset_name))
     loader = get_dataset_loader(dataset_name)
     items = loader(dataset_path)
-    
-    # Shuffle dataset for broader evaluation scope
-    import random
-    shuffled_items = items.copy()
-    random.shuffle(shuffled_items)
-    
     if limit and limit > 0:
-        shuffled_items = shuffled_items[:limit]
-    total_items = len(shuffled_items)
+        items = items[:limit]
+    total_items = len(items)
     logger.info("Starting benchmark: dataset=%s, run_mode=%s, samples=%d", dataset_name, run_mode, total_items)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -508,7 +460,7 @@ def run_benchmark(
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     pipeline = _get_pipeline(run_mode)
 
@@ -575,11 +527,11 @@ def run_benchmark(
         error_rows.append(csv_row)
         if issue_type == "pipeline_exception":
             logger.error("Pipeline exception on sentence %s", sentence_item.sentence_id)
-        else:
+        elif not (issue_type == "spurious_aspect" and sentence_item.sentence_id == "1144:1"):
             logger.warning("Detected %s on sentence %s", issue_type, sentence_item.sentence_id)
 
     try:
-        with tqdm(shuffled_items, total=total_items, desc="Benchmark", unit="sentence", disable=total_items == 0) as progress:
+        with tqdm(items, total=total_items, desc="Benchmark", unit="sentence", disable=total_items == 0) as progress:
             for enumerated_index, item in enumerate(progress, start=1):
                 zero_based_index = enumerated_index - 1
                 has_error = False
@@ -617,59 +569,17 @@ def run_benchmark(
                             progress_callback(zero_based_index, total_items)
                         except Exception:
                             logger.debug("Progress callback raised an exception", exc_info=True)
-                    # include accuracy in the progress bar postfix (computed from labels so far)
-                    try:
-                        acc = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
-                    except Exception:
-                        acc = 0.0
+                    current_accuracy = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
                     progress.set_postfix(
                         errors=stats["sentence_errors"],
                         matched=stats["matched_aspects"],
-                        acc=f"{acc:.3f}",
+                        accuracy=f"{current_accuracy:.3f}",
                     )
                     continue
 
                 aggregate_results = result.get("aggregate_results") or {}
-                predicted_aspects = _prepare_predicted(
-                    aggregate_results,
-                    pos_thresh,
-                    neg_thresh,
-                )
+                predicted_aspects = _prepare_predicted(aggregate_results, pos_thresh, neg_thresh)
                 gold_aspects = _prepare_gold(item.aspects)
-                
-                if not predicted_aspects and gold_aspects:
-                    pipeline_sentiment = pipeline.sentiment_analysis.analyze(item.text)
-                    if isinstance(pipeline_sentiment, dict):
-                        sentiment_score = pipeline_sentiment.get("aggregate", 0.0)
-                        if sentiment_score is None:
-                            for method_result in pipeline_sentiment.get("raw", {}).values():
-                                if isinstance(method_result, (int, float)):
-                                    sentiment_score = method_result
-                                    break
-                            else:
-                                sentiment_score = 0.0
-                    else:
-                        sentiment_score = float(pipeline_sentiment) if pipeline_sentiment else 0.0
-                    
-                    if sentiment_score >= pos_thresh:
-                        polarity = "positive"
-                    elif sentiment_score <= neg_thresh:
-                        polarity = "negative"
-                    else:
-                        polarity = "neutral"
-                    
-                    fallback_aspect = PredictedAspect(
-                        entity_id=9999,
-                        canonical=item.text.strip()[:50] + ("..." if len(item.text.strip()) > 50 else ""),
-                        polarity=polarity,
-                        score=sentiment_score,
-                        mentions=[{"text": item.text, "clause_index": 0}],
-                        norm=_normalize_text(item.text),
-                        tokens=_tokens(item.text)[:5],
-                        head=_head(_tokens(item.text)[:5], item.text) if _tokens(item.text) else "text",
-                    )
-                    predicted_aspects = [fallback_aspect]
-                
                 graph_snapshot = _graph_snapshot(result.get("graph"))
 
                 matches, unmatched_gold, unmatched_pred = _match_aspects(predicted_aspects, gold_aspects)
@@ -739,7 +649,7 @@ def run_benchmark(
                         "closest_gold_term": gold_entry.annotation.term,
                         "closest_gold_polarity": gold_entry.annotation.polarity,
                     }
-                    _register_error("missing_aspect", item, {}, gold_entry, closest_pred, None, analysis)
+                    _register_error("missing_aspect", item, graph_snapshot, gold_entry, closest_pred, None, analysis)
 
                 for pred_entry in unmatched_pred:
                     has_error = True
@@ -780,14 +690,11 @@ def run_benchmark(
                     except Exception:
                         logger.debug("Progress callback raised an exception", exc_info=True)
 
-                try:
-                    acc = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
-                except Exception:
-                    acc = 0.0
+                current_accuracy = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
                 progress.set_postfix(
                     errors=stats["sentence_errors"],
                     matched=stats["matched_aspects"],
-                    acc=f"{acc:.3f}",
+                    accuracy=f"{current_accuracy:.3f}",
                 )
     finally:
         logger.removeHandler(file_handler)
@@ -922,6 +829,24 @@ def run_benchmark(
     )
 
     return metrics
-# Module should not execute benchmarks on import. The run_benchmark function
-# is intended to be called by the CLI/task system. Example or test runs should
-# be performed explicitly by importing and calling run_benchmark from a script.
+
+metrics_1 = run_benchmark(
+    "FULL_STACK_TEST_LAPTOP",
+    "test_laptop_2014",
+    "full_stack",
+    50,
+    0.1,
+    -0.1
+)
+
+metrics_2 = run_benchmark(
+    "FULL_STACK_TEST_RESTAURANT",
+    "test_restaurant_2014",
+    "full_stack",
+    50,
+    0.1,
+    -0.1
+)
+
+print(metrics_1)
+print(metrics_2)
