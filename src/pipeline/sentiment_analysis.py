@@ -1,12 +1,39 @@
-from sentiment.sentiment import get_vader_sentiment
-from sentiment.sentiment import get_textblob_sentiment
-from sentiment.sentiment import get_flair_sentiment
-from sentiment.sentiment import get_pysentimiento_sentiment
-from sentiment.sentiment import get_swn_sentiment
-from sentiment.sentiment import get_nlptown_sentiment
-from sentiment.sentiment import get_finiteautomata_sentiment
-from sentiment.sentiment import get_ProsusAI_sentiment
-from sentiment.sentiment import get_distilbert_logit_sentiment
+import sys
+from pathlib import Path
+
+# If the module is executed directly (python src/pipeline/sentiment_analysis.py),
+# make sure the project root is on sys.path so package imports succeed.
+_this_file = Path(__file__).resolve()
+# parents[0] -> pipeline, parents[1] -> src, parents[2] -> project root
+_project_root = _this_file.parents[2]
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+try:
+    from src.sentiment.sentiment import (
+        get_vader_sentiment,
+        get_textblob_sentiment,
+        get_flair_sentiment,
+        get_pysentimiento_sentiment,
+        get_swn_sentiment,
+        get_nlptown_sentiment,
+        get_finiteautomata_sentiment,
+        get_ProsusAI_sentiment,
+        get_distilbert_logit_sentiment,
+    )
+except Exception:
+    # Fallback for alternate PYTHONPATH layouts
+    from sentiment.sentiment import (
+        get_vader_sentiment,
+        get_textblob_sentiment,
+        get_flair_sentiment,
+        get_pysentimiento_sentiment,
+        get_swn_sentiment,
+        get_nlptown_sentiment,
+        get_finiteautomata_sentiment,
+        get_ProsusAI_sentiment,
+        get_distilbert_logit_sentiment,
+    )
 from typing import List, Literal
 
 class SentimentAnalysis:
@@ -119,3 +146,5 @@ class MultiSentimentAnalysis(SentimentAnalysis):
                 if isinstance(v, (int, float)):
                     return float(v)
         raise ValueError("No numeric score found in method result")
+
+

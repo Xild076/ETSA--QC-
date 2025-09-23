@@ -1,11 +1,9 @@
 import json
 import re
 import time
-import os
-import random
-import logging
 from typing import Dict, Any, List, Optional
 from functools import lru_cache
+import logging
 
 try:
     import spacy
@@ -36,7 +34,7 @@ class _RateLimiter:
         if len(self.timestamps) >= self.max_calls:
             sleep_time = self.period_seconds - (now - self.timestamps[0])
             if sleep_time > 0:
-                time.sleep(sleep_time + min(0.25, random.random() * 0.25))
+                time.sleep(sleep_time)
         self.timestamps.append(time.time())
 
 
@@ -117,80 +115,118 @@ class GemmaModifierExtractor(ModifierExtractor):
         self.rate_limiter = rate_limiter or _ensure_modifier_rate_limiter()
         if genai is None:
             raise RuntimeError("google-generativeai not available")
-        key = api_key or get_env("GOOGLE_API_KEY") or get_env("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        key = api_key or get_env("GOOGLE_API_KEY")
         if not key:
             raise RuntimeError("No API key provided for GemmaModifierExtractor")
         genai.configure(api_key=key)
 
     def _prompt(self, passage: str, entity: str) -> str:
-        return (
-            "<<SYS>>\n"
-            "Extract ALL modifiers that convey sentiment about the entity. Focus on:\n"
-            "1. Complete negation phrases: 'did not enjoy', 'would not fix', 'not being a fan of'\n"
-            "2. Action-based sentiment: 'failed to work', 'works perfectly', 'struggles with'\n"
-            "3. Evaluative context: 'especially considering' (positive context), 'unfortunately' (negative)\n"
-            "4. Factual statements about presence/absence: 'No...included' (neutral), 'comes with' (positive)\n"
-            "5. Quality descriptors: 'excellent', 'terrible', 'lousy', 'amazing'\n"
-            "6. Behavioral/performance indicators: complete phrases that show how entity performs\n"
-            "\n"
-            "CRITICAL RULES:\n"
-            "- Capture COMPLETE negation phrases, not just 'not' - examples: 'would not fix', 'did not enjoy', 'would not work'\n"
-            "- For cross-entity negations like 'Did not enjoy X and Y', apply 'Did not enjoy' to BOTH entities\n"
-            "- ALWAYS include action-based negations like 'would not fix the problem', 'did not work properly'\n"
-            "- Preserve original word order and phrasing from passage\n"
-            "- Include contextual words that affect sentiment interpretation\n"
-            "- For factual statements about absence (No...included), mark as neutral-factual\n"
-            "\n"
-            "EXCLUDE: entity names, pronouns, articles, pure numbers, dates, locations\n"
-            "<</SYS>>\n\n"
-            f"<<PASSAGE>>\n{passage}\n<</PASSAGE>>\n\n"
-            f"<<ENTITY>>\n{entity}\n<</ENTITY>>\n\n"
-            "<<SCHEMA>>\n"
-            "{\n"
-            '  "entity": string,\n'
-            '  "justification": string,\n'
-            '  "modifiers": [string],\n'
-            '  "sentiment_hint": "positive|negative|neutral",\n'
-            f'  "approach_used": "{self.model}",\n'
-            "}\n"
-            "<</SCHEMA>>\n\n"
-            "<<EXAMPLES>>\n"
-            "P: tech support would not fix the problem unless I bought your plan. E: tech support -> modifiers: [\"would not fix the problem\"], sentiment_hint: \"negative\"\n"
-            "P: tech support would not fix the problem. E: tech support -> modifiers: [\"would not fix the problem\"], sentiment_hint: \"negative\"\n"
-            "P: Did not enjoy the new Windows 8 and touchscreen functions. E: Windows 8 -> modifiers: [\"Did not enjoy\"], sentiment_hint: \"negative\"\n"
-            "P: Did not enjoy the new Windows 8 and touchscreen functions. E: touchscreen functions -> modifiers: [\"Did not enjoy\"], sentiment_hint: \"negative\"\n"
-            "P: not being a fan of click pads (industry standard these days). E: click pads -> modifiers: [\"not being a fan of\"], sentiment_hint: \"negative\"\n"
-            "P: it's hard for me to find things about this notebook I don't like, especially considering the $350 price tag. E: price tag -> modifiers: [\"especially considering\", \"hard to find things I don't like about\"], sentiment_hint: \"positive\"\n"
-            "P: No installation disk (DVD) is included. E: installation disk (DVD) -> modifiers: [\"No...is included\"], sentiment_hint: \"neutral\"\n"
-            "P: I blame the Mac OS. E: Mac OS -> modifiers: [\"I blame\"], sentiment_hint: \"negative\"\n"
-            "P: Unfortunately, it runs XP and Microsoft is dropping support. E: XP -> modifiers: [\"Unfortunately...runs\"], sentiment_hint: \"negative\"\n"
-            "P: Service was awful - mostly because staff were overwhelmed. E: Service -> modifiers: [\"was awful - mostly because\"], sentiment_hint: \"negative\"\n"
-            "P: However, the experience was great since the OS does not become unstable. E: OS -> modifiers: [\"However...experience was great\", \"does not become unstable\"], sentiment_hint: \"positive\"\n"
-            "P: I had to get Apple Customer Support to correct the problem. E: Apple Customer Support -> modifiers: [\"had to get...to correct the problem\"], sentiment_hint: \"neutral\"\n"
-            "P: Skip the dessert, it was overpriced and fell short on taste. E: dessert -> modifiers: [\"Skip\", \"overpriced and fell short\"], sentiment_hint: \"negative\"\n"
-            "P: The cold sesame noodles are delectable. E: cold sesame noodles -> modifiers: [\"delectable\"], sentiment_hint: \"positive\"\n"
-            "P: Performance is much much better on the Pro, especially if you install an SSD. E: SSD -> modifiers: [\"much much better\", \"install\"], sentiment_hint: \"positive\"\n"
-            "P: The performance is excellent. E: performance -> modifiers: [\"excellent\"], sentiment_hint: \"positive\"\n"
-            "P: Boot time is super fast. E: Boot time -> modifiers: [\"super fast\"], sentiment_hint: \"positive\"\n"
-            "P: The tech support was unhelpful. E: tech support -> modifiers: [\"unhelpful\"], sentiment_hint: \"negative\"\n"
-            "P: lousy internal speakers. E: internal speakers -> modifiers: [\"lousy\"], sentiment_hint: \"negative\"\n"
-            "P: Amazing performance for anything I throw at it. E: performance -> modifiers: [\"Amazing\"], sentiment_hint: \"positive\"\n"
-            "P: Did not enjoy the meal at all. E: meal -> modifiers: [\"Did not enjoy\", \"at all\"], sentiment_hint: \"negative\"\n"
-            "P: The service was excellent and attentive. E: service -> modifiers: [\"excellent and attentive\"], sentiment_hint: \"positive\"\n"
-            "P: No bread was provided with the meal. E: bread -> modifiers: [\"No...provided\"], sentiment_hint: \"neutral\"\n"
-            "P: I bought a computer yesterday. E: computer -> modifiers: [], sentiment_hint: \"neutral\"\n"
-            "<</EXAMPLES>>\n\n"
-            "<<RESPONSE>>\n"
-            "```json\n"
-            "{\n"
-            f'  "entity": "{entity}",\n'
-            f'  "justification": "explain reasoning for chosen modifiers and sentiment",\n'
-            '  "modifiers": [],\n'
-            '  "sentiment_hint": "positive|negative|neutral",\n'
-            f'  "approach_used": "{self.model}",\n'
-            "}\n"
-            "```\n"
-        )
+        return f"""<<SYS>>
+    You are a meticulous linguist specializing in aspect-based sentiment extraction. Your sole task is to extract ALL and ONLY modifier phrases that describe the single TARGET ENTITY.
+
+    Core Principle:
+    - A "modifier" describes the quality, state, evaluation, or context of ONE entity.
+    - Do NOT extract relations between TWO OR MORE entities.
+
+    Definitions (what to extract, as verbatim spans from the passage):
+    - Direct Descriptions: adjectives/adverbs and their intensifiers (e.g., "very slow", "great").
+    - Negated & Nuanced Descriptions: include negation and hedges (e.g., "not good", "anything but fresh", "not the best").
+    - Clause-Level Predication (CRITICAL when no direct modifier exists): the main predicate or copular/adjectival/verb phrase that conveys sentiment about the entity (e.g., "was dreadful", "works perfectly", "fell apart").
+    - Idioms & Fixed Expressions: complete idiomatic spans that evaluate the entity (e.g., "melts in your mouth", "a total ripoff").
+    - Recommendations & Directives about the entity: evaluative guidance (e.g., "worth trying", "avoid at all costs", "highly recommend").
+
+    Boundary Rules:
+    - Include only spans that attribute evaluative content to the TARGET ENTITY.
+    - Exclude purely factual/type labels (e.g., "asian salad" → exclude "asian" unless it carries evaluation).
+    - Exclude actions describing another agent’s interaction with the entity if they do not evaluate the entity itself (e.g., "the waiter brought the food" is NOT a modifier of "food").
+    - Do not paraphrase; extract minimal contiguous spans verbatim that carry the evaluative meaning. Preserve negation/modality exactly.
+    - Use strict surface-form matching for the ENTITY: treat the provided ENTITY string as the reference mention.
+    - Single-sentence focus: prefer the sentence containing the ENTITY; include cross-sentence spans only if directly anaphoric and clearly evaluative of the ENTITY.
+    - Deduplicate identical spans. Order results by first occurrence in the passage.
+    - Include modifiers that may already appear in the ENTITY string if they carry evaluative content (e.g., ENTITY="the great food" → modifier="great").
+
+    Neutrality & Emptiness:
+    - If the ENTITY is mentioned only in a neutral/factual way with no evaluative content, return an empty "modifiers" list.
+
+    Output Requirements:
+    - Return STRICT JSON only (no Markdown, no code fences), conforming exactly to the schema below.
+    - Justification must briefly explain how you located the spans, especially when using clause-level predication.
+
+    Schema:
+    {{
+    "entity": "string",
+    "justification": "string",
+    "modifiers": ["string"],
+    "approach_used": "{self.model}"
+    }}
+    <</SYS>>
+
+    <<PASSAGE>>
+    {passage}
+    <</PASSAGE>>
+
+    <<ENTITY>>
+    {entity}
+    <</ENTITY>>
+
+    <<EXAMPLES>>
+    P: Did not enjoy the new Windows 8. E: Windows 8 ->
+    {{
+    "entity":"Windows 8",
+    "justification":"Clause-level predicate 'Did not enjoy' evaluates the entity with negation.",
+    "modifiers":["Did not enjoy"],
+    "approach_used":"{self.model}"
+    }}
+
+    P: The service was dreadful! E: service ->
+    {{
+    "entity":"service",
+    "justification":"Copular predicate 'was dreadful' directly evaluates the entity.",
+    "modifiers":["was dreadful"],
+    "approach_used":"{self.model}"
+    }}
+
+    P: tech support would not fix the problem. E: tech support ->
+    {{
+    "entity":"tech support",
+    "justification":"Predicate with modal+negation 'would not fix' evaluates the subject's adequacy.",
+    "modifiers":["would not fix"],
+    "approach_used":"{self.model}"
+    }}
+
+    P: The gnocchi literally melts in your mouth! E: gnocchi ->
+    {{
+    "entity":"gnocchi",
+    "justification":"Idiomatic positive evaluation; extract full verb phrase.",
+    "modifiers":["literally melts in your mouth"],
+    "approach_used":"{self.model}"
+    }}
+
+    P: Entrees include lasagna. E: lasagna ->
+    {{
+    "entity":"lasagna",
+    "justification":"Factual inclusion without evaluation.",
+    "modifiers":[],
+    "approach_used":"{self.model}"
+    }}
+
+    P: The food was tasty and large in portion size. E: portion size ->
+    {{
+    "entity":"portion size",
+    "justification":"Direct descriptor 'large in' evaluates the aspect.",
+    "modifiers":["large in"],
+    "approach_used":"{self.model}"
+    }}
+    <</EXAMPLES>>
+
+    <<RESPONSE>>
+    {{
+    "entity": "{entity}",
+    "justification": "Explain how you identified the modifiers, especially if you used clause-level predication.",
+    "modifiers": [],
+    "approach_used": "{self.model}"
+    }}
+    """
 
     def _call(self, prompt: str) -> str:
         if self.rate_limiter:
@@ -206,13 +242,7 @@ class GemmaModifierExtractor(ModifierExtractor):
             )
         )
         resp = model.generate_content(prompt)
-        text = getattr(resp, "text", None)
-        if not text:
-            try:
-                text = str(resp)
-            except Exception:
-                text = ""
-        return text
+        return resp.text
 
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
         if not text or not entity:
@@ -228,150 +258,26 @@ class GemmaModifierExtractor(ModifierExtractor):
                     mods = []
                 norm = []
                 seen = set()
-                
-                # More permissive filtering - preserve important sentiment phrases
-                basic_stop_words = {"the", "a", "an", "this", "that"}
-                
                 for m in mods:
                     if not isinstance(m, str):
                         continue
                     s = re.sub(r"\s+", " ", m.strip())
-                    if not s or len(s) < 2:
+                    if not s:
                         continue
-                    
-                    # Don't filter out sentiment-bearing phrases
-                    if s.lower() in basic_stop_words:
+                    if s.lower() in seen:
                         continue
-                    
-                    # Don't duplicate the entity name exactly
-                    if s.lower() == entity.lower():
-                        continue
-                    
-                    # Preserve negation and sentiment phrases even if they seem "irrelevant"
-                    sentiment_indicators = [
-                        'not', 'did not', 'would not', 'could not', 'cannot',
-                        'failed', 'refused', 'managed', 'struggled', 
-                        'excellent', 'terrible', 'amazing', 'awful',
-                        'especially', 'unfortunately', 'luckily'
-                    ]
-                    
-                    has_sentiment = any(indicator in s.lower() for indicator in sentiment_indicators)
-                    
-                    # Keep if it has sentiment value or is a multi-word contextual phrase
-                    if has_sentiment or len(s.split()) > 1:
-                        if s.lower() not in seen:
-                            seen.add(s.lower())
-                            norm.append(s)
-                    
-                result = {
+                    seen.add(s.lower())
+                    norm.append(s)
+                return {
                     "entity": entity,
                     "modifiers": norm,
                     "approach_used": self.model,
                     "justification": data.get("justification", "")[:500]
                 }
-                
-                # Include sentiment hint if available for debugging
-                if "sentiment_hint" in data:
-                    result["sentiment_hint"] = data["sentiment_hint"]
-                
-                # Fallback for specific negation patterns if no modifiers found
-                if not norm and entity.lower() in text.lower():
-                    # Look for common negation patterns
-                    # Pattern definitions with sentiment hints
-                    pattern_configs = [
-                        # Context transition markers (Root Cause #1)
-                        (r'\bunfortunately.*(?:runs|dropping|support|issues?)', 'negative'),
-                        (r'\bhowever.*(?:experience was great|does not become unstable)', 'positive'),
-                        (r'(?:mostly|mainly|primarily)\s+because.*(?:overwhelmed|understaffed|busy)', 'negative'),
-                        
-                        # Attribution/blame patterns (Root Cause #2)  
-                        (r'\b(?:i blame|blame the|fault|responsible for).*\b', 'negative'),
-                        (r'\b(?:wrong|incorrect|mistaken).*(?:entree|order|dish|item)', 'negative'),
-                        
-                        # Service interaction contexts (Root Cause #4)
-                        (r'\bhad to get.*(?:support|help).*(?:correct|fix).*problem', 'neutral'),
-                        (r'\b(?:customer support|tech support|help desk).*(?:correct|fix)', 'neutral'),
-                        
-                        # Skip/avoid recommendations (Root Cause #6)
-                        (r'\b(?:skip|avoid).*(?:dessert|dish|item).*(?:overpriced|fell short|disappointing)', 'negative'),
-                        
-                        # Complex explanation contexts (Root Cause #7)
-                        (r'\b(?:awful|terrible|horrible)\s*-\s*(?:mostly|mainly)\s+because', 'negative'),
-                        (r'\bservice was awful.*(?:because|since).*overwhelmed', 'negative'),
-                        
-                        # Physical descriptor interference (Root Cause #5)
-                        (r'\bcold.*noodles.*(?:delectable|delicious|tasty)', 'positive'),
-                        (r'\b(?:overpriced).*(?:fell short|disappointing)', 'negative'),
-                        
-                        # Comparative contexts (Root Cause #3)
-                        (r'\bmuch much better.*especially if you install', 'positive'),
-                        (r'\bunexpected elements.*otherwise predictable', 'neutral'),
-                        (r'\bperformance.*much.*better.*(?:install|upgrade)', 'positive'),
-                        
-                        # Installation/action contexts (Root Cause #8)
-                        (r'\binstall.*(?:ssd|upgrade).*(?:better performance|improvement)', 'positive'),
-                        (r'\bthought.*transition.*difficult.*familiarize', 'neutral'),
-                        
-                        # Enhanced negation patterns
-                        (r'\b(would not|could not|did not|cannot|can\'t|won\'t|wouldn\'t|couldn\'t|didn\'t)\s+\w+\s*(?:the\s+)?(?:problem|issue|work|fix|help|serve|prepare)', 'negative'),
-                        (r'\b(not being a fan of|not enjoy|not work|not fix|not recommend|not impressed|not satisfied|not very sensitive)', 'negative'),
-                        (r'\b(poorly designed|cheap|frustrated|difficult at best)', 'negative'),
-                        
-                        # Specific quality failures (from remaining errors)
-                        (r'\b(?:very\s+)?weak\b', 'negative'),
-                        (r'\btinny\b', 'negative'), 
-                        (r'\bslow(?:ly|ed)?(?:\s+significantly)?\b', 'negative'),
-                        (r'\bnot as fast as\b', 'negative'),
-                        (r'\bsounding tinny\b', 'negative'),
-                        
-                        # Neutral factual patterns  
-                        (r'\bno\s+\w+.*(?:included|provided|available|offered|in the)\b', 'neutral'),
-                        (r'\b(the only debate|whether to|time for a new|thought the transition)', 'neutral'),
-                        (r'\bnot drowned in.*sauce', 'neutral'),
-                        
-                        # Missing features/neutral statements (from remaining errors)
-                        (r'\bthe only thing I miss\b', 'neutral'),
-                        (r'\bnot terribly important\b', 'neutral'),
-                        (r'\bgets plugged into.*external\b', 'neutral'),
-                        (r'\bhaving issues with.*boards?\b', 'neutral'),
-                        
-                        # Positive context patterns
-                        (r'especially considering\s+(?:the\s+)?\$?\d+\s*\w*\s*(?:price|tag|cost|value)', 'positive'),
-                        (r'hard\s+(?:for\s+me\s+)?to\s+find\s+(?:things|anything).*don\'t\s+like.*especially\s+considering', 'positive'),
-                        (r'\b(excellent|amazing|outstanding|perfect|wonderful|fantastic)\s+(?:food|service|meal|dish|restaurant|performance)', 'positive'),
-                        (r'\bromantic date heaven.*treated like.*vip', 'positive'),
-                        
-                        # Negative descriptors
-                        (r'\b(terrible|awful|horrible|disgusting|worst)\s+(?:food|service|meal|dish|experience)', 'negative'),
-                        (r'\b(beats\s+\w+\s+easily)', 'negative'),
-                        (r'\bverbally assaults.*gives.*lip', 'negative')
-                    ]
-                    
-                    for pattern, sentiment_hint in pattern_configs:
-                        matches = re.finditer(pattern, text, re.IGNORECASE)
-                        for match in matches:
-                            # Check if this pattern is near the entity
-                            entity_pos = text.lower().find(entity.lower())
-                            match_pos = match.start()
-                            # If within reasonable distance (same sentence usually)
-                            if abs(entity_pos - match_pos) < 100:
-                                modifier = match.group().strip()
-                                if modifier not in [m.lower() for m in norm]:
-                                    norm.append(modifier)
-                                    result["justification"] += f" [pattern: {modifier}]"
-                                    if "sentiment_hint" not in result:
-                                        result["sentiment_hint"] = sentiment_hint
-                                    break
-                
-                result["modifiers"] = norm
-                    
-                return result
             except Exception as e:
                 last_err = e
                 if i < self.retries:
-                    sleep = self.backoff * (2 ** i)
-                    sleep += min(0.25, random.random() * 0.25)
-                    time.sleep(sleep)
+                    time.sleep(self.backoff * (i + 1))
         return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": f"failure: {last_err}"}
 
 class SpacyModifierExtractor(ModifierExtractor):

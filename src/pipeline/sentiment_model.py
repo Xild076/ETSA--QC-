@@ -51,19 +51,19 @@ class AssociationSentimentModel(SentimentModel):
     def __init__(self, score_key: str = 'user_normalized_sentiment_scores'):
         self.func = get_association_function(score_key)
 
-    def calculate(self, s_entity: float, s_other: float):
-        v_1 = self.func(s_entity, s_other)
-        v_2 = self.func(s_other, s_entity)
-        return v_1, v_2
+    def calculate(self, s_entity: float, s_other: float, split: bool = False) -> float:
+        if not self.func:
+            return 0.0
+        return self.func(s_entity, s_other), self.func(s_other, s_entity) if split else self.func(s_entity, s_other)
 
 class BelongingSentimentModel(SentimentModel):
     def __init__(self, score_key: str = 'user_normalized_sentiment_scores'):
         self.parent_func = get_parent_function(score_key)
         self.child_func = get_child_function(score_key)
 
-    def calculate(self, s_parent: float, s_child: float):
-        if not self.parent_func or not self.child_func:
-            return 0.0, 0.0
+    def calculate(self, s_parent: float, s_child: float, split: bool = False) -> float:
+        if not self.func:
+            return 0.0
         return self.parent_func(s_parent, s_child), self.child_func(s_child, s_parent)
 
 class AggregateSentimentModel(SentimentModel):

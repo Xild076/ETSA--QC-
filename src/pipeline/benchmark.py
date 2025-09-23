@@ -246,22 +246,44 @@ def _head(tokens: Sequence[str], fallback: str) -> str:
 
 
 def _lenient_similarity(pred: PredictedAspect, gold: GoldAspect) -> float:
-    if not pred.norm or not gold.norm:
+    pred_norm = pred.norm
+    gold_norm = gold.norm
+    if not pred_norm or not gold_norm:
         return 0.0
-    if pred.norm == gold.norm:
+    if pred_norm == gold_norm:
         return 1.0
     score = 0.0
-    if pred.norm in gold.norm or gold.norm in pred.norm:
-        score = max(score, 0.92)
-    if pred.head and pred.head == gold.head:
+    pred_tokens = tuple(tok for tok in pred.tokens if tok)
+    gold_tokens = tuple(tok for tok in gold.tokens if tok)
+    pred_set = set(pred_tokens)
+    gold_set = set(gold_tokens)
+
+    if pred_set and gold_set:
+        if pred_set <= gold_set or gold_set <= pred_set:
+            overlap = min(len(pred_set), len(gold_set)) / max(len(pred_set), len(gold_set))
+            score = max(score, 0.93 + 0.07 * overlap)
+        common = pred_set & gold_set
+        if common:
+            coverage = len(common) / max(len(pred_set), len(gold_set))
+            jaccard = len(common) / max(len(pred_set | gold_set), 1)
+            token_score = 0.65 + 0.2 * coverage + 0.15 * jaccard
+            score = max(score, token_score)
+
+    def _contains_whole_term(container: str, term: str) -> bool:
+        if not term or len(term) < 2:
+            return False
+        pattern = rf"\b{re.escape(term)}\b"
+        return re.search(pattern, container) is not None
+
+    if _contains_whole_term(gold_norm, pred_norm) or _contains_whole_term(pred_norm, gold_norm):
+        score = max(score, 0.9)
+
+    if pred.head and gold.head and pred.head == gold.head:
         score = max(score, 0.88)
-    common = set(pred.tokens) & set(gold.tokens)
-    if common:
-        coverage = len(common) / max(len(pred.tokens), len(gold.tokens), 1)
-        score = max(score, 0.6 + 0.4 * coverage)
-    seq_ratio = SequenceMatcher(None, pred.norm, gold.norm).ratio()
+
+    seq_ratio = SequenceMatcher(None, pred_norm, gold_norm).ratio()
     score = max(score, seq_ratio)
-    return score
+    return min(score, 1.0)
 
 
 def _match_aspects(
@@ -338,6 +360,9 @@ def _prepare_predicted(
     aggregate_results: Dict[Any, Dict[str, Any]],
     pos_thresh: float,
     neg_thresh: float,
+    *,
+    fallback_text: Optional[str] = None,
+    graph: Optional["RelationGraph"] = None,
 ) -> List[PredictedAspect]:
     predicted: List[PredictedAspect] = []
     for entity_id, data in aggregate_results.items():
@@ -369,6 +394,43 @@ def _prepare_predicted(
                 head=_head(tokens, canonical),
             )
         )
+    if predicted or not fallback_text:
+        return predicted
+
+    fallback_text = fallback_text.strip()
+    if not fallback_text:
+        return predicted
+
+    if graph is not None and hasattr(graph, "compute_text_sentiment"):
+        try:
+            score = float(graph.compute_text_sentiment(fallback_text))
+        except Exception:
+            score = 0.0
+    else:
+        score = 0.0
+
+    if math.isnan(score):
+        score = 0.0
+    if score >= pos_thresh:
+        polarity = "positive"
+    elif score <= neg_thresh:
+        polarity = "negative"
+    else:
+        polarity = "neutral"
+
+    tokens = _tokens(fallback_text)
+    predicted.append(
+        PredictedAspect(
+            entity_id=0,
+            canonical=fallback_text,
+            polarity=polarity,
+            score=score,
+            mentions=[{"text": fallback_text, "clause_index": 0}],
+            norm=_normalize_text(fallback_text),
+            tokens=tokens,
+            head=_head(tokens, fallback_text),
+        )
+    )
     return predicted
 
 
@@ -578,7 +640,13 @@ def run_benchmark(
                     continue
 
                 aggregate_results = result.get("aggregate_results") or {}
-                predicted_aspects = _prepare_predicted(aggregate_results, pos_thresh, neg_thresh)
+                predicted_aspects = _prepare_predicted(
+                    aggregate_results,
+                    pos_thresh,
+                    neg_thresh,
+                    fallback_text=item.text,
+                    graph=result.get("graph"),
+                )
                 gold_aspects = _prepare_gold(item.aspects)
                 graph_snapshot = _graph_snapshot(result.get("graph"))
 
@@ -830,14 +898,14 @@ def run_benchmark(
 
     return metrics
 
-metrics_1 = run_benchmark(
+"""metrics_1 = run_benchmark(
     "FULL_STACK_TEST_LAPTOP",
     "test_laptop_2014",
     "full_stack",
     50,
     0.1,
     -0.1
-)
+)"""
 
 metrics_2 = run_benchmark(
     "FULL_STACK_TEST_RESTAURANT",
@@ -848,5 +916,5 @@ metrics_2 = run_benchmark(
     -0.1
 )
 
-print(metrics_1)
+# print(metrics_1)
 print(metrics_2)

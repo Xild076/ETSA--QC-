@@ -83,159 +83,339 @@ class SentimentPipeline:
         self.aggregate_sentiment_model = aggregate_sentiment_model
 
     def process(self, text: str, debug: bool = False) -> Dict[str, Any]:
-        clauses = self.clause_splitter.split(text)
-        aspects = self.aspect_extractor.analyze(clauses)
+        clauses = self.clause_splitter.split(text) or [text]
+        raw_aspects = self.aspect_extractor.analyze(clauses) or {}
         graph = RelationGraph(text, clauses, self.sentiment_analysis)
-        for aspect in aspects:
-            aspect = aspects[aspect]
-            aspect_id = graph.get_new_unique_entity_id()
-            for mention in aspect.get("mentions", []):
-                mention_name = mention[0]
-                mention_clause_index = mention[1]
-                # Correct argument order: text first, then entity
-                modifier_result = self.modifier_extractor.extract(clauses[mention_clause_index], mention_name)
-                modifiers = modifier_result["modifiers"]
-                sentiment_hint = modifier_result.get("sentiment_hint")
-                graph.add_entity_node(aspect_id, mention_name, modifiers, "none", mention_clause_index, sentiment_hint)
 
-        
+        if isinstance(raw_aspects, dict):
+            aspects: Dict[int, Dict[str, Any]] = {}
+            for key, value in raw_aspects.items():
+                if not isinstance(value, dict):
+                    continue
+                try:
+                    idx = int(key)
+                except (TypeError, ValueError):
+                    idx = len(aspects) + 1
+                aspects[idx] = value
+        elif isinstance(raw_aspects, list):
+            aspects = {idx: value for idx, value in enumerate(raw_aspects, start=1) if isinstance(value, dict)}
+        else:
+            aspects = {}
+
+        debug_messages: List[str] = []
+        entity_records: Dict[int, Dict[str, Any]] = {}
+
+        def clamp_clause_index(index_value: Any) -> int:
+            if not clauses:
+                return 0
+            try:
+                idx = int(index_value)
+            except (TypeError, ValueError):
+                return 0
+            return max(0, min(idx, len(clauses) - 1))
+
+        for aspect_data in aspects.values():
+            mentions = aspect_data.get('mentions', []) if isinstance(aspect_data, dict) else []
+            cleaned_mentions: List[Dict[str, Any]] = []
+            for mention in mentions:
+                if not isinstance(mention, (list, tuple)) or len(mention) < 2:
+                    continue
+                mention_text, mention_clause = mention[0], mention[1]
+                if not isinstance(mention_text, str):
+                    continue
+                clause_index = clamp_clause_index(mention_clause)
+                cleaned_mentions.append({
+                    'text': mention_text.strip(),
+                    'clause_index': clause_index,
+                })
+            if not cleaned_mentions:
+                continue
+
+            aspect_id = graph.get_new_unique_entity_id()
+            canonical_name = aspect_data.get('first_mention') if isinstance(aspect_data, dict) else None
+            canonical_name = (canonical_name or cleaned_mentions[0]['text']).strip()
+
+            entity_records[aspect_id] = {
+                'label': canonical_name or f'Entity {aspect_id}',
+                'mentions': [],
+                'modifiers': set(),
+                'roles': set(),
+                'relation_counts': defaultdict(int),
+                'relation_examples': defaultdict(list),
+            }
+
+            for mention_entry in cleaned_mentions:
+                clause_index = mention_entry['clause_index']
+                mention_text = mention_entry['text']
+                clause_text = clauses[clause_index] if 0 <= clause_index < len(clauses) else text
+                try:
+                    modifier_payload = self.modifier_extractor.extract(clause_text, mention_text)
+                except Exception as exc:  # pragma: no cover - defensive
+                    modifier_payload = {}
+                    debug_messages.append(
+                        f"modifier_extractor failed for '{mention_text}' in clause {clause_index}: {exc}"
+                    )
+                modifiers: List[str] = []
+                if isinstance(modifier_payload, dict):
+                    mods = modifier_payload.get('modifiers', [])
+                    if isinstance(mods, list):
+                        modifiers = [m for m in mods if isinstance(m, str)]
+
+                node_key = (aspect_id, clause_index)
+                if graph.graph.has_node(node_key):
+                    if modifiers:
+                        try:
+                            graph.add_entity_modifier(aspect_id, modifiers, clause_index)
+                        except Exception as exc:  # pragma: no cover - defensive
+                            debug_messages.append(
+                                f"add_entity_modifier failed for entity {aspect_id} at clause {clause_index}: {exc}"
+                            )
+                else:
+                    try:
+                        graph.add_entity_node(aspect_id, mention_text, modifiers, 'associate', clause_index)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        debug_messages.append(
+                            f"add_entity_node failed for '{mention_text}' in clause {clause_index}: {exc}"
+                        )
+                        continue
+
+                mention_record = {
+                    'text': mention_text,
+                    'clause_index': clause_index,
+                }
+                if modifiers:
+                    mention_record['modifiers'] = modifiers
+                entity_records[aspect_id]['mentions'].append(mention_record)
+                entity_records[aspect_id]['modifiers'].update(modifiers)
+                entity_records[aspect_id]['roles'].add('associate')
+
+        relation_outputs: List[Dict[str, Any]] = []
+
         for clause_index, clause in enumerate(clauses):
             entities_in_clause = graph.get_entities_at_layer(clause_index)
-            relations = self.relation_extractor.extract(clause, entities_in_clause)
+            entity_heads = [entity.get('head') for entity in entities_in_clause if isinstance(entity, dict) and entity.get('head')]
+            head_map: Dict[str, List[int]] = defaultdict(list)
+            for entity in entities_in_clause:
+                if not isinstance(entity, dict):
+                    continue
+                head = entity.get('head')
+                entity_id = entity.get('entity_id')
+                if not head or entity_id is None:
+                    continue
+                head_map[head].append(entity_id)
 
-            def match_head_entity(head: str) -> Optional[int]:
-                for ent in entities_in_clause:
-                    if ent.get("head") == head:
-                        return ent.get("entity_id")
+            try:
+                relations_payload = self.relation_extractor.extract(clause, entity_heads)
+            except Exception as exc:  # pragma: no cover - defensive
+                relations_payload = {'relations': []}
+                debug_messages.append(f'relation_extractor failed for clause {clause_index}: {exc}')
+
+            relation_outputs.append({
+                'clause_index': clause_index,
+                'clause': clause,
+                'entities': entity_heads,
+                'output': relations_payload,
+            })
+
+            def match_head_entity(entry: Any) -> Optional[int]:
+                if isinstance(entry, dict):
+                    candidate = entry.get('head') or entry.get('text')
+                elif isinstance(entry, str):
+                    candidate = entry
+                else:
+                    candidate = None
+                if not isinstance(candidate, str):
+                    return None
+                if candidate in head_map and head_map[candidate]:
+                    return head_map[candidate][0]
+                lowered = candidate.lower()
+                for head_value, ids in head_map.items():
+                    if isinstance(head_value, str) and head_value.lower() == lowered and ids:
+                        return ids[0]
                 return None
 
-            for relation in relations:
-                subject_head = relation.get("subject")
-                object_head = relation.get("object")
-                if not isinstance(subject_head, str) or not isinstance(object_head, str):
-                    continue
-                subject_id = match_head_entity(subject_head)
-                object_id = match_head_entity(object_head)
+            relation_candidates: List[Dict[str, Any]] = []
+            if isinstance(relations_payload, dict):
+                for key in ('relations', 'actions', 'associations', 'belongings'):
+                    value = relations_payload.get(key)
+                    if isinstance(value, list):
+                        relation_candidates.extend(rel for rel in value if isinstance(rel, dict))
+            elif isinstance(relations_payload, list):
+                relation_candidates = [rel for rel in relations_payload if isinstance(rel, dict)]
+
+            for relation in relation_candidates:
+                relation_info = relation.get('relation') if isinstance(relation.get('relation'), dict) else {}
+                relation_type = (relation_info.get('type') or '').upper()
+                relation_text = relation_info.get('text') if isinstance(relation_info.get('text'), str) else ''
+                subject_id = match_head_entity(relation.get('subject'))
+                object_id = match_head_entity(relation.get('object'))
                 if subject_id is None or object_id is None:
                     continue
-                relation_type = relation.get("relation", {}).get("type", "")
 
-                if relation_type == "ACTION":
-                    action_text = relation.get("relation", {}).get("text", "")
-                    graph.add_action_edge(subject_id, object_id, clause_index, action_text, [])
-                elif relation_type == "ASSOCIATION":
-                    graph.add_association_edge(subject_id, object_id, clause_index)
-                elif relation_type == "BELONGING":
-                    graph.add_belonging_edge(subject_id, object_id, clause_index)
+                if relation_type == 'ACTION':
+                    try:
+                        graph.add_action_edge(subject_id, object_id, clause_index, relation_text, [])
+                    except Exception as exc:  # pragma: no cover - defensive
+                        debug_messages.append(
+                            f"add_action_edge failed for clause {clause_index} ({subject_id}->{object_id}): {exc}"
+                        )
+                    else:
+                        for entity_id, role in ((subject_id, 'actor'), (object_id, 'target')):
+                            try:
+                                graph.set_entity_role(entity_id, role, clause_index)
+                            except Exception:  # pragma: no cover - defensive
+                                pass
+                            record = entity_records.get(entity_id)
+                            if record:
+                                record['roles'].add(role)
+                        if subject_id in entity_records:
+                            entity_records[subject_id]['relation_counts']['action_out'] += 1
+                            if len(entity_records[subject_id]['relation_examples']['action_out']) < 3:
+                                entity_records[subject_id]['relation_examples']['action_out'].append({
+                                    'target': entity_records.get(object_id, {}).get('label', str(object_id)),
+                                    'head': relation_text,
+                                    'clause_index': clause_index,
+                                })
+                        if object_id in entity_records:
+                            entity_records[object_id]['relation_counts']['action_in'] += 1
+                            if len(entity_records[object_id]['relation_examples']['action_in']) < 3:
+                                entity_records[object_id]['relation_examples']['action_in'].append({
+                                    'actor': entity_records.get(subject_id, {}).get('label', str(subject_id)),
+                                    'head': relation_text,
+                                    'clause_index': clause_index,
+                                })
 
-        graph.run_compound_action_sentiment_calculations(self.action_sentiment_model.calculate)
-        graph.run_compound_association_sentiment_calculations(self.association_sentiment_model.calculate)
-        graph.run_compound_belonging_sentiment_calculations(self.belonging_sentiment_model.calculate)
+                if relation_type == 'ASSOCIATION':
+                    try:
+                        graph.add_association_edge(subject_id, object_id, clause_index)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        debug_messages.append(
+                            f"add_association_edge failed for clause {clause_index} ({subject_id}<->{object_id}): {exc}"
+                        )
+                    else:
+                        for entity_id, other_id in ((subject_id, object_id), (object_id, subject_id)):
+                            record = entity_records.get(entity_id)
+                            other = entity_records.get(other_id)
+                            if not record:
+                                continue
+                            record['relation_counts']['association'] += 1
+                            if len(record['relation_examples']['association']) < 3:
+                                record['relation_examples']['association'].append({
+                                    'other': other.get('label', str(other_id)) if other else str(other_id),
+                                    'clause_index': clause_index,
+                                })
 
+                if relation_type == 'BELONGING':
+                    try:
+                        graph.add_belonging_edge(subject_id, object_id, clause_index)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        debug_messages.append(
+                            f"add_belonging_edge failed for clause {clause_index} ({subject_id}->{object_id}): {exc}"
+                        )
+                    else:
+                        try:
+                            graph.set_entity_role(subject_id, 'parent', clause_index)
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+                        try:
+                            graph.set_entity_role(object_id, 'child', clause_index)
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+                        parent_record = entity_records.get(subject_id)
+                        child_record = entity_records.get(object_id)
+                        if parent_record:
+                            parent_record['roles'].add('parent')
+                            parent_record['relation_counts']['belonging_parent'] += 1
+                            if len(parent_record['relation_examples']['belonging_parent']) < 3:
+                                parent_record['relation_examples']['belonging_parent'].append({
+                                    'child': child_record.get('label', str(object_id)) if child_record else str(object_id),
+                                    'clause_index': clause_index,
+                                })
+                        if child_record:
+                            child_record['roles'].add('child')
+                            child_record['relation_counts']['belonging_child'] += 1
+                            if len(child_record['relation_examples']['belonging_child']) < 3:
+                                child_record['relation_examples']['belonging_child'].append({
+                                    'parent': parent_record.get('label', str(subject_id)) if parent_record else str(subject_id),
+                                    'clause_index': clause_index,
+                                })
+
+        try:
+            graph.run_compound_action_sentiment_calculations(self.action_sentiment_model.calculate)
+        except Exception as exc:  # pragma: no cover - defensive
+            debug_messages.append(f'compound action sentiment calculation failed: {exc}')
+
+        try:
+            graph.run_compound_association_sentiment_calculations(self.association_sentiment_model.calculate)
+        except Exception as exc:  # pragma: no cover - defensive
+            debug_messages.append(f'compound association sentiment calculation failed: {exc}')
+
+        try:
+            graph.run_compound_belonging_sentiment_calculations(self.belonging_sentiment_model.calculate)
+        except Exception as exc:  # pragma: no cover - defensive
+            debug_messages.append(f'compound belonging sentiment calculation failed: {exc}')
+
+        for (entity_id, _), node_data in graph.graph.nodes(data=True):
+            record = entity_records.get(entity_id)
+            if not record:
+                continue
+            role = node_data.get('entity_role')
+            if isinstance(role, str):
+                record['roles'].add(role)
+            modifiers = node_data.get('modifier', [])
+            if isinstance(modifiers, list):
+                record['modifiers'].update(m for m in modifiers if isinstance(m, str))
+
+        aggregate_results: Dict[int, Dict[str, Any]] = {}
         entity_sentiments: Dict[int, Dict[str, Any]] = {}
-        for entity_id in sorted(graph.entity_ids):
-            aggregate_sentiment = graph.run_aggregate_sentiment_calculations(
-                entity_id, self.aggregate_sentiment_model.calculate
-            )
 
-            mentions = graph.get_all_entity_mentions(entity_id)
+        for entity_id, record in entity_records.items():
+            try:
+                aggregate_sentiment = graph.run_aggregate_sentiment_calculations(
+                    entity_id, self.aggregate_sentiment_model.calculate
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                aggregate_sentiment = 0.0
+                debug_messages.append(f'aggregate sentiment calculation failed for entity {entity_id}: {exc}')
 
-            roles = []
-            modifiers: List[str] = []
-            for (eid, layer), node_data in graph.graph.nodes(data=True):
-                if eid != entity_id:
-                    continue
-                role = node_data.get("entity_role") or "associate"
-                if role not in roles:
-                    roles.append(role)
-                modifiers.extend(node_data.get("modifier", []) or [])
+            mentions = record['mentions']
+            modifiers = sorted(record['modifiers']) if record['modifiers'] else []
+            roles = sorted(record['roles']) if record['roles'] else ['associate']
+            relation_counts = {k: v for k, v in record['relation_counts'].items() if v}
+            relation_examples = {k: v for k, v in record['relation_examples'].items() if v}
 
-            unique_modifiers: List[str] = []
-            seen_modifiers = set()
-            for modifier in modifiers:
-                normalized = modifier.strip()
-                if not normalized:
-                    continue
-                key = normalized.lower()
-                if key in seen_modifiers:
-                    continue
-                seen_modifiers.add(key)
-                unique_modifiers.append(normalized)
-
-            relation_counts: Dict[str, int] = defaultdict(int)
-            relation_examples: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-            def _node_attr(node_key: Any, attr: str, default: Any = "") -> Any:
-                if node_key in graph.graph.nodes:
-                    return graph.graph.nodes[node_key].get(attr, default)
-                return default
-            for _, _, edge_data in graph.graph.edges(data=True):
-                relation_type = edge_data.get("relation")
-                if relation_type == "action":
-                    actor = edge_data.get("actor")
-                    target = edge_data.get("target")
-                    head = edge_data.get("head", "")
-                    actor_clause = _node_attr(actor, "clause_layer", None)
-                    if isinstance(actor, tuple) and actor[0] == entity_id:
-                        relation_counts["action_out"] += 1
-                        relation_examples["action_out"].append({
-                            "target": _node_attr(target, "head", ""),
-                            "head": head,
-                            "clause_index": actor_clause,
-                        })
-                    if isinstance(target, tuple) and target[0] == entity_id:
-                        relation_counts["action_in"] += 1
-                        relation_examples["action_in"].append({
-                            "actor": _node_attr(actor, "head", ""),
-                            "head": head,
-                            "clause_index": _node_attr(target, "clause_layer", None),
-                        })
-                elif relation_type == "association":
-                    entity1 = edge_data.get("entity1")
-                    entity2 = edge_data.get("entity2")
-                    if isinstance(entity1, tuple) and entity1[0] == entity_id:
-                        relation_counts["association"] += 1
-                        relation_examples["association"].append({
-                            "other": _node_attr(entity2, "head", ""),
-                            "clause_index": _node_attr(entity1, "clause_layer", None),
-                        })
-                    if isinstance(entity2, tuple) and entity2[0] == entity_id:
-                        relation_counts["association"] += 1
-                        relation_examples["association"].append({
-                            "other": _node_attr(entity1, "head", ""),
-                            "clause_index": _node_attr(entity2, "clause_layer", None),
-                        })
-                elif relation_type == "belonging":
-                    parent = edge_data.get("parent")
-                    child = edge_data.get("child")
-                    if isinstance(parent, tuple) and parent[0] == entity_id:
-                        relation_counts["belonging_parent"] += 1
-                        relation_examples["belonging_parent"].append({
-                            "child": _node_attr(child, "head", ""),
-                            "clause_index": _node_attr(parent, "clause_layer", None),
-                        })
-                    if isinstance(child, tuple) and child[0] == entity_id:
-                        relation_counts["belonging_child"] += 1
-                        relation_examples["belonging_child"].append({
-                            "parent": _node_attr(parent, "head", ""),
-                            "clause_index": _node_attr(child, "clause_layer", None),
-                        })
+            aggregate_results[entity_id] = {
+                'label': record['label'],
+                'aggregate_sentiment': aggregate_sentiment,
+                'mentions': mentions,
+                'modifiers': modifiers,
+                'roles': roles,
+                'relation_counts': relation_counts,
+                'relation_examples': relation_examples,
+            }
 
             entity_sentiments[entity_id] = {
-                "mentions": mentions,
-                "aggregate_sentiment": aggregate_sentiment,
-                "roles": roles or ["associate"],
-                "modifiers": unique_modifiers,
-                "relation_counts": dict(relation_counts),
-                "relation_examples": {k: v for k, v in relation_examples.items() if v},
+                'label': record['label'],
+                'mentions': mentions,
+                'sentiment': aggregate_sentiment,
+                'roles': roles,
+                'modifiers': modifiers,
+                'relation_counts': relation_counts,
+                'relation_examples': relation_examples,
             }
-        # Return a structured dict expected by build_graph/print utilities
+
         return {
-            "graph": graph,
-            "clauses": clauses,
-            "aggregate_results": entity_sentiments,
-            "relations": [],
-            "debug_messages": [],
+            'text': text,
+            'clauses': clauses,
+            'aspects': aspects,
+            'graph': graph,
+            'entity_sentiments': entity_sentiments,
+            'aggregate_results': aggregate_results,
+            'relations': relation_outputs,
+            'debug_messages': debug_messages,
         }
+
+
 
 
 def build_graph(text: str, pipeline: Optional[SentimentPipeline] = None, debug: bool = False) -> Tuple[RelationGraph, Dict[str, Any]]:
@@ -264,10 +444,12 @@ def interpret_pipeline_output(result: Dict[str, Any]) -> str:
             key=lambda item: item[1].get("aggregate_sentiment", 0.0),
             reverse=True,
         )
-        for label, data in sorted_entities:
+        for entity_id, data in sorted_entities:
+            label = data.get("label") or f"Entity {entity_id}"
+            display_name = f"{label} (ID {entity_id})"
             aggregate_value = data.get("aggregate_sentiment", 0.0)
             roles = data.get("roles") or ["associate"]
-            lines.append(f"- {label}: {aggregate_value:+.3f} [{', '.join(roles)}]")
+            lines.append(f"- {display_name}: {aggregate_value:+.3f} [{', '.join(roles)}]")
 
             modifiers = data.get("modifiers") or []
             if modifiers:
@@ -298,11 +480,11 @@ def interpret_pipeline_output(result: Dict[str, Any]) -> str:
                 sample = sample_action[0]
                 if "target" in sample:
                     lines.append(
-                        f"    sample action: {label.split(' (ID')[0]} -> {sample.get('target')} via '{sample.get('head', '')}'"
+                        f"    sample action: {label} -> {sample.get('target')} via '{sample.get('head', '')}'"
                     )
                 elif "actor" in sample:
                     lines.append(
-                        f"    sample action: {sample.get('actor')} -> {label.split(' (ID')[0]} via '{sample.get('head', '')}'"
+                        f"    sample action: {sample.get('actor')} -> {label} via '{sample.get('head', '')}'"
                     )
 
             association_example = examples.get("association") or []
@@ -356,7 +538,7 @@ def build_default_pipeline():
     aspect_extractor = HybridAspectExtractor()
     modifier_extractor = GemmaModifierExtractor()
     relation_extractor = GemmaRelationExtractor()
-    sentiment_analysis = MultiSentimentAnalysis(["vader", "flair", "nlptown"], [0.33, 0.33, 0.34])
+    sentiment_analysis = MultiSentimentAnalysis(["flair", "pysentimiento", "vader"], [0.33, 0.33, 0.34])
     action_sentiment_model = ActionSentimentModel()
     association_sentiment_model = AssociationSentimentModel()
     belonging_sentiment_model = BelongingSentimentModel()

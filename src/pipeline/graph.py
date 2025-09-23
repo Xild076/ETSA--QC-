@@ -1,4 +1,4 @@
-from typing import Callable, List, Dict, Tuple, Optional
+from typing import Callable, List, Dict, Tuple, Optional, Any
 import logging
 import re
 import networkx as nx
@@ -50,15 +50,38 @@ class RelationGraph:
             raise ValueError(f"Node {key} not found in the graph.")
 
     def _sent(self, text: str) -> float:
-        try:
-            res = self.sentiment_analyzer_system.analyze(text or "")
-            if isinstance(res, (int, float)):
-                return float(res)
-            if isinstance(res, dict):
-                for key in ("aggregate", "score", "compound", "polarity"):
-                    if key in res and isinstance(res[key], (int, float)):
-                        return float(res[key])
+        if not self.sentiment_analyzer_system:
             return 0.0
+        try:
+            raw_result = self.sentiment_analyzer_system.analyze(text or "")
+            return self._coerce_sentiment_score(raw_result)
+        except Exception:
+            return 0.0
+
+    def _coerce_sentiment_score(self, result: Any) -> float:
+        if isinstance(result, (int, float)):
+            return float(result)
+        if isinstance(result, dict):
+            for key in ("aggregate", "score", "compound", "polarity", "sentiment", "value", "confidence", "confidence_score"):
+                val = result.get(key)
+                if isinstance(val, (int, float)):
+                    return float(val)
+            for val in result.values():
+                if isinstance(val, (int, float)):
+                    return float(val)
+                if isinstance(val, dict):
+                    try:
+                        return self._coerce_sentiment_score(val)
+                    except Exception:
+                        continue
+        raise ValueError("Unable to extract sentiment score")
+
+    def compute_text_sentiment(self, text: Optional[str] = None) -> float:
+        target = text if text is not None else self.text
+        if not target:
+            return 0.0
+        try:
+            return self._sent(target)
         except Exception:
             return 0.0
 
@@ -68,114 +91,13 @@ class RelationGraph:
             new_id += 1
         return new_id
 
-    def _combine_entity_with_modifiers(self, head: str, modifiers: List[str]) -> str:
-        """
-        Combine entity with modifiers in natural sentence order for better sentiment analysis.
-        
-        Strategy: Reconstruct as close to original sentence order as possible
-        to preserve natural language context for sentiment analysis.
-        """
-        if not modifiers:
-            return head
-            
-        # For complex cases, try to reconstruct natural order
-        # Group modifiers by their likely position relative to entity
-        prefix_modifiers = []  # come before entity in natural speech
-        suffix_modifiers = []  # come after entity in natural speech
-        
-        for modifier in modifiers:
-            modifier_lower = modifier.lower()
-            
-            # Modifiers that typically come BEFORE the entity
-            prefix_patterns = [
-                'did not enjoy', 'not being a fan of', 'especially considering',
-                'excellent', 'amazing', 'terrible', 'awful', 'great', 'poor',
-                'super', 'very', 'extremely', 'lousy', 'fantastic',
-                'no...is included', 'no...included'
-            ]
-            
-            # Modifiers that typically come AFTER the entity  
-            suffix_patterns = [
-                'would not fix', 'failed to', 'works perfectly', 'broke down',
-                'cannot last', 'struggles with', 'refused to', 'managed to'
-            ]
-            
-            # Check for prefix patterns
-            is_prefix = any(pattern in modifier_lower for pattern in prefix_patterns)
-            # Check for suffix patterns
-            is_suffix = any(pattern in modifier_lower for pattern in suffix_patterns)
-            
-            if is_prefix:
-                prefix_modifiers.append(modifier)
-            elif is_suffix:
-                suffix_modifiers.append(modifier)
-            else:
-                # Default: adjectives and short phrases go before
-                if len(modifier.split()) <= 2:
-                    prefix_modifiers.append(modifier)
-                else:
-                    suffix_modifiers.append(modifier)
-        
-        # Reconstruct in natural order
-        parts = []
-        
-        # Add prefix modifiers
-        if prefix_modifiers:
-            parts.extend(prefix_modifiers)
-            
-        # Add the entity
-        parts.append(head)
-        
-        # Add suffix modifiers
-        if suffix_modifiers:
-            parts.extend(suffix_modifiers)
-            
-        # Join with spaces to form natural phrase
-        result = " ".join(parts)
-        
-        # Clean up any awkward constructions
-        result = result.replace("  ", " ").strip()
-        
-        return result
-
-    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int, sentiment_hint: str = None) -> None:
+    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int) -> None:
         logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
         key = self._node_key(id, clause_layer)
-        
-        # Use improved modifier combination logic
-        text_for_sent = self._combine_entity_with_modifiers(head, modifier)
-        
-        # Calculate base sentiment
-        base_sentiment = self._sent(text_for_sent)
-        
-        # Apply sentiment hint with stronger override logic
-        final_sentiment = base_sentiment
-        if sentiment_hint:
-            if sentiment_hint == "positive":
-                # More assertive positive override
-                if base_sentiment < 0.2:
-                    final_sentiment = 0.4  # Strong positive override
-                    logger.debug("Applied positive sentiment hint: %.4f -> %.4f", base_sentiment, final_sentiment)
-                elif base_sentiment < 0.0:
-                    final_sentiment = 0.25  # Moderate positive override for negatives
-                    logger.debug("Applied positive sentiment hint (neg->pos): %.4f -> %.4f", base_sentiment, final_sentiment)
-            elif sentiment_hint == "negative": 
-                # More assertive negative override
-                if base_sentiment > -0.2:
-                    final_sentiment = -0.4  # Strong negative override
-                    logger.debug("Applied negative sentiment hint: %.4f -> %.4f", base_sentiment, final_sentiment)
-                elif base_sentiment > 0.0:
-                    final_sentiment = -0.25  # Moderate negative override for positives
-                    logger.debug("Applied negative sentiment hint (pos->neg): %.4f -> %.4f", base_sentiment, final_sentiment)
-            elif sentiment_hint in ["neutral", "neutral-factual"]:
-                # Stronger neutral override
-                if abs(base_sentiment) > 0.1:
-                    final_sentiment = 0.08  # Slight positive to avoid classification issues
-                    logger.debug("Applied neutral sentiment hint: %.4f -> %.4f", base_sentiment, final_sentiment)
-        
-        logger.debug("Entity %s sentiment %.4f context %s hint=%s", id, final_sentiment, text_for_sent, sentiment_hint)
+        text_for_sent = (", ".join(modifier) + " " + head).strip()
+        sentiment = self._sent(text_for_sent)
         self.graph.add_node(
             key,
             head=head,
@@ -183,7 +105,7 @@ class RelationGraph:
             text=self.text,
             entity_role=entity_role,
             clause_layer=clause_layer,
-            init_sentiment=final_sentiment,
+            init_sentiment=sentiment,
         )
     
     def get_entities_at_layer(self, clause_layer: int) -> List[Dict]:
@@ -208,10 +130,7 @@ class RelationGraph:
         mentions = []
         for (eid, layer), data in self.graph.nodes(data=True):
             if eid == entity_id:
-                mentions.append({
-                    "text": data.get("head", ""),
-                    "clause_index": data.get("clause_layer", 0)
-                })
+                mentions.append(data.get("head", ""))
         return mentions
 
     def add_entity_modifier(self, entity_id: int, modifier: List[str], clause_layer: int) -> None:
@@ -242,25 +161,72 @@ class RelationGraph:
             v = self._node_key(entity_id, layers[i + 1])
             self.graph.add_edge(u, v, relation="temporal")
 
-    def add_action_edge(self, actor_id: int, target_id: int, clause_layer: int, head: str, modifier: List[str]) -> None:
-        logger.info(f"Adding action edge between {actor_id} and {target_id}...")
-        if actor_id not in self.entity_ids or target_id not in self.entity_ids:
-            raise ValueError(f"Actor ID {actor_id} or Target ID {target_id} not found in the graph.")
-        actor = self._node_key(actor_id, clause_layer)
-        target = self._node_key(target_id, clause_layer)
-        if actor not in self.graph.nodes or target not in self.graph.nodes:
-            raise ValueError(f"Layer {clause_layer} missing actor or target node.")
-        action_text = (head + " " + " ".join(modifier)).strip()
-        action_sent = self._sent(action_text) if action_text else 0.0
-        self.graph.add_edge(
-            actor,
-            target,
-            relation="action",
-            actor=actor,
-            target=target,
+    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int, threshold: tuple = (0.1, -0.1)) -> None:
+        logger.info(f"Adding entity node {id} ('{head}') in clause {clause_layer}...")
+        self._validate_role(entity_role)
+        self.entity_ids.add(id)
+        key = self._node_key(id, clause_layer)
+        
+        POS_THRESHOLD = threshold[0]
+        NEG_THRESHOLD = threshold[1]
+
+        def get_polarity(score: float) -> int:
+            if score > POS_THRESHOLD: return 1
+            if score < NEG_THRESHOLD: return -1
+            return 0
+
+        head_sentiment = self._sent(head)
+        modifier_text = ", ".join(modifier)
+        modifier_sentiment = self._sent(modifier_text) if modifier_text else 0.0
+
+        head_polarity = get_polarity(head_sentiment)
+        modifier_polarity = get_polarity(modifier_sentiment)
+
+        final_sentiment = 0.0
+        justification = ""
+        
+        # Rule 3: No modifiers -> use head sentiment.
+        if not modifier:
+            final_sentiment = head_sentiment
+            justification = f"No modifiers; using head sentiment ({head_sentiment:.2f})."
+        
+        # Rule 1: Conflicting polarities -> modifier's sentiment wins.
+        # This now correctly handles a neutral head (polarity 0) being modified by a sentimental phrase.
+        elif head_polarity != modifier_polarity and modifier_polarity != 0:
+            final_sentiment = modifier_sentiment
+            justification = (
+                f"Polarity conflict: Head ({head_sentiment:.2f}) vs. Modifier ({modifier_sentiment:.2f}). "
+                "Modifier sentiment overrides."
+            )
+            
+        # Rule 2: Concordant polarities (or both neutral) -> average them.
+        else: # head_polarity == modifier_polarity
+            # If both are non-zero and agree, average them to blend their intensity.
+            if head_polarity != 0:
+                final_sentiment = (head_sentiment + modifier_sentiment) / 2
+                justification = (
+                    f"Polarities agree: Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f}). "
+                    "Sentiments averaged."
+                )
+            # If both are neutral (or head is sentimental but modifier is neutral),
+            # the most intense signal (usually the head) should prevail.
+            else:
+                final_sentiment = max(head_sentiment, modifier_sentiment, key=abs)
+                justification = (
+                    f"Concordant or neutral modifier. Using max intensity score: {final_sentiment:.2f}."
+                )
+
+        # --- END OF REVISED HIERARCHICAL SENTIMENT LOGIC ---
+
+        self.graph.add_node(
+            key,
             head=head,
             modifier=list(modifier),
-            init_sentiment=action_sent,
+            text=self.text,
+            entity_role=entity_role,
+            clause_layer=clause_layer,
+            init_sentiment=final_sentiment,
+            sentiment_justification=justification
         )
 
     def add_belonging_edge(self, parent_id: int, child_id: int, clause_layer: int) -> None:

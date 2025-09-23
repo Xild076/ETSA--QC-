@@ -1,9 +1,7 @@
 import json
 import re
 import time
-import os
-import random
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 import logging
 
 try:
@@ -28,7 +26,7 @@ class _RateLimiter:
         if len(self.timestamps) >= self.max_calls:
             sleep_time = self.period_seconds - (now - self.timestamps[0])
             if sleep_time > 0:
-                time.sleep(sleep_time + min(0.25, random.random() * 0.25))
+                time.sleep(sleep_time)
         self.timestamps.append(time.time())
 
 _GLOBAL_GENAI_LIMITER = None
@@ -96,7 +94,6 @@ class GemmaRelationExtractor(RelationExtractor):
         retries: int = 2,
         response_mime_type: str = "text/plain",
         rate_limiter: Optional[_RateLimiter] = None,
-        fallback_extractor: Optional[RelationExtractor] = None,
     ):
         self.model = model
         self.temperature = temperature
@@ -108,24 +105,12 @@ class GemmaRelationExtractor(RelationExtractor):
         self.response_mime_type = response_mime_type
         rpm = _default_rpm_for_model(self.model)
         self.rate_limiter = rate_limiter or _ensure_global_rate_limiter(max_calls=rpm)
-        self.fallback_extractor: Optional[RelationExtractor] = fallback_extractor or SpacyRelationExtractor()
-        self._enabled = True
-        self._init_error: Optional[Exception] = None
-        try:
-            self._init_api(api_key)
-        except Exception as exc:
-            self._enabled = False
-            self._init_error = exc
-            logger.info(
-                "GemmaRelationExtractor disabled during init (%s). Using %s fallback instead.",
-                exc,
-                type(self.fallback_extractor).__name__ if self.fallback_extractor else "no",
-            )
+        self._init_api(api_key)
 
     def _init_api(self, api_key: Optional[str] = None):
         if genai is None:
             raise RuntimeError("google-generativeai not available")
-        key = api_key or get_env("GOOGLE_API_KEY") or get_env("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        key = api_key or get_env("GOOGLE_API_KEY")
         if not key:
             raise RuntimeError("No API key provided for GemmaRelationExtractor")
         genai.configure(api_key=key)
@@ -134,39 +119,46 @@ class GemmaRelationExtractor(RelationExtractor):
         ents = ", ".join(f'"{e}"' for e in entities)
         return (
             "<<SYS>>\n"
-            "Extract ONLY clear, unambiguous structural relations among the provided entities. Be very conservative.\n"
-            "ACTION: Only when one entity clearly performs a specific action ON another entity (not just mentions or proximity).\n"
-            "ASSOCIATION: Only when entities are explicitly linked by clear connecting words (and, with, together, etc) or direct comparison.\n"
-            "BELONGING: Only when one entity is clearly a part, attribute, or direct possession of another (child OF parent).\n"
-            "CRITICAL: Return empty relations array if connections are unclear, ambiguous, or entities are just mentioned in same sentence.\n"
-            "Use exact entity strings. Return strict JSON.\n"
+            "You are a meticulous linguistic analyst.\n"
+            "Task: Given a passage and a closed set of entity surface forms, extract only structural relations that hold **between members of that set**.\n"
+            "\n"
+            "Rules:\n"
+            "1) Relation Types (mutually exclusive):\n"
+            "   • ACTION: An actor entity performs an action that affects a target entity. The action’s 'text' MUST be verbatim from the passage and include any negation or modal verbs (e.g., 'not fix', 'would not help').\n"
+            "   • ASSOCIATION: Entities are linked by coordination/proximity (e.g., 'and', 'with', comma-delimited co-mentions) without directional predicate.\n"
+            "   • BELONGING: A child entity is an attribute/part/possession of a parent entity (e.g., possessive/apostrophe, 'of').\n"
+            "2) Strict Matching: Use **only** the exact entity strings provided (case-sensitive surface forms). Do not invent, normalize, split, merge, or alias entities.\n"
+            "3) Directionality:\n"
+            "   • ACTION: subject = initiator/actor; object = affected/target.\n"
+            "   • BELONGING: subject = child/part; object = owner/whole.\n"
+            "   • ASSOCIATION: subject/object order does not imply semantics; choose left-to-right as they appear.\n"
+            "4) Evidence Text: The 'text' field must be a minimal, continuous span copied verbatim from the passage that signals the relation (e.g., the main predicate, coordinator, or possessive marker). No paraphrases.\n"
+            "5) Pairing Scope: Consider only pairs where both items are in the entity list. Ignore entities not listed. Do not cross-sentence unless explicitly linked within the same sentence span.\n"
+            "6) Deduplication: Emit at most one relation per (subject, object, type, text) combination.\n"
+            "7) No Relation: If **no** valid relations exist between the provided entities, return an empty 'relations' array.\n"
+            "8) Output Format: Return **strict JSON only** (no Markdown, no code fences). Conform exactly to the schema below. Do not include extra keys.\n"
+            "\n"
+            "Output Schema:\n"
+            "{\n"
+            '  "justification": "Brief evidence-based rationale for each included relation or an explanation for why none were found.",\n'
+            '  "relations": [\n'
+            '    {"subject": string, "object": string, "relation": {"type": "ACTION" | "ASSOCIATION" | "BELONGING", "text": string}}\n'
+            "  ]\n"
+            "}\n"
             "<</SYS>>\n\n"
             f"<<PASSAGE>>\n{sentence}\n<</PASSAGE>>\n\n"
             f"<<ENTITIES>>\n[{ents}]\n<</ENTITIES>>\n\n"
-            "<<OUTPUT_SCHEMA>>\n"
-            "{\n"
-            '  "justification": "",\n'
-            '  "relations": [\n'
-            '    {"subject": string, "object": string, "relation": {"type": "ACTION", "text": string}},\n'
-            '    {"subject": string, "object": string, "relation": {"type": "ASSOCIATION", "text": string}},\n'
-            '    {"subject": string, "object": string, "relation": {"type": "BELONGING", "text": string}}\n'
-            "  ],\n"
-            "}\n"
-            "<</OUTPUT_SCHEMA>>\n\n"
             "<<EXAMPLES>>\n"
-            'P: The waiter served the customer well. E: ["waiter","customer"] -> ACTION {"subject":"waiter","object":"customer","relation":{"type":"ACTION","text":"served"}}\n'
-            'P: Food and wine complement each other. E: ["food","wine"] -> ASSOCIATION {"subject":"food","object":"wine","relation":{"type":"ASSOCIATION","text":"and complement"}}\n'
-            'P: The laptop screen is bright. E: ["screen","laptop"] -> BELONGING {"subject":"screen","object":"laptop","relation":{"type":"BELONGING","text":"of"}}\n'
-            'P: I like the performance and the design. E: ["performance","design"] -> relations: []\n'
-            'P: The service was slow but the food was good. E: ["service","food"] -> relations: []\n'
+            'P: tech support would not fix the problem. E: ["tech support", "problem"] -> {"justification":"Modal negation indicates failed action from actor to target.","relations":[{"subject":"tech support","object":"problem","relation":{"type":"ACTION","text":"would not fix"}}]}\n'
+            'P: Food and wine arrived. E: ["food","wine"] -> {"justification":"Coordinated NP signals association.","relations":[{"subject":"food","object":"wine","relation":{"type":"ASSOCIATION","text":"and"}}]}\n'
+            'P: The laptop\'s battery is great. E: ["laptop","battery"] -> {"justification":"Possessive marks part–whole.","relations":[{"subject":"battery","object":"laptop","relation":{"type":"BELONGING","text":"\'s"}}]}\n'
+            'P: The computer is fast. E: ["computer"] -> {"justification":"Only one entity; no pairwise relation.","relations":[]}\n'
             "<</EXAMPLES>>\n\n"
             "<<RESPONSE>>\n"
-            "```json\n"
-            "{\n"
+            '{\n'
             '  "justification": "",\n'
-            '  "relations": [],\n'
+            '  "relations": []\n'
             "}\n"
-            "```\n"
         )
 
     def _query_gemma(self, prompt: str) -> str:
@@ -183,34 +175,18 @@ class GemmaRelationExtractor(RelationExtractor):
             )
         )
         r = model.generate_content(prompt)
-        text = getattr(r, "text", None)
-        if not text:
-            try:
-                text = str(r)
-            except Exception:
-                text = ""
-        return text
+        return r.text
 
     def _clean_rel(self, r: Dict[str, Any], entities: List[str]) -> Optional[Dict[str, Any]]:
         if not isinstance(r, dict):
             return None
-        sub_raw = r.get("subject")
-        obj_raw = r.get("object")
-        rel_raw = r.get("relation")
-        if isinstance(sub_raw, dict):
-            sh = sub_raw.get("head")
-        else:
-            sh = sub_raw
-        if isinstance(obj_raw, dict):
-            oh = obj_raw.get("head")
-        else:
-            oh = obj_raw
-        if isinstance(rel_raw, dict):
-            t = rel_raw.get("type")
-            tx = rel_raw.get("text", "")
-        else:
-            t = rel_raw
-            tx = ""
+        sub = r.get("subject") or {}
+        obj = r.get("object") or {}
+        rel = r.get("relation") or {}
+        sh = sub.get("head")
+        oh = obj.get("head")
+        t = rel.get("type")
+        tx = rel.get("text", "")
         if not isinstance(sh, str) or not isinstance(oh, str) or not isinstance(t, str):
             return None
         sh_s = sh.strip()
@@ -220,33 +196,15 @@ class GemmaRelationExtractor(RelationExtractor):
             return None
         if t_s not in {"ACTION","ASSOCIATION","BELONGING"}:
             return None
-        if sh_s == oh_s:
-            return None
-        
-        spurious_pairs = [
-            ("performance", "computer"), ("performance", "laptop"),
-            ("quality", "receiver"), ("quality", "product"),
-            ("camera", "performance"), ("anything", "performance"),
-            ("receiver", "performance"), ("superlatives", "quality"),
-            ("I", "performance"), ("you", "performance"), ("my", "anything"),
-            ("that", "performance"), ("They", "performance"),
-            ("what", "performance"), ("time", "seconds"), ("time", "minute")
-        ]
-        
-        for sp1, sp2 in spurious_pairs:
-            if (sh_s.lower() == sp1.lower() and oh_s.lower() == sp2.lower()) or \
-               (sh_s.lower() == sp2.lower() and oh_s.lower() == sp1.lower()):
-                return None
-        
-        return {"subject": sh_s, "object": oh_s, "relation": {"type": t_s, "text": str(tx)}}
+        return {"subject":{"head":sh_s},"object":{"head":oh_s},"relation":{"type":t_s,"text":str(tx)}}
 
-    def _parse_relation_response(self, text: str, entities: List[str]) -> List[Dict[str, Any]]:
+    def _parse_relation_response(self, text: str, entities: List[str]) -> Dict[str, Any]:
         data = _parse_json_from_text(text) or {}
         rels = data.get("relations") or []
         acts = data.get("actions") or []
         ascs = data.get("associations") or []
         bels = data.get("belongings") or []
-        out_rels: List[Dict[str, Any]] = []
+        out_rels = []
         for r in rels:
             c = self._clean_rel(r, entities)
             if c:
@@ -263,72 +221,30 @@ class GemmaRelationExtractor(RelationExtractor):
             c = self._clean_rel(r, entities)
             if c:
                 out_rels.append(c)
-        return out_rels
+        actions = [r for r in out_rels if r["relation"]["type"]=="ACTION"]
+        associations = [r for r in out_rels if r["relation"]["type"]=="ASSOCIATION"]
+        belongings = [r for r in out_rels if r["relation"]["type"]=="BELONGING"]
+        return {
+            "entities": entities,
+            "actions": actions,
+            "associations": associations,
+            "belongings": belongings,
+            "relations": out_rels,
+            "justification": data.get("justification",""),
+            "approach_used": self.model
+        }
 
-    def _run_fallback(
-        self,
-        text: str,
-        raw_entities: Union[List[str], List[Dict[str, Any]]],
-        ent_heads: List[str],
-    ) -> List[Dict[str, Any]]:
-        if not self.fallback_extractor:
-            return []
-        try:
-            fallback_output = self.fallback_extractor.extract(text, raw_entities)
-        except Exception as fallback_exc:
-            logger.debug("Relation fallback extractor failed: %s", fallback_exc)
-            return []
-
-        normalized: List[Dict[str, Any]] = []
-        candidates: List[Any]
-        if isinstance(fallback_output, list):
-            candidates = fallback_output
-        elif isinstance(fallback_output, dict):
-            candidates = []
-            for key in ("relations", "actions", "associations", "belongings"):
-                vals = fallback_output.get(key)
-                if vals:
-                    candidates.extend(vals)
-        else:
-            candidates = []
-
-        for candidate in candidates:
-            cleaned = self._clean_rel(candidate, ent_heads)
-            if cleaned:
-                normalized.append(cleaned)
-        return normalized
-
-    def extract(self, text: str, entities: Union[List[str], List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        # normalize entities to list of heads (strings)
-        raw_entities = entities or []
-        ent_heads: List[str] = []
-        for e in raw_entities:
-            if isinstance(e, str):
-                ent_heads.append(e)
-            elif isinstance(e, dict):
-                h = e.get("head") or e.get("text") or e.get("entity")
-                if isinstance(h, str):
-                    ent_heads.append(h)
-        ent_heads = list(dict.fromkeys([h.strip() for h in ent_heads if h and h.strip()]))
-        if not text or not ent_heads:
-            return []
-        if not self._enabled:
-            return self._run_fallback(text, raw_entities, ent_heads)
-        prompt = self._create_prompt(text, ent_heads)
+    def extract(self, text: str, entities: List[str]) -> Dict[str, Any]:
+        if not text or not entities:
+            return {"entities": entities, "actions": [], "associations": [], "belongings": [], "relations": [], "justification": "empty input", "approach_used": self.model}
+        prompt = self._create_prompt(text, entities)
         last_err = None
         for i in range(self.retries + 1):
             try:
                 resp = self._query_gemma(prompt)
-                return self._parse_relation_response(resp, ent_heads)
+                return self._parse_relation_response(resp, entities)
             except Exception as e:
                 last_err = e
                 if i < self.retries:
-                    sleep = self.backoff * (2 ** i)
-                    sleep += min(0.25, random.random() * 0.25)
-                    time.sleep(sleep)
-        self._enabled = False
-        logger.info(
-            "Gemma relation extraction falling back after failure: %s",
-            last_err,
-        )
-        return self._run_fallback(text, raw_entities, ent_heads)
+                    time.sleep(self.backoff * (i + 1))
+        return {"entities": entities, "actions": [], "associations": [], "belongings": [], "relations": [], "justification": f"failure: {last_err}", "approach_used": self.model}
