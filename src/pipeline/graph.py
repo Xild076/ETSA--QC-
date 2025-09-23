@@ -185,13 +185,10 @@ class RelationGraph:
         final_sentiment = 0.0
         justification = ""
         
-        # Rule 3: No modifiers -> use head sentiment.
         if not modifier:
             final_sentiment = head_sentiment
             justification = f"No modifiers; using head sentiment ({head_sentiment:.2f})."
         
-        # Rule 1: Conflicting polarities -> modifier's sentiment wins.
-        # This now correctly handles a neutral head (polarity 0) being modified by a sentimental phrase.
         elif head_polarity != modifier_polarity and modifier_polarity != 0:
             final_sentiment = modifier_sentiment
             justification = (
@@ -199,24 +196,18 @@ class RelationGraph:
                 "Modifier sentiment overrides."
             )
             
-        # Rule 2: Concordant polarities (or both neutral) -> average them.
-        else: # head_polarity == modifier_polarity
-            # If both are non-zero and agree, average them to blend their intensity.
+        else:
             if head_polarity != 0:
                 final_sentiment = (head_sentiment + modifier_sentiment) / 2
                 justification = (
                     f"Polarities agree: Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f}). "
                     "Sentiments averaged."
                 )
-            # If both are neutral (or head is sentimental but modifier is neutral),
-            # the most intense signal (usually the head) should prevail.
             else:
                 final_sentiment = max(head_sentiment, modifier_sentiment, key=abs)
                 justification = (
                     f"Concordant or neutral modifier. Using max intensity score: {final_sentiment:.2f}."
                 )
-
-        # --- END OF REVISED HIERARCHICAL SENTIMENT LOGIC ---
 
         self.graph.add_node(
             key,

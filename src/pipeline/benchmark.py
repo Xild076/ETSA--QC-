@@ -516,6 +516,14 @@ def run_benchmark(
     _ensure_output_dir(run_dir)
     graph_reports_dir = run_dir / "graph_reports"
     graph_reports_dir.mkdir(parents=True, exist_ok=True)
+    # Create subdirectories for specific error types so graphs are separated
+    graph_reports_subdirs: Dict[str, Path] = {}
+    graph_reports_subdirs["spurious_aspect"] = graph_reports_dir / "spurious_aspect"
+    graph_reports_subdirs["wrong_polarity"] = graph_reports_dir / "wrong_polarity"
+    # Keep a generic folder for other error types
+    graph_reports_subdirs["default"] = graph_reports_dir / "other"
+    for p in graph_reports_subdirs.values():
+        p.mkdir(parents=True, exist_ok=True)
 
     log_path = run_dir / "benchmark.log"
     file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
@@ -552,7 +560,9 @@ def run_benchmark(
         analysis: Dict[str, Any],
     ) -> None:
         nonlocal graph_sequence
-        path = _persist_graph_snapshot(snapshot, graph_reports_dir, graph_sequence, sentence_item.sentence_id, issue_type)
+        # Choose subdirectory for certain issue types so they are easy to browse
+        target_dir = graph_reports_subdirs.get(issue_type, graph_reports_subdirs.get("default", graph_reports_dir))
+        path = _persist_graph_snapshot(snapshot, target_dir, graph_sequence, sentence_item.sentence_id, issue_type)
         if path is not None:
             graph_sequence += 1
             graph_reference = str(path.relative_to(PROJECT_ROOT))
@@ -898,23 +908,23 @@ def run_benchmark(
 
     return metrics
 
-"""metrics_1 = run_benchmark(
+metrics_1 = run_benchmark(
     "FULL_STACK_TEST_LAPTOP",
     "test_laptop_2014",
     "full_stack",
-    50,
+    300,
     0.1,
     -0.1
-)"""
+)
 
 metrics_2 = run_benchmark(
     "FULL_STACK_TEST_RESTAURANT",
     "test_restaurant_2014",
     "full_stack",
-    50,
+    300,
     0.1,
     -0.1
 )
 
-# print(metrics_1)
+print(metrics_1)
 print(metrics_2)
