@@ -122,111 +122,122 @@ class GemmaModifierExtractor(ModifierExtractor):
 
     def _prompt(self, passage: str, entity: str) -> str:
         return f"""<<SYS>>
-    You are a meticulous linguist specializing in aspect-based sentiment extraction. Your sole task is to extract ALL and ONLY modifier phrases that describe the single TARGET ENTITY.
+You are a meticulous linguist specializing in **aspect-based sentiment extraction**. Your sole task is to extract **ALL and ONLY modifier phrases** that evaluate (positively, negatively, or mixed) the single **TARGET ENTITY**.
 
-    Core Principle:
-    - A "modifier" describes the quality, state, evaluation, or context of ONE entity.
-    - Do NOT extract relations between TWO OR MORE entities.
+## Objective
+Given a short PASSAGE and a single ENTITY string, return **verbatim spans** from the passage that **evaluate the ENTITY**. Return **strict JSON** using the schema at the end—no prose, no Markdown.
 
-    Definitions (what to extract, as verbatim spans from the passage):
-    - Direct Descriptions: adjectives/adverbs and their intensifiers (e.g., "very slow", "great").
-    - Negated & Nuanced Descriptions: include negation and hedges (e.g., "not good", "anything but fresh", "not the best").
-    - Clause-Level Predication (CRITICAL when no direct modifier exists): the main predicate or copular/adjectival/verb phrase that conveys sentiment about the entity (e.g., "was dreadful", "works perfectly", "fell apart").
-    - Idioms & Fixed Expressions: complete idiomatic spans that evaluate the entity (e.g., "melts in your mouth", "a total ripoff").
-    - Recommendations & Directives about the entity: evaluative guidance (e.g., "worth trying", "avoid at all costs", "highly recommend").
+## What Counts as a “Modifier” (extract these verbatim)
+1.  **Direct descriptions** of the ENTITY: adjectives/adverbs **with their intensifiers/degree markers/negation**
+    - e.g., “very slow”, “not good”, “anything but fresh”, “really well made”.
+2.  **Clause-level predication about the ENTITY** (CRITICAL):
+    Extract the **main predicate or copular/adjectival/verb phrase** that **as a whole** conveys evaluation, including **auxiliaries, modals, negation, hedges, quantifiers, adverbs**, and **light complements** required for meaning.
+    - e.g., “was dreadful”, “works perfectly”, “should be a bit more friendly”, “wasn’t it”, “barely eatable”, “melts in your mouth”.
+3.  **Comparative/expectational criticism** where the **entire clause expresses evaluation** of the ENTITY (even if the explicit adjective is neutral):
+    - e.g., “is something I can make better at home”, “didn’t live up to the hype”, “(not) on par with other Japanese restaurants”, “could be better than most places” (keep negation/hedges).
+4.  **Idioms & fixed expressions** that **evaluate** the ENTITY:
+    - e.g., “a total ripoff”, “melts in your mouth”.
+5.  **Recommendations & directives** **about the ENTITY**:
+    - e.g., “worth trying”, “avoid at all costs”, “highly recommend”.
 
-    Boundary Rules:
-    - Include only spans that attribute evaluative content to the TARGET ENTITY.
-    - Exclude purely factual/type labels (e.g., "asian salad" → exclude "asian" unless it carries evaluation).
-    - Exclude actions describing another agent’s interaction with the entity if they do not evaluate the entity itself (e.g., "the waiter brought the food" is NOT a modifier of "food").
-    - Do not paraphrase; extract minimal contiguous spans verbatim that carry the evaluative meaning. Preserve negation/modality exactly.
-    - Use strict surface-form matching for the ENTITY: treat the provided ENTITY string as the reference mention.
-    - Single-sentence focus: prefer the sentence containing the ENTITY; include cross-sentence spans only if directly anaphoric and clearly evaluative of the ENTITY.
-    - Deduplicate identical spans. Order results by first occurrence in the passage.
-    - Include modifiers that may already appear in the ENTITY string if they carry evaluative content (e.g., ENTITY="the great food" → modifier="great").
+## Boundary & Span Rules
+- **Verbatim**: Extract **exact surface spans** from the passage; no paraphrase.
+- **Minimal-but-complete**: Include **all words that carry the evaluation** (negation, modals, hedges, intensifiers, necessary complements) but **exclude** trailing context not needed for evaluativity.
+- **Clause-first principle**:
+  If the opinion is expressed by a **clause/predicate**, extract the **entire predicate phrase**, not just its head adjective/verb.
+  - Example: “should be a bit more friendly” (not just “friendly”).
+- **Greedy-until-boundary for coordination**:
+  When coordinated predicates or adjectives share the **same subject (the ENTITY)**, extract the **full coordinated span** (e.g., “was tasteless and burned”, “ALWAYS look angry and even ignore their high-tipping regulars”), **up to the first boundary** where the subject or scope clearly shifts.
+- **Comparatives/expectations**:
+  Include the **polarity carrier** (negation/unsatisfied expectation) and the **standard of comparison** if it is **syntactically necessary** to convey the evaluative meaning (e.g., “(not) on par with other Japanese restaurants”, “is something I can make better at home”).
+- **Anaphora**:
+  If the ENTITY is referenced by a **coreferent pronoun or description in the same or adjacent sentence**, and that phrase **clearly predicates about the ENTITY**, you may extract it (e.g., ENTITY=“food”; span from “it … wasn’t on par …”).
+- **Deduplicate** exact repeats; order spans by **first occurrence**.
 
-    Neutrality & Emptiness:
-    - If the ENTITY is mentioned only in a neutral/factual way with no evaluative content, return an empty "modifiers" list.
+## Decision Procedure (apply in order)
+1.  **Locate all mentions** of the ENTITY (exact string) and anaphoric references (“it”, “this”).
+2.  **Collect candidate predicates/modifiers** that **predicate of** that mention (copular, verbal, coordinated, comparative).
+3.  **Build the minimal-but-complete evaluative span**, including negation, modals, hedges, and coordinated parts.
+4.  **Filter out** factual or non-evaluative candidates.
+5.  **Sort, deduplicate, and output.**
 
-    Output Requirements:
-    - Return STRICT JSON only (no Markdown, no code fences), conforming exactly to the schema below.
-    - Justification must briefly explain how you located the spans, especially when using clause-level predication.
+## Edge-Case Clarifications
+- **Identity/Authenticity criticism** (“was not a Nicoise salad” or “this wasn’t it”): extract the **negated identificational predicate** (e.g., “was not a”, “wasn’t it”).
+- **Expectation statements** (“you’d expect it to be at least on par …”): If the context implies the expectation is unmet for the ENTITY, extract the evaluative predicate that captures the shortfall (e.g., “didn’t live up to the hype”, “(not) on par with other Japanese restaurants”).
+- **Comparatives to self/home** (“I can make better at home”): Treat as negative evaluation; include the **full comparative clause**.
 
-    Schema:
-    {{
-    "entity": "string",
-    "justification": "string",
-    "modifiers": ["string"],
-    "approach_used": "{self.model}"
-    }}
-    <</SYS>>
+## Output Requirements
+- **Strict JSON only** using the schema below (no Markdown, no code fences).
+- The **“justification”** must briefly state how spans were located based on the rules.
+- Use `"approach_used": "{self.model}"`.
 
-    <<PASSAGE>>
-    {passage}
-    <</PASSAGE>>
+### Schema
+{{{{
+  "entity": "string",
+  "justification": "string",
+  "modifiers": ["string"],
+  "approach_used": "{self.model}"
+}}}}
+<</SYS>>
 
-    <<ENTITY>>
-    {entity}
-    <</ENTITY>>
+<<PASSAGE>>
+{passage}
+<</PASSAGE>>
 
-    <<EXAMPLES>>
-    P: Did not enjoy the new Windows 8. E: Windows 8 ->
-    {{
-    "entity":"Windows 8",
-    "justification":"Clause-level predicate 'Did not enjoy' evaluates the entity with negation.",
-    "modifiers":["Did not enjoy"],
-    "approach_used":"{self.model}"
-    }}
+<<ENTITY>>
+{entity}
+<</ENTITY>>
 
-    P: The service was dreadful! E: service ->
-    {{
-    "entity":"service",
-    "justification":"Copular predicate 'was dreadful' directly evaluates the entity.",
-    "modifiers":["was dreadful"],
-    "approach_used":"{self.model}"
-    }}
+<<EXAMPLES>>
+P: The staff should be a bit more friendly. E: staff ->
+{{{{
+  "entity": "staff",
+  "justification": "Extracted the full clause-level predicate containing a modal ('should be') and a hedge ('a bit more') which evaluates the entity.",
+  "modifiers": ["should be a bit more friendly"],
+  "approach_used": "{self.model}"
+}}}}
 
-    P: tech support would not fix the problem. E: tech support ->
-    {{
-    "entity":"tech support",
-    "justification":"Predicate with modal+negation 'would not fix' evaluates the subject's adequacy.",
-    "modifiers":["would not fix"],
-    "approach_used":"{self.model}"
-    }}
+P: The fajita we tried was tasteless and burned. E: fajita ->
+{{{{
+  "entity": "fajita",
+  "justification": "Extracted the full coordinated predicate ('was tasteless and burned') that shares the same subject, as per the greedy-until-boundary rule.",
+  "modifiers": ["was tasteless and burned"],
+  "approach_used": "{self.model}"
+}}}}
 
-    P: The gnocchi literally melts in your mouth! E: gnocchi ->
-    {{
-    "entity":"gnocchi",
-    "justification":"Idiomatic positive evaluation; extract full verb phrase.",
-    "modifiers":["literally melts in your mouth"],
-    "approach_used":"{self.model}"
-    }}
+P: I know real Indian food and this wasn't it. E: this ->
+{{{{
+  "entity": "this",
+  "justification": "The negated copular predicate ('wasn't it') functions as a strong negative evaluation of the entity's authenticity and quality.",
+  "modifiers": ["wasn't it"],
+  "approach_used": "{self.model}"
+}}}}
 
-    P: Entrees include lasagna. E: lasagna ->
-    {{
-    "entity":"lasagna",
-    "justification":"Factual inclusion without evaluation.",
-    "modifiers":[],
-    "approach_used":"{self.model}"
-    }}
+P: Frankly, the chinese food here is something I can make better at home. E: chinese food ->
+{{{{
+  "entity": "chinese food",
+  "justification": "The entire comparative clause ('is something I can make better at home') serves as a complete negative evaluation.",
+  "modifiers": ["is something I can make better at home"],
+  "approach_used": "{self.model}"
+}}}}
 
-    P: The food was tasty and large in portion size. E: portion size ->
-    {{
-    "entity":"portion size",
-    "justification":"Direct descriptor 'large in' evaluates the aspect.",
-    "modifiers":["large in"],
-    "approach_used":"{self.model}"
-    }}
-    <</EXAMPLES>>
+P: Entrees include lasagna, which is a baked pasta dish. E: lasagna ->
+{{{{
+  "entity": "lasagna",
+  "justification": "The passage provides only a factual, non-evaluative mention of the entity. No evaluative modifiers found.",
+  "modifiers": [],
+  "approach_used": "{self.model}"
+}}}}
+<</EXAMPLES>>
 
-    <<RESPONSE>>
-    {{
-    "entity": "{entity}",
-    "justification": "Explain how you identified the modifiers, especially if you used clause-level predication.",
-    "modifiers": [],
-    "approach_used": "{self.model}"
-    }}
-    """
+<<RESPONSE>>
+{{{{
+  "entity": "{entity}",
+  "justification": "Explain how you identified the modifiers based on the rules, especially clause-level predication, coordination, or comparatives.",
+  "modifiers": [Insert any modifiers here. If none found, return an empty list.],
+  "approach_used": "{self.model}"
+}}}}
+"""
 
     def _call(self, prompt: str) -> str:
         if self.rate_limiter:

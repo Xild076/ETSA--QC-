@@ -107,7 +107,7 @@ except Exception:
     spacy = None
 
 try:
-    import benepar  # noqa: F401
+    import benepar
 except Exception:
     benepar = None
 

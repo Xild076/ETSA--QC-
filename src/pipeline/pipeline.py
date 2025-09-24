@@ -27,7 +27,7 @@ try:
         DummySentimentModel,
         DuoDummySentimentModel
     )
-    from src.pipeline.sentiment_analysis import (
+    from src.pipeline.sentiment_analysis_save import (
         SentimentAnalysis,
         VADERSentimentAnalysis,
         TextBlobSentimentAnalysis,
@@ -51,7 +51,7 @@ except ImportError:
         DummySentimentModel,
         DuoDummySentimentModel
     )
-    from sentiment_analysis import (
+    from src.pipeline.sentiment_analysis_save import (
         SentimentAnalysis,
         VADERSentimentAnalysis,
         TextBlobSentimentAnalysis,
@@ -150,7 +150,7 @@ class SentimentPipeline:
                 clause_text = clauses[clause_index] if 0 <= clause_index < len(clauses) else text
                 try:
                     modifier_payload = self.modifier_extractor.extract(clause_text, mention_text)
-                except Exception as exc:  # pragma: no cover - defensive
+                except Exception as exc:
                     modifier_payload = {}
                     debug_messages.append(
                         f"modifier_extractor failed for '{mention_text}' in clause {clause_index}: {exc}"
@@ -166,14 +166,14 @@ class SentimentPipeline:
                     if modifiers:
                         try:
                             graph.add_entity_modifier(aspect_id, modifiers, clause_index)
-                        except Exception as exc:  # pragma: no cover - defensive
+                        except Exception as exc:
                             debug_messages.append(
                                 f"add_entity_modifier failed for entity {aspect_id} at clause {clause_index}: {exc}"
                             )
                 else:
                     try:
                         graph.add_entity_node(aspect_id, mention_text, modifiers, 'associate', clause_index)
-                    except Exception as exc:  # pragma: no cover - defensive
+                    except Exception as exc:
                         debug_messages.append(
                             f"add_entity_node failed for '{mention_text}' in clause {clause_index}: {exc}"
                         )
@@ -206,7 +206,7 @@ class SentimentPipeline:
 
             try:
                 relations_payload = self.relation_extractor.extract(clause, entity_heads)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 relations_payload = {'relations': []}
                 debug_messages.append(f'relation_extractor failed for clause {clause_index}: {exc}')
 
@@ -255,7 +255,7 @@ class SentimentPipeline:
                 if relation_type == 'ACTION':
                     try:
                         graph.add_action_edge(subject_id, object_id, clause_index, relation_text, [])
-                    except Exception as exc:  # pragma: no cover - defensive
+                    except Exception as exc:
                         debug_messages.append(
                             f"add_action_edge failed for clause {clause_index} ({subject_id}->{object_id}): {exc}"
                         )
@@ -263,7 +263,7 @@ class SentimentPipeline:
                         for entity_id, role in ((subject_id, 'actor'), (object_id, 'target')):
                             try:
                                 graph.set_entity_role(entity_id, role, clause_index)
-                            except Exception:  # pragma: no cover - defensive
+                            except Exception:
                                 pass
                             record = entity_records.get(entity_id)
                             if record:
@@ -288,7 +288,7 @@ class SentimentPipeline:
                 if relation_type == 'ASSOCIATION':
                     try:
                         graph.add_association_edge(subject_id, object_id, clause_index)
-                    except Exception as exc:  # pragma: no cover - defensive
+                    except Exception as exc:
                         debug_messages.append(
                             f"add_association_edge failed for clause {clause_index} ({subject_id}<->{object_id}): {exc}"
                         )
@@ -308,18 +308,18 @@ class SentimentPipeline:
                 if relation_type == 'BELONGING':
                     try:
                         graph.add_belonging_edge(subject_id, object_id, clause_index)
-                    except Exception as exc:  # pragma: no cover - defensive
+                    except Exception as exc:
                         debug_messages.append(
                             f"add_belonging_edge failed for clause {clause_index} ({subject_id}->{object_id}): {exc}"
                         )
                     else:
                         try:
                             graph.set_entity_role(subject_id, 'parent', clause_index)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:
                             pass
                         try:
                             graph.set_entity_role(object_id, 'child', clause_index)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:
                             pass
                         parent_record = entity_records.get(subject_id)
                         child_record = entity_records.get(object_id)
@@ -342,17 +342,17 @@ class SentimentPipeline:
 
         try:
             graph.run_compound_action_sentiment_calculations(self.action_sentiment_model.calculate)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             debug_messages.append(f'compound action sentiment calculation failed: {exc}')
 
         try:
             graph.run_compound_association_sentiment_calculations(self.association_sentiment_model.calculate)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             debug_messages.append(f'compound association sentiment calculation failed: {exc}')
 
         try:
             graph.run_compound_belonging_sentiment_calculations(self.belonging_sentiment_model.calculate)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             debug_messages.append(f'compound belonging sentiment calculation failed: {exc}')
 
         for (entity_id, _), node_data in graph.graph.nodes(data=True):
@@ -374,7 +374,7 @@ class SentimentPipeline:
                 aggregate_sentiment = graph.run_aggregate_sentiment_calculations(
                     entity_id, self.aggregate_sentiment_model.calculate
                 )
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 aggregate_sentiment = 0.0
                 debug_messages.append(f'aggregate sentiment calculation failed for entity {entity_id}: {exc}')
 
@@ -538,7 +538,10 @@ def build_default_pipeline():
     aspect_extractor = HybridAspectExtractor()
     modifier_extractor = GemmaModifierExtractor()
     relation_extractor = GemmaRelationExtractor()
-    sentiment_analysis = MultiSentimentAnalysis(["flair", "pysentimiento", "vader"], [0.33, 0.33, 0.34])
+    sentiment_analysis = MultiSentimentAnalysis(
+        methods=['distilbert_logit', 'flair', 'pysentimiento', 'vader'], 
+        weights=[0.55, 0.2, 0.15, 0.1]
+    )
     action_sentiment_model = ActionSentimentModel()
     association_sentiment_model = AssociationSentimentModel()
     belonging_sentiment_model = BelongingSentimentModel()
@@ -563,5 +566,5 @@ def main():
     return graph
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()

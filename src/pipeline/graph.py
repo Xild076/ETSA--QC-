@@ -141,8 +141,9 @@ class RelationGraph:
         new_mods = current_modifiers + list(modifier)
         self.graph.nodes[key]["modifier"] = new_mods
         head = self.graph.nodes[key].get("head", "")
-        text_for_sent = (" " + ", ".join(new_mods) + head).strip()
-        self.graph.nodes[key]["init_sentiment"] = self._sent(text_for_sent)
+        text_for_sent, justification = self._combine_sentiments(head, self.graph.nodes[key].get("init_sentiment", 0.0), new_mods, self._sent(", ".join(new_mods)))
+        self.graph.nodes[key]["init_sentiment"] = text_for_sent
+        self.graph.nodes[key]["sentiment_justification"] = justification
 
     def set_entity_role(self, entity_id: int, entity_role: str, clause_layer: int) -> None:
         logger.info("Setting entity role...")
@@ -161,53 +162,64 @@ class RelationGraph:
             v = self._node_key(entity_id, layers[i + 1])
             self.graph.add_edge(u, v, relation="temporal")
 
+    def _combine_sentiments(self, head: str, head_sentiment: float, modifier: List[str], modifier_sentiment: float, threshold: tuple = (0.1, -0.1)) -> Tuple[float, str]:
+        POS_THRESHOLD, NEG_THRESHOLD = threshold
+        
+        def get_polarity(score: float) -> int:
+            if score > POS_THRESHOLD: return 1
+            if score < NEG_THRESHOLD: return -1
+            return 0
+
+        head_polarity = get_polarity(head_sentiment)
+        modifier_polarity = get_polarity(modifier_sentiment)
+
+        if not modifier:
+            if abs(head_sentiment) >= 0.5:
+                justification = f"No modifiers; using strong head sentiment ({head_sentiment:.2f})."
+                return head_sentiment, justification
+            else:
+                justification = f"No modifiers and weak head sentiment ({head_sentiment:.2f}); defaulting to neutral."
+                return 0.0, justification
+
+        if modifier_polarity != 0 and head_polarity != modifier_polarity:
+            justification = (
+                f"Polarity conflict: Head ({head_sentiment:.2f}) vs. Modifier ({modifier_sentiment:.2f}). "
+                "Modifier sentiment overrides."
+            )
+            return modifier_sentiment, justification
+
+        elif head_polarity == modifier_polarity and head_polarity != 0:
+            final_sentiment = (head_sentiment + modifier_sentiment) / 2
+            justification = (
+                f"Polarities agree: Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f}). "
+                "Sentiments averaged."
+            )
+            return final_sentiment, justification
+
+        elif modifier_polarity == 0:
+            justification = f"Neutral modifier; using head sentiment ({head_sentiment:.2f})."
+            return head_sentiment, justification
+        
+        else:
+            final_sentiment = (head_sentiment + modifier_sentiment) / 2
+            justification = (
+                f"Default case (concordant polarity): Averaging Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f})."
+            )
+            return final_sentiment, justification
+
     def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int, threshold: tuple = (0.1, -0.1)) -> None:
         logger.info(f"Adding entity node {id} ('{head}') in clause {clause_layer}...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
         key = self._node_key(id, clause_layer)
         
-        POS_THRESHOLD = threshold[0]
-        NEG_THRESHOLD = threshold[1]
-
-        def get_polarity(score: float) -> int:
-            if score > POS_THRESHOLD: return 1
-            if score < NEG_THRESHOLD: return -1
-            return 0
-
         head_sentiment = self._sent(head)
         modifier_text = ", ".join(modifier)
         modifier_sentiment = self._sent(modifier_text) if modifier_text else 0.0
 
-        head_polarity = get_polarity(head_sentiment)
-        modifier_polarity = get_polarity(modifier_sentiment)
-
-        final_sentiment = 0.0
-        justification = ""
-        
-        if not modifier:
-            final_sentiment = head_sentiment
-            justification = f"No modifiers; using head sentiment ({head_sentiment:.2f})."
-        
-        elif head_polarity != modifier_polarity and modifier_polarity != 0:
-            final_sentiment = modifier_sentiment
-            justification = (
-                f"Polarity conflict: Head ({head_sentiment:.2f}) vs. Modifier ({modifier_sentiment:.2f}). "
-                "Modifier sentiment overrides."
-            )
-            
-        else:
-            if head_polarity != 0:
-                final_sentiment = (head_sentiment + modifier_sentiment) / 2
-                justification = (
-                    f"Polarities agree: Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f}). "
-                    "Sentiments averaged."
-                )
-            else:
-                final_sentiment = max(head_sentiment, modifier_sentiment, key=abs)
-                justification = (
-                    f"Concordant or neutral modifier. Using max intensity score: {final_sentiment:.2f}."
-                )
+        final_sentiment, justification = self._combine_sentiments(
+            head, head_sentiment, modifier, modifier_sentiment, threshold
+        )
 
         self.graph.add_node(
             key,
