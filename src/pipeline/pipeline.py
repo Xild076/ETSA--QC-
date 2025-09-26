@@ -27,7 +27,7 @@ try:
         DummySentimentModel,
         DuoDummySentimentModel
     )
-    from src.pipeline.sentiment_analysis_save import (
+    from src.pipeline.sentiment_analysis import (
         SentimentAnalysis,
         VADERSentimentAnalysis,
         TextBlobSentimentAnalysis,
@@ -51,7 +51,7 @@ except ImportError:
         DummySentimentModel,
         DuoDummySentimentModel
     )
-    from src.pipeline.sentiment_analysis_save import (
+    from src.pipeline.sentiment_analysis import (
         SentimentAnalysis,
         VADERSentimentAnalysis,
         TextBlobSentimentAnalysis,

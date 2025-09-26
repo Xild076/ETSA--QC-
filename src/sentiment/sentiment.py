@@ -92,8 +92,10 @@ def _get_hf_logit_score(text: str, model, tokenizer) -> float:
     
     if pos_idx == -1 or neg_idx == -1: return 0.0
 
-    logit_diff = logits[0, pos_idx] - logits[0, neg_idx]
-    return torch.tanh(logit_diff).item()
+    probs = torch.softmax(logits, dim=-1)
+    score = probs[0, pos_idx] - probs[0, neg_idx]
+    # Clamp to guard against subtle numeric drift outside [-1, 1]
+    return max(min(score.item(), 1.0), -1.0)
 
 def get_vader_sentiment(text: str) -> float:
     logger.info(f"Analyzing sentiment using VADER for text: {text}")

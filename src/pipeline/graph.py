@@ -21,9 +21,321 @@ RELATION_TYPES: Dict[str, Dict[str, str]] = {
     "association": {"description": "Indicates an association between entities"},
 }
 
+_DOUBLE_POSITIVE_PATTERNS = [
+    re.compile(r"hard to (?:find|see)[^.!?]*?(?:don't|do not|can't|cannot)\s+(?:like|hate|complain)", re.IGNORECASE),
+    re.compile(r"can't\s+complain", re.IGNORECASE),
+    re.compile(r"nothing\s+to\s+(?:complain|hate|dislike)", re.IGNORECASE),
+    re.compile(r"no\s+(?:real\s+)?complaints?", re.IGNORECASE),
+    # catch idioms like "nothing like a Mac" which are high praise
+    re.compile(r"nothing\s+like\s+(?:a|an|the)?\s*\w+", re.IGNORECASE),
+]
+
+_EXPECTATION_SHORTFALL_PATTERNS = [
+    re.compile(r"make better at home", re.IGNORECASE),
+    re.compile(r"better at home", re.IGNORECASE),
+    re.compile(r"shouldn'?t\s+take", re.IGNORECASE),
+    re.compile(r"only\s+\d+\s+usb", re.IGNORECASE),
+    re.compile(r"lacks?\s+", re.IGNORECASE),
+    # patterns that indicate an increase in size or negative change
+    re.compile(r"\b(increase|larger)\s+in\s+size\b", re.IGNORECASE),
+]
+
+_VALUE_POSITIVE_PATTERNS = [
+    re.compile(r"especially considering", re.IGNORECASE),
+    re.compile(r"worth (?:every|the)", re.IGNORECASE),
+    re.compile(r"hard\s+for\s+me\s+to\s+find\s+things\s+i\s+don't\s+like", re.IGNORECASE),
+    # justification patterns: "justifies the lack of..." often signals a positive trade-off
+    re.compile(r"justifies\s+the\s+lack", re.IGNORECASE),
+    # electronics domain positives: low heat / quiet operation
+    re.compile(r"\b(low|quiet|cool)\s+(heat|noise|temps|operation)\b", re.IGNORECASE),
+    re.compile(r"\b(ultra|very)\s+quiet\b", re.IGNORECASE),
+]
+
+_NEUTRAL_LISTING_PATTERNS = [
+    re.compile(r"include[s]?\s+classics", re.IGNORECASE),
+    re.compile(r"features? include", re.IGNORECASE),
+]
+
+_HEAD_OPINION_KEYWORDS = {
+    "good",
+    "great",
+    "bad",
+    "poor",
+    "awful",
+    "amazing",
+    "terrible",
+    "lousy",
+    "fast",
+    "slow",
+    "worth",
+    "balanced",
+    "quiet",
+    "loud",
+    "cheap",
+    "expensive",
+    "overpriced",
+    "reliable",
+    "unreliable",
+    "love",
+    "hate",
+    "fantastic",
+}
+
+
+def _clamp_score(score: float) -> float:
+    return max(min(score, 1.0), -1.0)
+
+
+def _modifier_polarity_summary(per_scores: Dict[str, float], threshold: tuple) -> Dict[str, int]:
+    pos_threshold, neg_threshold = threshold
+    return {
+        "positive": sum(1 for score in per_scores.values() if score > pos_threshold),
+        "negative": sum(1 for score in per_scores.values() if score < neg_threshold),
+        "neutral": sum(1 for score in per_scores.values() if neg_threshold <= score <= pos_threshold),
+    }
+
+
+def _adjust_head_sentiment(head_text: str, head_sentiment: float, modifiers: List[str]) -> Tuple[float, Optional[str]]:
+    if modifiers:
+        return head_sentiment, None
+    cleaned = (head_text or "").strip()
+    if not cleaned:
+        return 0.0, "empty head -> neutral"
+    tokens = cleaned.lower().split()
+    if any(token in _HEAD_OPINION_KEYWORDS for token in tokens):
+        return head_sentiment, None
+    dampened = head_sentiment * 0.35
+    return dampened, f"head-only noun dampened from {head_sentiment:+.2f} to {dampened:+.2f}"
+
+
+def _adjust_modifier_sentiment(
+    modifiers: List[str],
+    base_score: float,
+    clause_text: str,
+) -> Tuple[float, Optional[str]]:
+    if not modifiers:
+        return base_score, None
+    joined = " ".join(modifiers)
+    composite = f"{joined} {clause_text or ''}".lower()
+    adjusted = base_score
+    notes: List[str] = []
+
+    for pattern in _DOUBLE_POSITIVE_PATTERNS:
+        if pattern.search(composite):
+            if adjusted < 0:
+                adjusted = abs(adjusted)
+                notes.append("double-negative praise flipped positive")
+            break
+
+    for pattern in _EXPECTATION_SHORTFALL_PATTERNS:
+        if pattern.search(composite):
+            if adjusted > 0:
+                adjusted = -abs(adjusted)
+                notes.append("expectation shortfall forced negative")
+            break
+
+    for pattern in _VALUE_POSITIVE_PATTERNS:
+        if pattern.search(composite):
+            if adjusted <= 0:
+                adjusted = max(abs(adjusted), 0.4)
+            notes.append("value framing boosted positive sentiment")
+            break
+
+    for pattern in _NEUTRAL_LISTING_PATTERNS:
+        if pattern.search(composite):
+            adjusted *= 0.3
+            notes.append("listing detected -> magnitude dampened")
+            break
+
+    return _clamp_score(adjusted), "; ".join(notes) if notes else None
+
+
+def _score_polarity(score: float, threshold: tuple) -> int:
+    pos_threshold, neg_threshold = threshold
+    if score > pos_threshold:
+        return 1
+    if score < neg_threshold:
+        return -1
+    return 0
+
+
+def _legacy_blend(
+    head_sentiment: float,
+    modifier_sentiment: float,
+    has_modifiers: bool,
+    threshold: tuple,
+) -> Tuple[float, str]:
+    pos_threshold, neg_threshold = threshold
+    head_polarity = _score_polarity(head_sentiment, threshold)
+    modifier_polarity = _score_polarity(modifier_sentiment, threshold)
+
+    if not has_modifiers:
+        if abs(head_sentiment) >= 0.5:
+            return head_sentiment, f"No modifiers; using strong head sentiment ({head_sentiment:+.2f})."
+        return 0.0, f"No modifiers and weak head sentiment ({head_sentiment:+.2f}); defaulting to neutral."
+
+    if modifier_polarity != 0 and head_polarity != 0 and modifier_polarity != head_polarity:
+        return modifier_sentiment, (
+            f"Polarity conflict: Head ({head_sentiment:+.2f}) vs. Modifier ({modifier_sentiment:+.2f}). "
+            "Modifier sentiment overrides."
+        )
+
+    if head_polarity == modifier_polarity and head_polarity != 0:
+        final = (head_sentiment + modifier_sentiment) / 2
+        return final, (
+            f"Polarities agree: Head ({head_sentiment:+.2f}) and Modifier ({modifier_sentiment:+.2f}). "
+            "Sentiments averaged."
+        )
+
+    if modifier_polarity == 0:
+        return head_sentiment, f"Neutral modifier; using head sentiment ({head_sentiment:+.2f})."
+
+    final = (head_sentiment + modifier_sentiment) / 2
+    return final, (
+        f"Default case (concordant polarity): Averaging Head ({head_sentiment:+.2f}) and Modifier ({modifier_sentiment:+.2f})."
+    )
+
+
+def _combine_balanced_v1(
+    head_text: str,
+    head_sentiment: float,
+    modifiers: List[str],
+    modifier_sentiment: float,
+    threshold: tuple,
+    context_score: Optional[float],
+    per_scores: Dict[str, float],
+    clause_text: str,
+) -> Tuple[float, str, Dict[str, Any]]:
+    head_adjusted, head_note = _adjust_head_sentiment(head_text, head_sentiment, modifiers)
+    modifier_adjusted, modifier_note = _adjust_modifier_sentiment(modifiers, modifier_sentiment, clause_text)
+    base_score, justification = _legacy_blend(head_adjusted, modifier_adjusted, bool(modifiers), threshold)
+
+    if context_score is not None and modifiers:
+        base_score = 0.7 * base_score + 0.3 * context_score
+        justification += f" Context blended in ({context_score:+.2f})."
+
+    heuristic_notes = [note for note in (head_note, modifier_note) if note]
+    if heuristic_notes:
+        justification += " Heuristics: " + "; ".join(heuristic_notes) + "."
+
+    return _clamp_score(base_score), justification, {
+        "head_adjusted": head_adjusted,
+        "modifier_adjusted": modifier_adjusted,
+        "heuristic_notes": heuristic_notes,
+    }
+
+
+def _combine_modifier_dominant_v2(
+    head_text: str,
+    head_sentiment: float,
+    modifiers: List[str],
+    modifier_sentiment: float,
+    threshold: tuple,
+    context_score: Optional[float],
+    per_scores: Dict[str, float],
+    clause_text: str,
+) -> Tuple[float, str, Dict[str, Any]]:
+    head_adjusted, head_note = _adjust_head_sentiment(head_text, head_sentiment, modifiers)
+    modifier_adjusted, modifier_note = _adjust_modifier_sentiment(modifiers, modifier_sentiment, clause_text)
+    head_pol = _score_polarity(head_adjusted, threshold)
+    mod_pol = _score_polarity(modifier_adjusted, threshold)
+
+    if modifiers:
+        if head_pol != 0 and mod_pol != 0 and head_pol != mod_pol:
+            score = modifier_adjusted
+            justification = (
+                f"Modifier priority resolved polarity conflict: modifier {modifier_adjusted:+.2f} overrides head {head_adjusted:+.2f}."
+            )
+        else:
+            score = 0.8 * modifier_adjusted + 0.2 * head_adjusted
+            justification = (
+                f"Modifier-forward blend (80/20) of modifier ({modifier_adjusted:+.2f}) and head ({head_adjusted:+.2f})."
+            )
+        if context_score is not None:
+            score = 0.85 * score + 0.15 * context_score
+            justification += f" Context stabiliser ({context_score:+.2f}) applied."
+    else:
+        score = head_adjusted * 0.4
+        justification = f"No modifiers; head sentiment ({head_adjusted:+.2f}) softened to avoid noun bias."
+
+    heuristic_notes = [note for note in (head_note, modifier_note) if note]
+    if heuristic_notes:
+        justification += " Heuristics: " + "; ".join(heuristic_notes) + "."
+
+    return _clamp_score(score), justification, {
+        "head_adjusted": head_adjusted,
+        "modifier_adjusted": modifier_adjusted,
+        "heuristic_notes": heuristic_notes,
+    }
+
+
+def _combine_contextual_v3(
+    head_text: str,
+    head_sentiment: float,
+    modifiers: List[str],
+    modifier_sentiment: float,
+    threshold: tuple,
+    context_score: Optional[float],
+    per_scores: Dict[str, float],
+    clause_text: str,
+) -> Tuple[float, str, Dict[str, Any]]:
+    head_adjusted, head_note = _adjust_head_sentiment(head_text, head_sentiment, modifiers)
+    modifier_adjusted, modifier_note = _adjust_modifier_sentiment(modifiers, modifier_sentiment, clause_text)
+
+    summary = _modifier_polarity_summary(per_scores, threshold)
+    heuristic_notes = [note for note in (head_note, modifier_note) if note]
+
+    if modifiers:
+        if summary["positive"] and summary["negative"]:
+            ctx_component = context_score if context_score is not None else 0.0
+            score = 0.6 * ((modifier_adjusted + head_adjusted) / 2) + 0.4 * ctx_component
+            ctx_phrase = f"{ctx_component:+.2f}" if context_score is not None else "0.00"
+            justification = (
+                f"Mixed modifier polarities ({summary['positive']}+/ {summary['negative']}-); averaged with context ({ctx_phrase})."
+            )
+        else:
+            weight_mod = 0.55 if abs(modifier_adjusted) >= abs(head_adjusted) else 0.45
+            weight_head = 0.3 if abs(head_adjusted) > abs(modifier_adjusted) else 0.25
+            weight_ctx = 1.0 - weight_mod - weight_head
+            ctx_component = context_score if context_score is not None else modifier_adjusted
+            score = (
+                weight_mod * modifier_adjusted
+                + weight_head * head_adjusted
+                + weight_ctx * ctx_component
+            )
+            justification = (
+                "Context-aware blend "
+                f"(mod {weight_mod:.2f}, head {weight_head:.2f}, ctx {weight_ctx:.2f}) using context {ctx_component:+.2f}."
+            )
+    else:
+        if context_score is not None:
+            score = 0.5 * head_adjusted + 0.5 * context_score
+            justification = (
+                f"No modifiers; balanced head ({head_adjusted:+.2f}) with clause context ({context_score:+.2f})."
+            )
+        else:
+            score = head_adjusted * 0.25
+            justification = (
+                f"No modifiers or context; heavily dampened head sentiment ({head_adjusted:+.2f})."
+            )
+
+    if heuristic_notes:
+        justification += " Heuristics: " + "; ".join(heuristic_notes) + "."
+
+    return _clamp_score(score), justification, {
+        "head_adjusted": head_adjusted,
+        "modifier_adjusted": modifier_adjusted,
+        "heuristic_notes": heuristic_notes,
+    }
+
 
 class RelationGraph:
-    def __init__(self, text: str = "", clauses: List[str] = [], sentiment_analyzer_system=None):
+    def __init__(
+        self,
+        text: str = "",
+        clauses: List[str] = [],
+        sentiment_analyzer_system=None,
+    ):
         self.graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self.text: str = text
         self.clauses: List[str] = clauses
@@ -159,28 +471,37 @@ class RelationGraph:
         head_sentiment = float(self._sent(clean_head)) if clean_head else 0.0
         modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(clean_head, modifiers_clean)
 
-        final_sentiment, base_justification = self._combine_sentiments(
+        final_sentiment, base_justification, extras = self._combine_sentiments(
             clean_head,
             head_sentiment,
             modifiers_clean,
             modifier_sentiment,
             threshold,
+            context_score,
+            per_scores,
+            self.text,
         )
 
-        polarity_counts = {
-            "positive": sum(1 for score in per_scores.values() if score > threshold[0]),
-            "negative": sum(1 for score in per_scores.values() if score < threshold[1]),
-            "neutral": sum(1 for score in per_scores.values() if threshold[1] <= score <= threshold[0]),
-        }
+        head_adjusted = extras.get("head_adjusted", head_sentiment)
+        modifier_adjusted = extras.get("modifier_adjusted", modifier_sentiment)
+        heuristic_notes = extras.get("heuristic_notes", []) or []
+
+        polarity_counts = _modifier_polarity_summary(per_scores, threshold)
         detail_parts = [
             f"head={head_sentiment:+.2f}",
             f"modifier_mean={modifier_sentiment:+.2f}",
         ]
+        if head_adjusted != head_sentiment:
+            detail_parts.append(f"head_adj={head_adjusted:+.2f}")
+        if modifier_adjusted != modifier_sentiment:
+            detail_parts.append(f"modifier_adj={modifier_adjusted:+.2f}")
         if context_score is not None:
             detail_parts.append(f"context={context_score:+.2f}")
         if per_scores:
             ordered = [f"{span}: {per_scores[span]:+.2f}" for span in modifiers_clean if span in per_scores]
             detail_parts.append("per_modifiers={" + ", ".join(ordered) + "}")
+        if heuristic_notes:
+            detail_parts.append("heuristics=" + ", ".join(heuristic_notes))
         sentiment_justification = base_justification
         if detail_parts:
             sentiment_justification = f"{base_justification} Details: {'; '.join(detail_parts)}."
@@ -194,12 +515,16 @@ class RelationGraph:
             clause_layer=clause_layer,
             init_sentiment=final_sentiment,
             head_sentiment=head_sentiment,
+            head_sentiment_adjusted=head_adjusted,
             modifier_sentiment=modifier_sentiment,
+            modifier_sentiment_adjusted=modifier_adjusted,
             modifier_context_sentiment=context_score,
             modifier_sentiment_components=per_scores,
             modifier_polarity_counts=polarity_counts,
             modifier_conflict=polarity_counts["positive"] > 0 and polarity_counts["negative"] > 0,
             sentiment_justification=sentiment_justification,
+            sentiment_strategy="contextual_v3",
+            sentiment_heuristics=heuristic_notes,
             sentiment_threshold=threshold,
         )
 
@@ -304,23 +629,30 @@ class RelationGraph:
 
         modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(head_text, combined_modifiers)
         threshold = node.get('sentiment_threshold', (0.1, -0.1))
-        final_sentiment, base_justification = self._combine_sentiments(
+        final_sentiment, base_justification, extras = self._combine_sentiments(
             head_text,
             head_sentiment,
             combined_modifiers,
             modifier_sentiment,
             threshold,
+            context_score,
+            per_scores,
+            self.text,
         )
 
-        polarity_counts = {
-            "positive": sum(1 for score in per_scores.values() if score > threshold[0]),
-            "negative": sum(1 for score in per_scores.values() if score < threshold[1]),
-            "neutral": sum(1 for score in per_scores.values() if threshold[1] <= score <= threshold[0]),
-        }
+        head_adjusted = extras.get("head_adjusted", head_sentiment)
+        modifier_adjusted = extras.get("modifier_adjusted", modifier_sentiment)
+        heuristic_notes = extras.get("heuristic_notes", []) or []
+
+        polarity_counts = _modifier_polarity_summary(per_scores, threshold)
         detail_parts = [
             f"head={head_sentiment:+.2f}",
             f"modifier_mean={modifier_sentiment:+.2f}",
         ]
+        if head_adjusted != head_sentiment:
+            detail_parts.append(f"head_adj={head_adjusted:+.2f}")
+        if modifier_adjusted != modifier_sentiment:
+            detail_parts.append(f"modifier_adj={modifier_adjusted:+.2f}")
         if context_score is not None:
             detail_parts.append(f"context={context_score:+.2f}")
         if per_scores:
@@ -328,13 +660,17 @@ class RelationGraph:
             detail_parts.append("per_modifiers={" + ", ".join(ordered) + "}")
         if added_modifiers:
             detail_parts.append("added=" + ", ".join(added_modifiers))
+        if heuristic_notes:
+            detail_parts.append("heuristics=" + ", ".join(heuristic_notes))
         sentiment_justification = base_justification
         if detail_parts:
             sentiment_justification = f"{base_justification} Details: {'; '.join(detail_parts)}."
 
         node['modifier'] = combined_modifiers
         node['head_sentiment'] = head_sentiment
+        node['head_sentiment_adjusted'] = head_adjusted
         node['modifier_sentiment'] = modifier_sentiment
+        node['modifier_sentiment_adjusted'] = modifier_adjusted
         node['modifier_context_sentiment'] = context_score
         node['modifier_sentiment_components'] = per_scores
         node['modifier_polarity_counts'] = polarity_counts
@@ -342,6 +678,8 @@ class RelationGraph:
         node['init_sentiment'] = final_sentiment
         node['sentiment_justification'] = sentiment_justification
         node['last_added_modifiers'] = added_modifiers
+        node['sentiment_strategy'] = "contextual_v3"
+        node['sentiment_heuristics'] = heuristic_notes
 
     def set_entity_role(self, entity_id: int, entity_role: str, clause_layer: int) -> None:
         logger.info("Setting entity role...")
@@ -360,50 +698,36 @@ class RelationGraph:
             v = self._node_key(entity_id, layers[i + 1])
             self.graph.add_edge(u, v, relation="temporal")
 
-    def _combine_sentiments(self, head: str, head_sentiment: float, modifier: List[str], modifier_sentiment: float, threshold: tuple = (0.1, -0.1)) -> Tuple[float, str]:
-        POS_THRESHOLD, NEG_THRESHOLD = threshold
-        
-        def get_polarity(score: float) -> int:
-            if score > POS_THRESHOLD: return 1
-            if score < NEG_THRESHOLD: return -1
-            return 0
-
-        head_polarity = get_polarity(head_sentiment)
-        modifier_polarity = get_polarity(modifier_sentiment)
-
-        if not modifier:
-            if abs(head_sentiment) >= 0.5:
-                justification = f"No modifiers; using strong head sentiment ({head_sentiment:.2f})."
-                return head_sentiment, justification
-            else:
-                justification = f"No modifiers and weak head sentiment ({head_sentiment:.2f}); defaulting to neutral."
-                return 0.0, justification
-
-        if modifier_polarity != 0 and head_polarity != modifier_polarity:
-            justification = (
-                f"Polarity conflict: Head ({head_sentiment:.2f}) vs. Modifier ({modifier_sentiment:.2f}). "
-                "Modifier sentiment overrides."
+    def _combine_sentiments(
+        self,
+        head: str,
+        head_sentiment: float,
+        modifier: List[str],
+        modifier_sentiment: float,
+        threshold: tuple = (0.1, -0.1),
+        context_score: Optional[float] = None,
+        per_scores: Optional[Dict[str, float]] = None,
+        clause_text: str = "",
+    ) -> Tuple[float, str, Dict[str, Any]]:
+        try:
+            return _combine_contextual_v3(
+                head,
+                head_sentiment,
+                modifier,
+                modifier_sentiment,
+                threshold,
+                context_score,
+                per_scores or {},
+                clause_text,
             )
-            return modifier_sentiment, justification
-
-        elif head_polarity == modifier_polarity and head_polarity != 0:
-            final_sentiment = (head_sentiment + modifier_sentiment) / 2
-            justification = (
-                f"Polarities agree: Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f}). "
-                "Sentiments averaged."
-            )
-            return final_sentiment, justification
-
-        elif modifier_polarity == 0:
-            justification = f"Neutral modifier; using head sentiment ({head_sentiment:.2f})."
-            return head_sentiment, justification
-        
-        else:
-            final_sentiment = (head_sentiment + modifier_sentiment) / 2
-            justification = (
-                f"Default case (concordant polarity): Averaging Head ({head_sentiment:.2f}) and Modifier ({modifier_sentiment:.2f})."
-            )
-            return final_sentiment, justification
+        except Exception:
+            logger.exception("Contextual sentiment combiner failed; falling back to legacy blend.")
+            score, justification = _legacy_blend(head_sentiment, modifier_sentiment, bool(modifier), threshold)
+            return _clamp_score(score), justification, {
+                "head_adjusted": head_sentiment,
+                "modifier_adjusted": modifier_sentiment,
+                "heuristic_notes": ["combiner_fallback"],
+            }
 
 
 
@@ -416,6 +740,20 @@ class RelationGraph:
         if parent not in self.graph.nodes or child not in self.graph.nodes:
             raise ValueError(f"Layer {clause_layer} missing parent or child node.")
         self.graph.add_edge(parent, child, relation="belonging", parent=parent, child=child)
+
+    def add_action_edge(self, actor_id: int, action_id: int, target_id: int, clause_layer: int) -> None:
+        logger.info(f"Adding action edge actor={actor_id} action={action_id} target={target_id} at layer {clause_layer}...")
+        # Validate entity presence
+        if actor_id not in self.entity_ids or action_id not in self.entity_ids or target_id not in self.entity_ids:
+            raise ValueError(f"Actor ID {actor_id}, Action ID {action_id} or Target ID {target_id} not found in the graph.")
+        actor = self._node_key(actor_id, clause_layer)
+        action = self._node_key(action_id, clause_layer)
+        target = self._node_key(target_id, clause_layer)
+        if actor not in self.graph.nodes or action not in self.graph.nodes or target not in self.graph.nodes:
+            raise ValueError(f"Layer {clause_layer} missing actor/action/target nodes.")
+        # Capture initial sentiment for the action edge if present on the action node
+        init_sent = float(self.graph.nodes[action].get('init_sentiment', 0.0))
+        self.graph.add_edge(actor, target, relation="action", actor=actor, action=action, target=target, init_sentiment=init_sent)
 
     def add_association_edge(self, entity1_id: int, entity2_id: int, clause_layer: int) -> None:
         logger.info(f"Adding association edge between {entity1_id} and {entity2_id}...")

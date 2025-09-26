@@ -3,6 +3,7 @@ import re
 import time
 from typing import Dict, Any, List, Optional
 from functools import lru_cache
+from copy import deepcopy
 import logging
 
 try:
@@ -113,6 +114,7 @@ class GemmaModifierExtractor(ModifierExtractor):
         self.backoff = backoff
         self.retries = retries
         self.rate_limiter = rate_limiter or _ensure_modifier_rate_limiter()
+        self._cache: Dict[tuple[str, str], Dict[str, Any]] = {}
         if genai is None:
             raise RuntimeError("google-generativeai not available")
         key = api_key or get_env("GOOGLE_API_KEY")
@@ -128,16 +130,20 @@ You are a meticulous linguist specializing in **aspect-based sentiment extractio
 Given a PASSAGE and an ENTITY, output all **verbatim spans** whose semantics evaluate that entity. Preserve mixed polarity by returning each evaluative clause separately.
 
 ## Extraction Directives
+- **GOLDEN RULE: ONE COHERENT SPAN.** Your primary goal is to extract the **minimal but complete** evaluative clause as a **single, unbroken string**. Do not fragment phrases. Include all context needed to understand the sentiment, especially negation and contrast.
+
 1.  **Clause-level evaluations (CRITICAL)** — capture the full predicate (auxiliaries, modals, negation, intensifiers, complements) that judges the entity.
 2.  **Descriptive phrases** — include adjectives/adverbs with their intensifiers, hedges, and negators that modify the entity mention.
-3.  **Comparatives & expectations** — keep the entire construction that signals better/worse-than or failed expectations (e.g., “didn’t live up to the hype”, “on par with …”).
-4.  **Idioms, appositives, recommendations** — extract opinionated idioms or directives about the entity (e.g., “a total ripoff”, “worth trying”).
-5.  **Value & price framing** — retain the evaluative wording around costs or trade-offs (e.g., “especially considering the $350 price tag”, “worth every penny”); never isolate the number alone.
-6.  **Mixed polarity** — when the passage alternates praise and criticism of the same entity, emit **each** evaluative span (e.g., a negative clause followed by a positive clause). Never drop a counter-balancing statement.
+3.  **Negation & Polarity Flippers (CRITICAL)** — Preserve all cues that alter sentiment. This includes negators (`not`, `never`), concessive cues (`but`, `although`), and double-negative praise (“hard to find things I don’t like”). **Emit them as a single coherent span.** Never drop the word that flips the sentiment direction.
+4.  **Comparatives & expectations** — keep the entire construction that signals better/worse-than or failed expectations (e.g., “didn’t live up to the hype”, “on par with …”).
+5.  **Idioms, appositives, recommendations** — extract opinionated idioms or directives about the entity (e.g., “a total ripoff”, “worth trying”).
+6.  **Value & price framing** — retain the evaluative wording around costs or trade-offs (e.g., “especially considering the $350 price tag”, “worth every penny”); never isolate the number alone.
+7.  **Mixed polarity** — when the passage alternates praise and criticism of the same entity, emit **each** evaluative span (e.g., a negative clause followed by a positive clause). Never drop a counter-balancing statement.
 
 ## Boundary & Span Rules
 - **Verbatim & minimal-but-complete**: include negation, auxiliaries, degree markers, quantifiers, and required complements; exclude trailing factual context unrelated to sentiment.
 - **Shared subjects / coordination**: when coordinated predicates share the entity, capture the full coordinated span until the subject/scope shifts.
+- **Contiguous meaning**: join adjacent evaluative fragments when a negator or intensifier bridges them; don’t return chopped-up clauses that would lose the negation or contrast.
 - **Numbers & measurements**: only keep numeric expressions when they directly participate in an evaluative construction (“boots in under 30 seconds”). Do **not** output bare measurements alone; keep the praising or complaining cue (e.g., “only”, “at least”, “worth the”).
 - **Coreference allowed**: pronouns or descriptive rementions (“it”, “the dessert”) qualify if they clearly refer to the ENTITY.
 - **Deduplicate** exact repeats and keep spans in passage order.
@@ -153,7 +159,7 @@ Given a PASSAGE and an ENTITY, output all **verbatim spans** whose semantics eva
 - **Identity/authenticity complaints**: capture the negated identificational predicate (“wasn’t it”, “was not a Nicoise salad”).
 - **Expectation framing**: when expectations fail for the ENTITY, keep the clause signalling the shortfall (“didn’t live up …”, “should be …”).
 - **Comparatives to self/home**: treat as negative; keep the full clause (“is something I can make better at home”).
-- **Double-negative praise**: clauses like “hard to find something I don’t like”, “can’t complain”, or “nothing to hate” signal positivity—capture them as favorable sentiment on the ENTITY.
+- **Double-negative praise**: clauses like “hard to find something I don’t like”, “can’t complain”, or “nothing to hate” signal positivity—capture them as a favorable sentiment on the ENTITY.
 - **Value justifications**: when sentiment hinges on price/value trade-offs (“especially considering …”, “worth the price”), include the motivating phrase with its cue words.
 - **Opposing clauses**: when praise and criticism occur back-to-back, output both spans.
 
@@ -250,6 +256,11 @@ P: I know real Indian food and this wasn't it. E: this ->
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
         if not text or not entity:
             return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": "empty input"}
+        # Simple caching to avoid repeated LLM calls for identical inputs
+        cache_key = (text.strip(), entity.strip())
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
         p = self._prompt(text, entity)
         last_err = None
         for i in range(self.retries + 1):
@@ -284,7 +295,7 @@ P: I know real Indian food and this wasn't it. E: this ->
         return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": f"failure: {last_err}"}
 
 class SpacyModifierExtractor(ModifierExtractor):
-    def extract(self, text: str, entity: str) -> Dict[str, Any]:
+    def _extract_helper(self, text: str, entity: str) -> Dict[str, Any]:
         nlp = _get_spacy_nlp()
         if not nlp or not text or not entity:
             return {"entity": entity, "modifiers": [], "approach_used": "spacy_fallback", "justification": "unavailable"}
@@ -340,3 +351,11 @@ class SpacyModifierExtractor(ModifierExtractor):
                 else:
                     mods.append(s)
         return {"entity": entity, "modifiers": mods, "approach_used": "spacy_fallback", "justification": f"{len(mods)} cues"}
+
+    # Public entrypoint uses a small LRU cache to speed repeated extractions on the same inputs
+    @lru_cache(maxsize=4096)
+    def extract(self, text: str, entity: str) -> Dict[str, Any]:
+        # lru_cache requires hashable args; normalize whitespace for stability
+        key_text = (text or "").strip()
+        key_ent = (entity or "").strip()
+        return self._extract_helper(key_text, key_ent)

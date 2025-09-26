@@ -117,6 +117,7 @@ class MultiSentimentAnalysis(SentimentAnalysis):
 
         if total_weight > 0:
             aggregate = weighted_sum / total_weight
+            aggregate = max(min(aggregate, 1.0), -1.0)
             return {"aggregate": aggregate, "per_method_scores": per_method_scores, "raw": results}
         # If no numeric scores were available, return raw results
         return {"per_method": results}

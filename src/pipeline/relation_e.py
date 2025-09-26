@@ -105,6 +105,7 @@ class GemmaRelationExtractor(RelationExtractor):
         self.response_mime_type = response_mime_type
         rpm = _default_rpm_for_model(self.model)
         self.rate_limiter = rate_limiter or _ensure_global_rate_limiter(max_calls=rpm)
+        self._cache: Dict[tuple[str, tuple], Dict[str, Any]] = {}
         self._init_api(api_key)
 
     def _init_api(self, api_key: Optional[str] = None):
@@ -237,12 +238,29 @@ class GemmaRelationExtractor(RelationExtractor):
     def extract(self, text: str, entities: List[str]) -> Dict[str, Any]:
         if not text or not entities:
             return {"entities": entities, "actions": [], "associations": [], "belongings": [], "relations": [], "justification": "empty input", "approach_used": self.model}
+        # caching to avoid duplicate LLM queries
+        cache_key = (text.strip(), tuple(e.strip() for e in entities))
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
         prompt = self._create_prompt(text, entities)
         last_err = None
         for i in range(self.retries + 1):
             try:
                 resp = self._query_gemma(prompt)
-                return self._parse_relation_response(resp, entities)
+                out = self._parse_relation_response(resp, entities)
+                try:
+                    # keep cache size bounded
+                    if len(self._cache) > 10000:
+                        # drop an arbitrary item (FIFO-like) to avoid unbounded growth
+                        try:
+                            self._cache.pop(next(iter(self._cache)))
+                        except Exception:
+                            self._cache.clear()
+                    self._cache[cache_key] = out
+                except Exception:
+                    pass
+                return out
             except Exception as e:
                 last_err = e
                 if i < self.retries:

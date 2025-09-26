@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TYPE_CHECKING, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -908,23 +908,25 @@ def run_benchmark(
 
     return metrics
 
-metrics_1 = run_benchmark(
-    "FULL_STACK_TEST_LAPTOP",
-    "test_laptop_2014",
-    "full_stack",
-    300,
-    0.1,
-    -0.1
-)
+if __name__ == "__main__":
+    metrics_laptop = run_benchmark(
+        "Benchmarking_Full_Run_laptop_2014",
+        "test_laptop_2014",
+        "full_stack",
+        None,
+        0.1,
+        -0.1,
+    )
+    """metrics_restaurant = run_benchmark(
+        "SMALL_FULL_STACK_TEST_RESTAURANT",
+        "test_restaurant_2014",
+        "full_stack",
+        50,
+        0.1,
+        -0.1,
+    )"""
 
-metrics_2 = run_benchmark(
-    "FULL_STACK_TEST_RESTAURANT",
-    "test_restaurant_2014",
-    "full_stack",
-    300,
-    0.1,
-    -0.1
-)
-
-print(metrics_1)
-print(metrics_2)
+    print(json.dumps({
+        "laptop": metrics_laptop,
+        # "restaurant": metrics_restaurant,
+    }, indent=2))

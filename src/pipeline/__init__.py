@@ -27,7 +27,7 @@ from .sentiment_model import (
     DummySentimentModel,
     DuoDummySentimentModel,
 )
-from .sentiment_analysis_save import (
+from .sentiment_analysis import (
     SentimentAnalysis,
     VADERSentimentAnalysis,
     TextBlobSentimentAnalysis,
