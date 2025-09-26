@@ -91,23 +91,118 @@ class RelationGraph:
             new_id += 1
         return new_id
 
-    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int) -> None:
-        logger.info("Adding entity node...")
+    def add_entity_node(
+        self,
+        id: int,
+        head: str,
+        modifier: List[str],
+        entity_role: str,
+        clause_layer: int,
+        threshold: tuple = (0.1, -0.1),
+    ) -> None:
+        logger.info("Adding entity node %s at layer %s", id, clause_layer)
         self._validate_role(entity_role)
         self.entity_ids.add(id)
         key = self._node_key(id, clause_layer)
-        text_for_sent = (", ".join(modifier) + " " + head).strip()
-        sentiment = self._sent(text_for_sent)
+
+        def _unique_modifiers(spans: List[str]) -> List[str]:
+            unique: List[str] = []
+            seen = set()
+            for span in spans or []:
+                if not isinstance(span, str):
+                    continue
+                cleaned = span.strip()
+                if not cleaned:
+                    continue
+                norm = cleaned.lower()
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                unique.append(cleaned)
+            return unique
+
+        def _compute_modifier_sentiment(head_text: str, spans: List[str]) -> Tuple[float, Dict[str, float], Optional[float]]:
+            if not spans:
+                return 0.0, {}, None
+            per_scores: Dict[str, float] = {}
+            weighted_sum = 0.0
+            magnitude_sum = 0.0
+            for span in spans:
+                score_raw = self._sent(span)
+                if not isinstance(score_raw, (int, float)):
+                    continue
+                score = float(score_raw)
+                per_scores[span] = score
+                weight = abs(score)
+                if weight > 0:
+                    weighted_sum += score * weight
+                    magnitude_sum += weight
+            if not per_scores:
+                return 0.0, {}, None
+            mean_score = (
+                weighted_sum / magnitude_sum if magnitude_sum > 0 else sum(per_scores.values()) / len(per_scores)
+            )
+            context_score: Optional[float] = None
+            if head_text and spans:
+                context_text = ". ".join(f"{head_text} {span}" for span in spans)
+                ctx_raw = self._sent(context_text)
+                if isinstance(ctx_raw, (int, float)):
+                    context_score = float(ctx_raw)
+            if context_score is not None:
+                combined = 0.7 * mean_score + 0.3 * context_score
+            else:
+                combined = mean_score
+            return combined, per_scores, context_score
+
+        clean_head = (head or "").strip()
+        modifiers_clean = _unique_modifiers(modifier)
+        head_sentiment = float(self._sent(clean_head)) if clean_head else 0.0
+        modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(clean_head, modifiers_clean)
+
+        final_sentiment, base_justification = self._combine_sentiments(
+            clean_head,
+            head_sentiment,
+            modifiers_clean,
+            modifier_sentiment,
+            threshold,
+        )
+
+        polarity_counts = {
+            "positive": sum(1 for score in per_scores.values() if score > threshold[0]),
+            "negative": sum(1 for score in per_scores.values() if score < threshold[1]),
+            "neutral": sum(1 for score in per_scores.values() if threshold[1] <= score <= threshold[0]),
+        }
+        detail_parts = [
+            f"head={head_sentiment:+.2f}",
+            f"modifier_mean={modifier_sentiment:+.2f}",
+        ]
+        if context_score is not None:
+            detail_parts.append(f"context={context_score:+.2f}")
+        if per_scores:
+            ordered = [f"{span}: {per_scores[span]:+.2f}" for span in modifiers_clean if span in per_scores]
+            detail_parts.append("per_modifiers={" + ", ".join(ordered) + "}")
+        sentiment_justification = base_justification
+        if detail_parts:
+            sentiment_justification = f"{base_justification} Details: {'; '.join(detail_parts)}."
+
         self.graph.add_node(
             key,
-            head=head,
-            modifier=list(modifier),
+            head=clean_head,
+            modifier=modifiers_clean,
             text=self.text,
             entity_role=entity_role,
             clause_layer=clause_layer,
-            init_sentiment=sentiment,
+            init_sentiment=final_sentiment,
+            head_sentiment=head_sentiment,
+            modifier_sentiment=modifier_sentiment,
+            modifier_context_sentiment=context_score,
+            modifier_sentiment_components=per_scores,
+            modifier_polarity_counts=polarity_counts,
+            modifier_conflict=polarity_counts["positive"] > 0 and polarity_counts["negative"] > 0,
+            sentiment_justification=sentiment_justification,
+            sentiment_threshold=threshold,
         )
-    
+
     def get_entities_at_layer(self, clause_layer: int) -> List[Dict]:
         entities = []
         for (entity_id, layer), data in self.graph.nodes(data=True):
@@ -134,16 +229,119 @@ class RelationGraph:
         return mentions
 
     def add_entity_modifier(self, entity_id: int, modifier: List[str], clause_layer: int) -> None:
-        logger.info("Adding entity modifiers...")
+        logger.info("Adding entity modifiers for %s at layer %s", entity_id, clause_layer)
         self._assert_node_exists(entity_id, clause_layer)
         key = self._node_key(entity_id, clause_layer)
-        current_modifiers = list(self.graph.nodes[key].get("modifier", []))
-        new_mods = current_modifiers + list(modifier)
-        self.graph.nodes[key]["modifier"] = new_mods
-        head = self.graph.nodes[key].get("head", "")
-        text_for_sent, justification = self._combine_sentiments(head, self.graph.nodes[key].get("init_sentiment", 0.0), new_mods, self._sent(", ".join(new_mods)))
-        self.graph.nodes[key]["init_sentiment"] = text_for_sent
-        self.graph.nodes[key]["sentiment_justification"] = justification
+        node = self.graph.nodes[key]
+
+        def _unique_modifiers(spans: List[str]) -> List[str]:
+            unique: List[str] = []
+            seen = set()
+            for span in spans or []:
+                if not isinstance(span, str):
+                    continue
+                cleaned = span.strip()
+                if not cleaned:
+                    continue
+                norm = cleaned.lower()
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                unique.append(cleaned)
+            return unique
+
+        def _compute_modifier_sentiment(head_text: str, spans: List[str]) -> Tuple[float, Dict[str, float], Optional[float]]:
+            if not spans:
+                return 0.0, {}, None
+            per_scores: Dict[str, float] = {}
+            weighted_sum = 0.0
+            magnitude_sum = 0.0
+            for span in spans:
+                score_raw = self._sent(span)
+                if not isinstance(score_raw, (int, float)):
+                    continue
+                score = float(score_raw)
+                per_scores[span] = score
+                weight = abs(score)
+                if weight > 0:
+                    weighted_sum += score * weight
+                    magnitude_sum += weight
+            if not per_scores:
+                return 0.0, {}, None
+            mean_score = (
+                weighted_sum / magnitude_sum if magnitude_sum > 0 else sum(per_scores.values()) / len(per_scores)
+            )
+            context_score: Optional[float] = None
+            if head_text and spans:
+                context_text = ". ".join(f"{head_text} {span}" for span in spans)
+                ctx_raw = self._sent(context_text)
+                if isinstance(ctx_raw, (int, float)):
+                    context_score = float(ctx_raw)
+            if context_score is not None:
+                combined = 0.7 * mean_score + 0.3 * context_score
+            else:
+                combined = mean_score
+            return combined, per_scores, context_score
+
+        existing_modifiers = _unique_modifiers(node.get("modifier", []))
+        incoming_modifiers = _unique_modifiers(modifier)
+        previous_norm = {span.lower() for span in existing_modifiers}
+        combined_modifiers: List[str] = []
+        seen = set()
+        for span in existing_modifiers + incoming_modifiers:
+            norm = span.lower()
+            if norm in seen:
+                continue
+            seen.add(norm)
+            combined_modifiers.append(span)
+        added_modifiers = [span for span in combined_modifiers if span.lower() not in previous_norm]
+
+        node['modifier'] = combined_modifiers
+        head_text = (node.get('head') or '').strip()
+        head_sentiment = node.get('head_sentiment')
+        if head_sentiment is None:
+            head_sentiment = float(self._sent(head_text)) if head_text else 0.0
+
+        modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(head_text, combined_modifiers)
+        threshold = node.get('sentiment_threshold', (0.1, -0.1))
+        final_sentiment, base_justification = self._combine_sentiments(
+            head_text,
+            head_sentiment,
+            combined_modifiers,
+            modifier_sentiment,
+            threshold,
+        )
+
+        polarity_counts = {
+            "positive": sum(1 for score in per_scores.values() if score > threshold[0]),
+            "negative": sum(1 for score in per_scores.values() if score < threshold[1]),
+            "neutral": sum(1 for score in per_scores.values() if threshold[1] <= score <= threshold[0]),
+        }
+        detail_parts = [
+            f"head={head_sentiment:+.2f}",
+            f"modifier_mean={modifier_sentiment:+.2f}",
+        ]
+        if context_score is not None:
+            detail_parts.append(f"context={context_score:+.2f}")
+        if per_scores:
+            ordered = [f"{span}: {per_scores[span]:+.2f}" for span in combined_modifiers if span in per_scores]
+            detail_parts.append("per_modifiers={" + ", ".join(ordered) + "}")
+        if added_modifiers:
+            detail_parts.append("added=" + ", ".join(added_modifiers))
+        sentiment_justification = base_justification
+        if detail_parts:
+            sentiment_justification = f"{base_justification} Details: {'; '.join(detail_parts)}."
+
+        node['modifier'] = combined_modifiers
+        node['head_sentiment'] = head_sentiment
+        node['modifier_sentiment'] = modifier_sentiment
+        node['modifier_context_sentiment'] = context_score
+        node['modifier_sentiment_components'] = per_scores
+        node['modifier_polarity_counts'] = polarity_counts
+        node['modifier_conflict'] = polarity_counts['positive'] > 0 and polarity_counts['negative'] > 0
+        node['init_sentiment'] = final_sentiment
+        node['sentiment_justification'] = sentiment_justification
+        node['last_added_modifiers'] = added_modifiers
 
     def set_entity_role(self, entity_id: int, entity_role: str, clause_layer: int) -> None:
         logger.info("Setting entity role...")
@@ -207,30 +405,7 @@ class RelationGraph:
             )
             return final_sentiment, justification
 
-    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int, threshold: tuple = (0.1, -0.1)) -> None:
-        logger.info(f"Adding entity node {id} ('{head}') in clause {clause_layer}...")
-        self._validate_role(entity_role)
-        self.entity_ids.add(id)
-        key = self._node_key(id, clause_layer)
-        
-        head_sentiment = self._sent(head)
-        modifier_text = ", ".join(modifier)
-        modifier_sentiment = self._sent(modifier_text) if modifier_text else 0.0
 
-        final_sentiment, justification = self._combine_sentiments(
-            head, head_sentiment, modifier, modifier_sentiment, threshold
-        )
-
-        self.graph.add_node(
-            key,
-            head=head,
-            modifier=list(modifier),
-            text=self.text,
-            entity_role=entity_role,
-            clause_layer=clause_layer,
-            init_sentiment=final_sentiment,
-            sentiment_justification=justification
-        )
 
     def add_belonging_edge(self, parent_id: int, child_id: int, clause_layer: int) -> None:
         logger.info(f"Adding belonging edge between {parent_id} and {child_id}...")
