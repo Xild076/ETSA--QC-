@@ -46,7 +46,7 @@ def run_benchmark(
     print(f"{Fore.CYAN}Running benchmark on {dataset} ({limit or 'all'} items)…{Style.RESET_ALL}")
 
     cmd = [
-        sys.executable, "-m", "src.graph.benchmark_integrate_graph",
+        sys.executable, "-m", "src.pipeline.benchmark",
         "--dataset", dataset,
         "--input", input_path,
         "--pos-thresh", str(pos_thresh),

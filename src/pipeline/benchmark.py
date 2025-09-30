@@ -4,6 +4,7 @@ import csv
 import json
 import logging
 import math
+import random
 import re
 import xml.etree.ElementTree as ET
 import traceback
@@ -27,55 +28,15 @@ from sklearn.metrics import (
 from networkx.readwrite import json_graph
 from tqdm import tqdm
 
-try:
-    from .pipeline import SentimentPipeline, build_default_pipeline
-except Exception:
-    from pipeline import SentimentPipeline, build_default_pipeline
+from pipeline import SentimentPipeline, build_default_pipeline
+import config
+from utility import normalize_text as normalize_text_for_comparison, STOPWORDS
 
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data" / "dataset"
-OUTPUT_ROOT = PROJECT_ROOT / "output" / "benchmarks"
-
 if TYPE_CHECKING:
-    from .graph import RelationGraph
-
-STOPWORDS = {
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "of",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "with",
-    "is",
-    "are",
-    "be",
-    "was",
-    "were",
-    "it",
-    "its",
-    "this",
-    "that",
-    "these",
-    "those",
-    "my",
-    "your",
-    "our",
-    "their",
-    "very",
-    "too",
-    "so",
-    "just",
-    "but",
-}
+    from src.pipeline.graph import RelationGraph
 
 SPACE_RE = re.compile(r"\s+")
 PUNCT_RE = re.compile(r"[^a-z0-9\s]")
@@ -130,12 +91,12 @@ def _graph_snapshot(graph: Optional["RelationGraph"]) -> Dict[str, Any]:
         return {}
     try:
         data = json_graph.node_link_data(graph.graph)
+        data["clauses"] = list(getattr(graph, "clauses", []))
+        data["text"] = getattr(graph, "text", "")
+        data["aggregate_sentiments"] = dict(getattr(graph, "aggregate_sentiments", {}))
+        return data
     except Exception:
         return {}
-    data["clauses"] = list(getattr(graph, "clauses", []))
-    data["text"] = getattr(graph, "text", "")
-    data["aggregate_sentiments"] = dict(getattr(graph, "aggregate_sentiments", {}))
-    return data
 
 
 def _persist_graph_snapshot(snapshot: Dict[str, Any], directory: Path, sequence: int, sentence_id: str, issue_type: str) -> Optional[Path]:
@@ -205,26 +166,6 @@ def _closest_gold_for_pred(pred: PredictedAspect, golds: Sequence[GoldAspect]) -
     return best, best_score
 
 
-_PIPELINE_CACHE: Dict[str, SentimentPipeline] = {}
-
-
-def get_dataset_path(dataset_name: str) -> str:
-    if dataset_name not in DATASET_REGISTRY:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
-    filename, _ = DATASET_REGISTRY[dataset_name]
-    dataset_path = DATA_DIR / filename
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
-    return str(dataset_path)
-
-
-def get_dataset_loader(dataset_name: str) -> Callable[[Path], List[DatasetItem]]:
-    if dataset_name not in DATASET_REGISTRY:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
-    _, loader = DATASET_REGISTRY[dataset_name]
-    return loader
-
-
 def _normalize_text(text: str) -> str:
     lowered = text.lower()
     cleaned = PUNCT_RE.sub(" ", lowered)
@@ -252,11 +193,10 @@ def _lenient_similarity(pred: PredictedAspect, gold: GoldAspect) -> float:
         return 0.0
     if pred_norm == gold_norm:
         return 1.0
+    
     score = 0.0
-    pred_tokens = tuple(tok for tok in pred.tokens if tok)
-    gold_tokens = tuple(tok for tok in gold.tokens if tok)
-    pred_set = set(pred_tokens)
-    gold_set = set(gold_tokens)
+    pred_set = set(pred.tokens)
+    gold_set = set(gold.tokens)
 
     if pred_set and gold_set:
         if pred_set <= gold_set or gold_set <= pred_set:
@@ -264,19 +204,8 @@ def _lenient_similarity(pred: PredictedAspect, gold: GoldAspect) -> float:
             score = max(score, 0.93 + 0.07 * overlap)
         common = pred_set & gold_set
         if common:
-            coverage = len(common) / max(len(pred_set), len(gold_set))
             jaccard = len(common) / max(len(pred_set | gold_set), 1)
-            token_score = 0.65 + 0.2 * coverage + 0.15 * jaccard
-            score = max(score, token_score)
-
-    def _contains_whole_term(container: str, term: str) -> bool:
-        if not term or len(term) < 2:
-            return False
-        pattern = rf"\b{re.escape(term)}\b"
-        return re.search(pattern, container) is not None
-
-    if _contains_whole_term(gold_norm, pred_norm) or _contains_whole_term(pred_norm, gold_norm):
-        score = max(score, 0.9)
+            score = max(score, 0.65 + 0.35 * jaccard)
 
     if pred.head and gold.head and pred.head == gold.head:
         score = max(score, 0.88)
@@ -293,12 +222,14 @@ def _match_aspects(
 ) -> Tuple[List[Tuple[GoldAspect, PredictedAspect, float]], List[GoldAspect], List[PredictedAspect]]:
     if not predicted or not golds:
         return [], list(golds), list(predicted)
+
     scores: List[Tuple[int, int, float]] = []
     for gi, g in enumerate(golds):
         for pi, p in enumerate(predicted):
             sim = _lenient_similarity(p, g)
             if sim >= min_score:
                 scores.append((gi, pi, sim))
+
     used_gold = set()
     used_pred = set()
     matches: List[Tuple[GoldAspect, PredictedAspect, float]] = []
@@ -308,6 +239,7 @@ def _match_aspects(
         used_gold.add(gi)
         used_pred.add(pi)
         matches.append((golds[gi], predicted[pi], sim))
+
     unmatched_gold = [g for idx, g in enumerate(golds) if idx not in used_gold]
     unmatched_pred = [p for idx, p in enumerate(predicted) if idx not in used_pred]
     return matches, unmatched_gold, unmatched_pred
@@ -335,10 +267,15 @@ def _load_semeval_xml(path: Path) -> List[DatasetItem]:
         dataset.append(DatasetItem(sentence_id=sid, text=text, aspects=aspects))
     return dataset
 
-DATASET_REGISTRY: Dict[str, Tuple[str, Callable[[Path], List[DatasetItem]]]] = {
-    "test_laptop_2014": ("test_laptop_2014.xml", _load_semeval_xml),
-    "test_restaurant_2014": ("test_restaurant_2014.xml", _load_semeval_xml),
-}
+def get_dataset(dataset_name: str) -> List[DatasetItem]:
+    path_map = {
+        "test_laptop_2014": config.SEMEVAL_2014_LAPTOP_TEST,
+        "test_restaurant_2014": config.SEMEVAL_2014_RESTAURANT_TEST,
+    }
+    path = path_map.get(dataset_name)
+    if not path or not path.exists():
+        raise FileNotFoundError(f"Dataset '{dataset_name}' not found at expected path: {path}")
+    return _load_semeval_xml(path)
 
 
 def _prepare_gold(aspects: Iterable[AspectAnnotation]) -> List[GoldAspect]:
@@ -366,106 +303,69 @@ def _prepare_predicted(
 ) -> List[PredictedAspect]:
     predicted: List[PredictedAspect] = []
     for entity_id, data in aggregate_results.items():
-        mentions = data.get("mentions") or []
-        canonical = ""
-        if mentions:
-            canonical = mentions[0].get("text", "")
-        if not canonical:
-            canonical = f"entity_{entity_id}"
+        canonical = data.get("label", f"entity_{entity_id}")
         score = float(data.get("aggregate_sentiment", 0.0) or 0.0)
-        if math.isnan(score):
-            score = 0.0
-        if score >= pos_thresh:
-            polarity = "positive"
-        elif score <= neg_thresh:
-            polarity = "negative"
-        else:
-            polarity = "neutral"
+        
+        if math.isnan(score): score = 0.0
+        
+        polarity = "neutral"
+        if score >= pos_thresh: polarity = "positive"
+        elif score <= neg_thresh: polarity = "negative"
+        
         tokens = _tokens(canonical)
         predicted.append(
             PredictedAspect(
-                entity_id=int(entity_id),
-                canonical=canonical,
-                polarity=polarity,
-                score=score,
-                mentions=mentions,
-                norm=_normalize_text(canonical),
-                tokens=tokens,
-                head=_head(tokens, canonical),
+                entity_id=int(entity_id), canonical=canonical, polarity=polarity, score=score,
+                mentions=data.get("mentions", []), norm=_normalize_text(canonical),
+                tokens=tokens, head=_head(tokens, canonical),
             )
         )
-    if predicted or not fallback_text:
+    
+    if predicted or not fallback_text or not fallback_text.strip():
         return predicted
 
-    fallback_text = fallback_text.strip()
-    if not fallback_text:
-        return predicted
-
+    # Fallback logic for when no aspects are extracted
+    score = 0.0
     if graph is not None and hasattr(graph, "compute_text_sentiment"):
         try:
             score = float(graph.compute_text_sentiment(fallback_text))
         except Exception:
-            score = 0.0
-    else:
-        score = 0.0
-
-    if math.isnan(score):
-        score = 0.0
-    if score >= pos_thresh:
-        polarity = "positive"
-    elif score <= neg_thresh:
-        polarity = "negative"
-    else:
-        polarity = "neutral"
-
+            pass # Keep score at 0.0
+    
+    if math.isnan(score): score = 0.0
+    
+    polarity = "neutral"
+    if score >= pos_thresh: polarity = "positive"
+    elif score <= neg_thresh: polarity = "negative"
+    
     tokens = _tokens(fallback_text)
     predicted.append(
         PredictedAspect(
-            entity_id=0,
-            canonical=fallback_text,
-            polarity=polarity,
-            score=score,
-            mentions=[{"text": fallback_text, "clause_index": 0}],
-            norm=_normalize_text(fallback_text),
-            tokens=tokens,
-            head=_head(tokens, fallback_text),
+            entity_id=0, canonical=fallback_text.strip(), polarity=polarity, score=score,
+            mentions=[{"text": fallback_text.strip(), "clause_index": 0}],
+            norm=_normalize_text(fallback_text), tokens=tokens, head=_head(tokens, fallback_text),
         )
     )
     return predicted
 
 
 def _normalize_gold_polarity(polarity: str) -> str:
-    if not polarity:
-        return "neutral"
-    value = polarity.lower().strip()
-    if value not in {"positive", "negative", "neutral", "conflict"}:
-        return "neutral"
-    return value
+    value = (polarity or "").lower().strip()
+    return value if value in {"positive", "negative", "neutral", "conflict"} else "neutral"
 
 
 def _classification_labels(gold_labels: List[str], pred_labels: List[str]) -> List[str]:
-    label_set = sorted(set(gold_labels) | set(pred_labels))
-    return label_set or ["neutral"]
+    return sorted(set(gold_labels) | set(pred_labels)) or ["neutral"]
 
 
-def _serialize_report(report: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    serializable: Dict[str, Dict[str, Any]] = {}
+def _serialize_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    serializable = {}
     for label, metrics in report.items():
         if isinstance(metrics, dict):
-            entry: Dict[str, Any] = {}
-            for key, value in metrics.items():
-                if key == "support":
-                    entry[key] = int(value)
-                else:
-                    entry[key] = float(value)
-            serializable[label] = entry
+            serializable[label] = {k: int(v) if k == 'support' else float(v) for k, v in metrics.items()}
         else:
             serializable[label] = float(metrics)
     return serializable
-
-
-def _ensure_output_dir(run_dir: Path) -> None:
-    run_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _plot_confusion_matrix(cm: List[List[int]], labels: List[str], path: Path) -> None:
@@ -478,21 +378,6 @@ def _plot_confusion_matrix(cm: List[List[int]], labels: List[str], path: Path) -
     plt.close()
 
 
-def _build_pipeline_for_mode(run_mode: str) -> SentimentPipeline:
-    if run_mode == "full_stack":
-        return build_default_pipeline()
-    logger.warning("Run mode '%s' not specialized; falling back to default pipeline.", run_mode)
-    return build_default_pipeline()
-
-
-def _get_pipeline(run_mode: str) -> SentimentPipeline:
-    pipeline = _PIPELINE_CACHE.get(run_mode)
-    if pipeline is None:
-        pipeline = _build_pipeline_for_mode(run_mode)
-        _PIPELINE_CACHE[run_mode] = pipeline
-    return pipeline
-
-
 def run_benchmark(
     run_name: str,
     dataset_name: str,
@@ -501,432 +386,195 @@ def run_benchmark(
     pos_thresh: float = 0.1,
     neg_thresh: float = -0.1,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    combiner: Optional[str] = None,
+    combiner_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    dataset_path = Path(get_dataset_path(dataset_name))
-    loader = get_dataset_loader(dataset_name)
-    items = loader(dataset_path)
+    
+    items = get_dataset(dataset_name)
     if limit and limit > 0:
+        random.shuffle(items)
         items = items[:limit]
+    
     total_items = len(items)
-    logger.info("Starting benchmark: dataset=%s, run_mode=%s, samples=%d", dataset_name, run_mode, total_items)
+    logger.info(f"Starting benchmark: dataset={dataset_name}, run_mode={run_mode}, samples={total_items}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    final_run_name = f"{run_name}_{timestamp}"
-    run_dir = OUTPUT_ROOT / final_run_name
-    _ensure_output_dir(run_dir)
+    final_run_name = f"{run_name}_{dataset_name}_{timestamp}"
+    run_dir = config.BENCHMARK_OUTPUT_DIR / final_run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    
     graph_reports_dir = run_dir / "graph_reports"
-    graph_reports_dir.mkdir(parents=True, exist_ok=True)
-    # Create subdirectories for specific error types so graphs are separated
-    graph_reports_subdirs: Dict[str, Path] = {}
-    graph_reports_subdirs["spurious_aspect"] = graph_reports_dir / "spurious_aspect"
-    graph_reports_subdirs["wrong_polarity"] = graph_reports_dir / "wrong_polarity"
-    # Keep a generic folder for other error types
-    graph_reports_subdirs["default"] = graph_reports_dir / "other"
+    graph_reports_subdirs = {
+        "spurious_aspect": graph_reports_dir / "spurious_aspect",
+        "wrong_polarity": graph_reports_dir / "wrong_polarity",
+        "default": graph_reports_dir / "other",
+    }
     for p in graph_reports_subdirs.values():
         p.mkdir(parents=True, exist_ok=True)
 
     log_path = run_dir / "benchmark.log"
     file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(file_handler)
     logger.setLevel(logging.INFO)
 
-    pipeline = _get_pipeline(run_mode)
+    pipeline = build_default_pipeline(combiner=combiner, combiner_params=combiner_params)
 
-    gold_labels: List[str] = []
-    pred_labels: List[str] = []
-    error_details: List[Dict[str, Any]] = []
-    error_rows: List[Dict[str, Any]] = []
-    match_rows: List[Dict[str, Any]] = []
-    sentence_records: List[Dict[str, Any]] = []
-    error_summary: Counter[str] = Counter()
-    sentence_precision_values: List[float] = []
-    sentence_recall_values: List[float] = []
-    sentence_f1_values: List[float] = []
-
+    gold_labels, pred_labels, error_details, error_rows, match_rows, sentence_records = [], [], [], [], [], []
+    error_summary = Counter()
+    sentence_precision_values, sentence_recall_values, sentence_f1_values = [], [], []
     stats = defaultdict(int)
     stats["requested_sentences"] = total_items
-    stats["sentence_errors"] = 0
     graph_sequence = 1
 
     def _register_error(
-        issue_type: str,
-        sentence_item: DatasetItem,
-        snapshot: Dict[str, Any],
-        gold_entry: Optional[GoldAspect],
-        pred_entry: Optional[PredictedAspect],
-        match_score: Optional[float],
-        analysis: Dict[str, Any],
+        issue_type: str, item: DatasetItem, snapshot: Dict[str, Any],
+        gold: Optional[GoldAspect], pred: Optional[PredictedAspect],
+        match_score: Optional[float], analysis: Dict[str, Any],
     ) -> None:
         nonlocal graph_sequence
-        # Choose subdirectory for certain issue types so they are easy to browse
-        target_dir = graph_reports_subdirs.get(issue_type, graph_reports_subdirs.get("default", graph_reports_dir))
-        path = _persist_graph_snapshot(snapshot, target_dir, graph_sequence, sentence_item.sentence_id, issue_type)
-        if path is not None:
-            graph_sequence += 1
-            graph_reference = str(path.relative_to(PROJECT_ROOT))
-        else:
-            graph_reference = None
+        target_dir = graph_reports_subdirs.get(issue_type, graph_reports_subdirs["default"])
+        path = _persist_graph_snapshot(snapshot, target_dir, graph_sequence, item.sentence_id, issue_type)
+        graph_ref = str(path.relative_to(config.PROJECT_ROOT)) if path else None
+        if path: graph_sequence += 1
+        
         modules = _module_hypothesis(issue_type)
-        detail = {
-            "sentence_id": sentence_item.sentence_id,
-            "text": sentence_item.text,
-            "issue_type": issue_type,
-            "probable_modules": modules,
-            "graph_report": graph_reference,
-            "gold": _gold_to_dict(gold_entry) if gold_entry else None,
-            "predicted": _predicted_to_dict(pred_entry) if pred_entry else None,
-            "match_score": match_score,
-            "analysis": analysis,
-        }
-        error_details.append(detail)
+        error_details.append({
+            "sentence_id": item.sentence_id, "text": item.text, "issue_type": issue_type,
+            "probable_modules": modules, "graph_report": graph_ref,
+            "gold": _gold_to_dict(gold) if gold else None,
+            "predicted": _predicted_to_dict(pred) if pred else None,
+            "match_score": match_score, "analysis": analysis,
+        })
         error_summary[issue_type] += 1
-        csv_row = {
-            "issue_type": issue_type,
-            "probable_modules": ";".join(modules),
-            "graph_report": graph_reference or "",
-            "id": sentence_item.sentence_id,
-            "text": sentence_item.text,
-            "gold_aspect": gold_entry.annotation.term if gold_entry else analysis.get("closest_gold_term", ""),
-            "gold_polarity": _normalize_gold_polarity(gold_entry.annotation.polarity) if gold_entry else analysis.get("closest_gold_polarity", ""),
-            "pred_aspect": pred_entry.canonical if pred_entry else analysis.get("closest_pred_aspect", ""),
-            "pred_polarity": pred_entry.polarity if pred_entry else analysis.get("closest_pred_polarity", ""),
-            "pred_score": pred_entry.score if pred_entry else analysis.get("closest_pred_score", ""),
+        error_rows.append({
+            "issue_type": issue_type, "probable_modules": ";".join(modules), "graph_report": graph_ref or "",
+            "id": item.sentence_id, "text": item.text,
+            "gold_aspect": gold.annotation.term if gold else analysis.get("closest_gold_term", ""),
+            "gold_polarity": _normalize_gold_polarity(gold.annotation.polarity) if gold else analysis.get("closest_gold_polarity", ""),
+            "pred_aspect": pred.canonical if pred else analysis.get("closest_pred_aspect", ""),
+            "pred_polarity": pred.polarity if pred else analysis.get("closest_pred_polarity", ""),
+            "pred_score": pred.score if pred else analysis.get("closest_pred_score", ""),
             "match_score": match_score if match_score is not None else analysis.get("similarity_score", ""),
             "analysis": json.dumps(analysis, sort_keys=True),
-        }
-        error_rows.append(csv_row)
-        if issue_type == "pipeline_exception":
-            logger.error("Pipeline exception on sentence %s", sentence_item.sentence_id)
-        elif not (issue_type == "spurious_aspect" and sentence_item.sentence_id == "1144:1"):
-            logger.warning("Detected %s on sentence %s", issue_type, sentence_item.sentence_id)
+        })
+        logger.warning(f"Detected {issue_type} on sentence {item.sentence_id}")
 
     try:
-        with tqdm(items, total=total_items, desc="Benchmark", unit="sentence", disable=total_items == 0) as progress:
-            for enumerated_index, item in enumerate(progress, start=1):
-                zero_based_index = enumerated_index - 1
-                has_error = False
-                sentence_issue_types: List[str] = []
-                graph_snapshot: Dict[str, Any] = {}
+        with tqdm(items, total=total_items, desc="Benchmark", unit="sentence") as progress:
+            for i, item in enumerate(progress):
+                has_error, sentence_issue_types = False, []
                 try:
                     result = pipeline.process(item.text, debug=False)
                 except Exception as exc:
-                    stats["processing_errors"] += 1
-                    stats["sentence_errors"] += 1
-                    logger.exception("Failed to process sentence %s", item.sentence_id)
-                    analysis = {
-                        "exception": repr(exc),
-                        "traceback": traceback.format_exc(),
-                    }
+                    stats["processing_errors"] += 1; stats["sentence_errors"] += 1
+                    logger.exception(f"Pipeline failed on sentence {item.sentence_id}")
+                    analysis = {"exception": repr(exc), "traceback": traceback.format_exc()}
                     _register_error("pipeline_exception", item, {}, None, None, None, analysis)
-                    sentence_records.append(
-                        {
-                            "sentence_id": item.sentence_id,
-                            "text": item.text,
-                            "gold_count": 0,
-                            "pred_count": 0,
-                            "matched_count": 0,
-                            "issue_types": ["pipeline_exception"],
-                            "precision": 0.0,
-                            "recall": 0.0,
-                            "f1": 0.0,
-                        }
-                    )
-                    sentence_precision_values.append(0.0)
-                    sentence_recall_values.append(0.0)
-                    sentence_f1_values.append(0.0)
-                    if progress_callback:
-                        try:
-                            progress_callback(zero_based_index, total_items)
-                        except Exception:
-                            logger.debug("Progress callback raised an exception", exc_info=True)
-                    current_accuracy = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
-                    progress.set_postfix(
-                        errors=stats["sentence_errors"],
-                        matched=stats["matched_aspects"],
-                        accuracy=f"{current_accuracy:.3f}",
-                    )
+                    sentence_records.append({ "sentence_id": item.sentence_id, "text": item.text, "issue_types": ["pipeline_exception"], "precision": 0.0, "recall": 0.0, "f1": 0.0 })
+                    sentence_precision_values.append(0.0); sentence_recall_values.append(0.0); sentence_f1_values.append(0.0)
                     continue
 
                 aggregate_results = result.get("aggregate_results") or {}
                 predicted_aspects = _prepare_predicted(
-                    aggregate_results,
-                    pos_thresh,
-                    neg_thresh,
-                    fallback_text=item.text,
-                    graph=result.get("graph"),
+                    aggregate_results, pos_thresh, neg_thresh,
+                    fallback_text=item.text, graph=result.get("graph"),
                 )
                 gold_aspects = _prepare_gold(item.aspects)
                 graph_snapshot = _graph_snapshot(result.get("graph"))
 
                 matches, unmatched_gold, unmatched_pred = _match_aspects(predicted_aspects, gold_aspects)
                 stats["total_sentences"] += 1
-                stats["gold_aspects"] += len(gold_aspects)
-                stats["pred_aspects"] += len(predicted_aspects)
-                stats["matched_aspects"] += len(matches)
-                stats["unmatched_gold"] += len(unmatched_gold)
-                stats["unmatched_pred"] += len(unmatched_pred)
+                stats.update({
+                    "gold_aspects": stats["gold_aspects"] + len(gold_aspects),
+                    "pred_aspects": stats["pred_aspects"] + len(predicted_aspects),
+                    "matched_aspects": stats["matched_aspects"] + len(matches),
+                    "unmatched_gold": stats["unmatched_gold"] + len(unmatched_gold),
+                    "unmatched_pred": stats["unmatched_pred"] + len(unmatched_pred),
+                })
 
-                gold_count = len(gold_aspects)
-                pred_count = len(predicted_aspects)
-                match_count = len(matches)
-                if gold_count == 0 and pred_count == 0:
-                    sentence_precision = 1.0
-                    sentence_recall = 1.0
-                    sentence_f1 = 1.0
-                else:
-                    sentence_precision = match_count / pred_count if pred_count else 0.0
-                    sentence_recall = match_count / gold_count if gold_count else 0.0
-                    sentence_f1 = (2 * sentence_precision * sentence_recall / (sentence_precision + sentence_recall)) if (sentence_precision + sentence_recall) else 0.0
-                sentence_precision_values.append(sentence_precision)
-                sentence_recall_values.append(sentence_recall)
-                sentence_f1_values.append(sentence_f1)
+                gold_count, pred_count, match_count = len(gold_aspects), len(predicted_aspects), len(matches)
+                prec = match_count / pred_count if pred_count else (1.0 if gold_count == 0 else 0.0)
+                rec = match_count / gold_count if gold_count else (1.0 if pred_count == 0 else 0.0)
+                f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
+                sentence_precision_values.append(prec); sentence_recall_values.append(rec); sentence_f1_values.append(f1)
 
-                for gold_entry, pred_entry, sim in matches:
-                    gold_pol = _normalize_gold_polarity(gold_entry.annotation.polarity)
-                    pred_pol = pred_entry.polarity
-                    gold_labels.append(gold_pol)
-                    pred_labels.append(pred_pol)
-                    record = {
-                        "issue_type": "correct",
-                        "id": item.sentence_id,
-                        "text": item.text,
-                        "gold_aspect": gold_entry.annotation.term,
-                        "gold_polarity": gold_pol,
-                        "pred_aspect": pred_entry.canonical,
-                        "pred_polarity": pred_pol,
-                        "pred_score": pred_entry.score,
-                        "match_score": sim,
-                    }
-                    if gold_pol != pred_pol:
-                        has_error = True
-                        sentence_issue_types.append("wrong_polarity")
+                for gold, pred, sim in matches:
+                    gold_pol, pred_pol = _normalize_gold_polarity(gold.annotation.polarity), pred.polarity
+                    gold_labels.append(gold_pol); pred_labels.append(pred_pol)
+                    record = { "issue_type": "correct", "id": item.sentence_id, "text": item.text,
+                               "gold_aspect": gold.annotation.term, "gold_polarity": gold_pol,
+                               "pred_aspect": pred.canonical, "pred_polarity": pred_pol,
+                               "pred_score": pred.score, "match_score": sim }
+                    if gold_pol != pred_pol and gold_pol != 'conflict':
+                        has_error = True; sentence_issue_types.append("wrong_polarity")
                         record["issue_type"] = "wrong_polarity"
-                        analysis = {
-                            "predicted_score": pred_entry.score,
-                            "positive_threshold": pos_thresh,
-                            "negative_threshold": neg_thresh,
-                            "gold_polarity": gold_pol,
-                            "predicted_polarity": pred_pol,
-                        }
-                        _register_error("wrong_polarity", item, graph_snapshot, gold_entry, pred_entry, sim, analysis)
+                        analysis = {"predicted_score": pred.score, "gold_polarity": gold_pol, "predicted_polarity": pred_pol}
+                        _register_error("wrong_polarity", item, graph_snapshot, gold, pred, sim, analysis)
                     match_rows.append(record)
 
-                for gold_entry in unmatched_gold:
-                    has_error = True
-                    sentence_issue_types.append("missing_aspect")
-                    closest_pred, closest_score = _closest_pred_for_gold(gold_entry, predicted_aspects)
-                    analysis = {
-                        "detail": "gold aspect not matched by predictions",
-                        "similarity_score": closest_score,
-                        "closest_pred": _predicted_to_dict(closest_pred) if closest_pred else None,
-                        "closest_pred_aspect": closest_pred.canonical if closest_pred else "",
-                        "closest_pred_polarity": closest_pred.polarity if closest_pred else "",
-                        "closest_pred_score": closest_pred.score if closest_pred else "",
-                        "closest_gold_term": gold_entry.annotation.term,
-                        "closest_gold_polarity": gold_entry.annotation.polarity,
-                    }
-                    _register_error("missing_aspect", item, graph_snapshot, gold_entry, closest_pred, None, analysis)
+                for gold in unmatched_gold:
+                    has_error = True; sentence_issue_types.append("missing_aspect")
+                    closest_pred, closest_score = _closest_pred_for_gold(gold, predicted_aspects)
+                    analysis = {"detail": "gold aspect not matched", "similarity_score": closest_score, "closest_pred": _predicted_to_dict(closest_pred) if closest_pred else None}
+                    _register_error("missing_aspect", item, graph_snapshot, gold, closest_pred, None, analysis)
+                
+                for pred in unmatched_pred:
+                    has_error = True; sentence_issue_types.append("spurious_aspect")
+                    closest_gold, closest_score = _closest_gold_for_pred(pred, gold_aspects)
+                    analysis = {"detail": "predicted aspect without gold match", "similarity_score": closest_score, "closest_gold": _gold_to_dict(closest_gold) if closest_gold else None}
+                    _register_error("spurious_aspect", item, graph_snapshot, closest_gold, pred, None, analysis)
 
-                for pred_entry in unmatched_pred:
-                    has_error = True
-                    sentence_issue_types.append("spurious_aspect")
-                    closest_gold, closest_score = _closest_gold_for_pred(pred_entry, gold_aspects)
-                    analysis = {
-                        "detail": "predicted aspect without gold match",
-                        "similarity_score": closest_score,
-                        "closest_gold": _gold_to_dict(closest_gold) if closest_gold else None,
-                        "closest_gold_term": closest_gold.annotation.term if closest_gold else "",
-                        "closest_gold_polarity": closest_gold.annotation.polarity if closest_gold else "",
-                        "closest_pred_aspect": pred_entry.canonical,
-                        "closest_pred_polarity": pred_entry.polarity,
-                        "closest_pred_score": pred_entry.score,
-                    }
-                    _register_error("spurious_aspect", item, graph_snapshot, closest_gold, pred_entry, None, analysis)
-
-                sentence_records.append(
-                    {
-                        "sentence_id": item.sentence_id,
-                        "text": item.text,
-                        "gold_count": gold_count,
-                        "pred_count": pred_count,
-                        "matched_count": match_count,
-                        "issue_types": sorted(set(sentence_issue_types)),
-                        "precision": sentence_precision,
-                        "recall": sentence_recall,
-                        "f1": sentence_f1,
-                    }
-                )
-
+                sentence_records.append({ "sentence_id": item.sentence_id, "text": item.text, "gold_count": gold_count,
+                                           "pred_count": pred_count, "matched_count": match_count, "issue_types": sorted(set(sentence_issue_types)),
+                                           "precision": prec, "recall": rec, "f1": f1 })
                 if has_error:
                     stats["sentence_errors"] += 1
+                
+                progress.set_postfix(errors=stats["sentence_errors"], acc=f"{accuracy_score(gold_labels, pred_labels):.3f}" if gold_labels else 0.0)
 
-                if progress_callback:
-                    try:
-                        progress_callback(zero_based_index, total_items)
-                    except Exception:
-                        logger.debug("Progress callback raised an exception", exc_info=True)
-
-                current_accuracy = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
-                progress.set_postfix(
-                    errors=stats["sentence_errors"],
-                    matched=stats["matched_aspects"],
-                    accuracy=f"{current_accuracy:.3f}",
-                )
     finally:
         logger.removeHandler(file_handler)
         file_handler.close()
 
     labels = _classification_labels(gold_labels, pred_labels)
-    cm = confusion_matrix(gold_labels, pred_labels, labels=labels) if gold_labels else []
-    cm_list = cm.tolist() if hasattr(cm, "tolist") else []
-
-    accuracy = accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
-    try:
-        balanced_acc = balanced_accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0
-    except ValueError:
-        balanced_acc = 0.0
-
-    if gold_labels:
-        report_dict = classification_report(
-            gold_labels,
-            pred_labels,
-            labels=labels,
-            output_dict=True,
-            zero_division=0,
-        )
-        report = _serialize_report(report_dict)
-    else:
-        report = {}
-
+    cm = confusion_matrix(gold_labels, pred_labels, labels=labels).tolist() if gold_labels else []
+    report = classification_report(gold_labels, pred_labels, labels=labels, output_dict=True, zero_division=0) if gold_labels else {}
+    
     precision = stats["matched_aspects"] / stats["pred_aspects"] if stats["pred_aspects"] else 0.0
     recall = stats["matched_aspects"] / stats["gold_aspects"] if stats["gold_aspects"] else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
-
-    avg_sentence_precision = sum(sentence_precision_values) / len(sentence_precision_values) if sentence_precision_values else 0.0
-    avg_sentence_recall = sum(sentence_recall_values) / len(sentence_recall_values) if sentence_recall_values else 0.0
-    avg_sentence_f1 = sum(sentence_f1_values) / len(sentence_f1_values) if sentence_f1_values else 0.0
-    sentence_error_rate = stats["sentence_errors"] / total_items if total_items else 0.0
-    total_errors = sum(error_summary.values())
+    f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
 
     metrics = {
-        "run_name": final_run_name,
-        "dataset": dataset_name,
-        "mode": run_mode,
-        "pos_threshold": pos_thresh,
-        "neg_threshold": neg_thresh,
-        "total_sentences": total_items,
-        "processed_sentences": stats["total_sentences"],
-        "processing_errors": stats["processing_errors"],
-        "sentence_errors": stats["sentence_errors"],
-        "sentence_error_rate": sentence_error_rate,
-        "gold_aspects": stats["gold_aspects"],
-        "pred_aspects": stats["pred_aspects"],
-        "matched_aspects": stats["matched_aspects"],
-        "unmatched_gold": stats["unmatched_gold"],
-        "unmatched_pred": stats["unmatched_pred"],
-        "aspect_precision": precision,
-        "aspect_recall": recall,
-        "aspect_f1": f1,
-        "avg_sentence_precision": avg_sentence_precision,
-        "avg_sentence_recall": avg_sentence_recall,
-        "avg_sentence_f1": avg_sentence_f1,
-        "accuracy": accuracy,
-        "balanced_accuracy": balanced_acc,
-        "classification_report": report,
+        "run_name": final_run_name, "dataset": dataset_name, "mode": run_mode,
+        "total_sentences": total_items, "processed_sentences": stats["total_sentences"],
+        "sentence_error_rate": stats["sentence_errors"] / total_items if total_items else 0.0,
+        "aspect_precision": precision, "aspect_recall": recall, "aspect_f1": f1_score,
+        "avg_sentence_f1": sum(sentence_f1_values) / len(sentence_f1_values) if sentence_f1_values else 0.0,
+        "accuracy": accuracy_score(gold_labels, pred_labels) if gold_labels else 0.0,
+        "balanced_accuracy": balanced_accuracy_score(gold_labels, pred_labels, adjusted=True) if gold_labels and len(set(gold_labels)) > 1 else 0.0,
+        "classification_report": _serialize_report(report),
         "error_summary": dict(error_summary),
-        "error_count": total_errors,
-        "confusion_matrix": {
-            "labels": labels,
-            "matrix": cm_list,
-        },
-        "graph_reports_dir": str(graph_reports_dir.relative_to(PROJECT_ROOT)),
+        "confusion_matrix": {"labels": labels, "matrix": cm},
+        "graph_reports_dir": str(graph_reports_dir.relative_to(config.PROJECT_ROOT)),
     }
 
-    metrics_path = run_dir / "metrics.json"
-    error_details_path = run_dir / "error_details.json"
-    sentence_summary_path = run_dir / "sentence_summary.json"
-    errors_path = run_dir / "error_analysis.csv"
-    matches_path = run_dir / "matches.json"
-
-    metrics.update(
-        {
-            "metrics_path": str(metrics_path.relative_to(PROJECT_ROOT)),
-            "error_details_path": str(error_details_path.relative_to(PROJECT_ROOT)),
-            "sentence_summary_path": str(sentence_summary_path.relative_to(PROJECT_ROOT)),
-            "error_analysis_csv_path": str(errors_path.relative_to(PROJECT_ROOT)),
-            "matches_path": str(matches_path.relative_to(PROJECT_ROOT)),
-        }
-    )
-
-    with metrics_path.open("w", encoding="utf-8") as handle:
-        json.dump(metrics, handle, indent=2)
-
-    if cm_list:
-        cm_path = run_dir / "confusion_matrix.png"
-        _plot_confusion_matrix(cm_list, labels, cm_path)
-
-    with error_details_path.open("w", encoding="utf-8") as handle:
-        json.dump(error_details, handle, indent=2)
-
-    with sentence_summary_path.open("w", encoding="utf-8") as handle:
-        json.dump(sentence_records, handle, indent=2)
-
-    fieldnames = [
-        "issue_type",
-        "probable_modules",
-        "graph_report",
-        "id",
-        "text",
-        "gold_aspect",
-        "gold_polarity",
-        "pred_aspect",
-        "pred_polarity",
-        "pred_score",
-        "match_score",
-        "analysis",
-    ]
-    with errors_path.open("w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    with (run_dir / "metrics.json").open("w", encoding="utf-8") as f: json.dump(metrics, f, indent=2)
+    if cm: _plot_confusion_matrix(cm, labels, run_dir / "confusion_matrix.png")
+    with (run_dir / "error_details.json").open("w", encoding="utf-8") as f: json.dump(error_details, f, indent=2)
+    with (run_dir / "sentence_summary.json").open("w", encoding="utf-8") as f: json.dump(sentence_records, f, indent=2)
+    
+    csv_fields = ["issue_type", "probable_modules", "graph_report", "id", "text", "gold_aspect", "gold_polarity", "pred_aspect", "pred_polarity", "pred_score", "match_score", "analysis"]
+    with (run_dir / "error_analysis.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_fields)
         writer.writeheader()
-        if error_rows:
-            writer.writerows(error_rows)
+        if error_rows: writer.writerows(error_rows)
 
-    with matches_path.open("w", encoding="utf-8") as handle:
-        json.dump(match_rows, handle, indent=2)
+    with (run_dir / "matches.json").open("w", encoding="utf-8") as f: json.dump(match_rows, f, indent=2)
 
     logger.info(
-        "Benchmark complete: matched=%d precision=%.3f recall=%.3f accuracy=%.3f errors=%d sentences_with_errors=%d",
-        stats["matched_aspects"],
-        precision,
-        recall,
-        accuracy,
-        total_errors,
-        stats["sentence_errors"],
+        f"Benchmark complete: F1={f1_score:.3f} P={precision:.3f} R={recall:.3f} Acc={metrics['accuracy']:.3f} "
+        f"Total Errors={sum(error_summary.values())} Sentences w/ Errors={stats['sentence_errors']}"
     )
 
     return metrics
-
-if __name__ == "__main__":
-    metrics_laptop = run_benchmark(
-        "Benchmarking_Full_Run_laptop_2014",
-        "test_laptop_2014",
-        "full_stack",
-        None,
-        0.1,
-        -0.1,
-    )
-    """metrics_restaurant = run_benchmark(
-        "SMALL_FULL_STACK_TEST_RESTAURANT",
-        "test_restaurant_2014",
-        "full_stack",
-        50,
-        0.1,
-        -0.1,
-    )"""
-
-    print(json.dumps({
-        "laptop": metrics_laptop,
-        # "restaurant": metrics_restaurant,
-    }, indent=2))

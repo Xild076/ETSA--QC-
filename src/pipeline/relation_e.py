@@ -1,15 +1,18 @@
 import json
 import re
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import logging
+import os
+
+import config
+from utility import get_env
+from cache_utils import load_cache_from_file, save_cache_to_file
 
 try:
     import google.generativeai as genai
 except Exception:
     genai = None
-
-from src.utility import get_env
 
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.WARNING)
@@ -39,15 +42,13 @@ def _ensure_global_rate_limiter(max_calls: int = 45, period_seconds: int = 60):
 
 def _default_rpm_for_model(model_name: str) -> int:
     name = (model_name or "").lower()
-    if "gemma" in name:
-        return 30
-    if "2.5" in name and "pro" in name:
-        return 5
-    if "2.5" in name and "flash" in name:
+    if "gemma-3-27b-it" in name:
+        return 240
+    if "gemini-1.5-flash" in name:
+        return 120
+    if "gemini-1.5-pro" in name:
         return 10
-    if "2.0" in name and "flash" in name:
-        return 15
-    return 10
+    return 30
 
 def _parse_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     if not text:
@@ -92,8 +93,9 @@ class GemmaRelationExtractor(RelationExtractor):
         max_output_tokens: int = 1024,
         backoff: float = 0.8,
         retries: int = 2,
-        response_mime_type: str = "text/plain",
+        response_mime_type: Optional[str] = None,
         rate_limiter: Optional[_RateLimiter] = None,
+        cache_file: Optional[str] = None,
     ):
         self.model = model
         self.temperature = temperature
@@ -102,10 +104,19 @@ class GemmaRelationExtractor(RelationExtractor):
         self.max_output_tokens = max_output_tokens
         self.backoff = backoff
         self.retries = retries
-        self.response_mime_type = response_mime_type
+        if response_mime_type is not None:
+            self.response_mime_type = response_mime_type
+        elif "gemini" in (self.model or ""):
+            self.response_mime_type = "application/json"
+        else:
+            self.response_mime_type = None
         rpm = _default_rpm_for_model(self.model)
         self.rate_limiter = rate_limiter or _ensure_global_rate_limiter(max_calls=rpm)
-        self._cache: Dict[tuple[str, tuple], Dict[str, Any]] = {}
+        self.cache_file = cache_file or config.LLM_RELATION_CACHE
+        if self.cache_file:
+            self._cache = load_cache_from_file(self.cache_file)
+        else:
+            self._cache: Dict[Tuple[str, str, Tuple[str, ...]], Dict[str, Any]] = {}
         self._init_api(api_key)
 
     def _init_api(self, api_key: Optional[str] = None):
@@ -120,60 +131,55 @@ class GemmaRelationExtractor(RelationExtractor):
         ents = ", ".join(f'"{e}"' for e in entities)
         return (
             "<<SYS>>\n"
-            "You are a meticulous linguistic analyst.\n"
-            "Task: Given a passage and a closed set of entity surface forms, extract only structural relations that hold **between members of that set**.\n"
+            "You are a meticulous linguistic analyst. Your task is to extract structural relations **between members of a closed set of entities** from a given passage. Follow the rules strictly.\n"
             "\n"
-            "Rules:\n"
-            "1) Relation Types (mutually exclusive):\n"
-            "   • ACTION: An actor entity performs an action that affects a target entity. The action’s 'text' MUST be verbatim from the passage and include any negation or modal verbs (e.g., 'not fix', 'would not help').\n"
-            "   • ASSOCIATION: Entities are linked by coordination/proximity (e.g., 'and', 'with', comma-delimited co-mentions) without directional predicate.\n"
-            "   • BELONGING: A child entity is an attribute/part/possession of a parent entity (e.g., possessive/apostrophe, 'of').\n"
-            "2) Strict Matching: Use **only** the exact entity strings provided (case-sensitive surface forms). Do not invent, normalize, split, merge, or alias entities.\n"
-            "3) Directionality:\n"
-            "   • ACTION: subject = initiator/actor; object = affected/target.\n"
-            "   • BELONGING: subject = child/part; object = owner/whole.\n"
-            "   • ASSOCIATION: subject/object order does not imply semantics; choose left-to-right as they appear.\n"
-            "4) Evidence Text: The 'text' field must be a minimal, continuous span copied verbatim from the passage that signals the relation (e.g., the main predicate, coordinator, or possessive marker). No paraphrases.\n"
-            "5) Pairing Scope: Consider only pairs where both items are in the entity list. Ignore entities not listed. Do not cross-sentence unless explicitly linked within the same sentence span.\n"
-            "6) Deduplication: Emit at most one relation per (subject, object, type, text) combination.\n"
-            "7) No Relation: If **no** valid relations exist between the provided entities, return an empty 'relations' array.\n"
-            "8) Output Format: Return **strict JSON only** (no Markdown, no code fences). Conform exactly to the schema below. Do not include extra keys.\n"
+            "## Rules:\n"
+            "1.  **Relation Types (mutually exclusive)**:\n"
+            "    -   `ACTION`: An actor entity performs an action affecting a target entity. The `text` MUST be a verbatim verb phrase from the passage.\n"
+            "    -   `ASSOCIATION`: Entities are linked by coordination (`and`, `with`, commas) without a directional predicate.\n"
+            "    -   `BELONGING`: A child entity is an attribute/part of a parent entity (e.g., `'s`, `of`).\n"
+            "2.  **Strict Entity Matching**: Use **only** the exact entity strings provided in the <<ENTITIES>> list. Do not invent, normalize, or alias entities.\n"
+            "3.  **Directionality**:\n"
+            "    -   `ACTION`: `subject`=actor, `object`=target.\n"
+            "    -   `BELONGING`: `subject`=part/child, `object`=owner/whole.\n"
+            "    -   `ASSOCIATION`: `subject`/`object` order is left-to-right as they appear in the passage.\n"
+            "4.  **No Relation**: If no valid relations exist between the provided entities, return an empty `relations` array.\n"
+            "5.  **Output Format**: Return a single, valid JSON object with no markdown fences.\n"
             "\n"
-            "Output Schema:\n"
+            "## Output Schema:\n"
             "{\n"
-            '  "justification": "Brief evidence-based rationale for each included relation or an explanation for why none were found.",\n'
+            '  "justification": "Brief rationale for each relation or explanation for none.",\n'
             '  "relations": [\n'
             '    {"subject": string, "object": string, "relation": {"type": "ACTION" | "ASSOCIATION" | "BELONGING", "text": string}}\n'
             "  ]\n"
             "}\n"
             "<</SYS>>\n\n"
+            "## Examples:\n"
+            'P: "tech support would not fix the problem." E: ["tech support", "problem"] -> {"justification":"Action relation found.","relations":[{"subject":"tech support","object":"problem","relation":{"type":"ACTION","text":"would not fix"}}]}\n'
+            'P: "Food and wine arrived." E: ["food","wine"] -> {"justification":"Coordination implies association.","relations":[{"subject":"food","object":"wine","relation":{"type":"ASSOCIATION","text":"and"}}]}\n'
+            'P: "The laptop\'s battery is great." E: ["laptop","battery"] -> {"justification":"Possessive marks part-whole.","relations":[{"subject":"battery","object":"laptop","relation":{"type":"BELONGING","text":"\'s"}}]}\n'
+            'P: "The computer is fast." E: ["computer"] -> {"justification":"Only one entity; no pairwise relation possible.","relations":[]}\n'
+            "\n"
+            "## Task:\n"
             f"<<PASSAGE>>\n{sentence}\n<</PASSAGE>>\n\n"
             f"<<ENTITIES>>\n[{ents}]\n<</ENTITIES>>\n\n"
-            "<<EXAMPLES>>\n"
-            'P: tech support would not fix the problem. E: ["tech support", "problem"] -> {"justification":"Modal negation indicates failed action from actor to target.","relations":[{"subject":"tech support","object":"problem","relation":{"type":"ACTION","text":"would not fix"}}]}\n'
-            'P: Food and wine arrived. E: ["food","wine"] -> {"justification":"Coordinated NP signals association.","relations":[{"subject":"food","object":"wine","relation":{"type":"ASSOCIATION","text":"and"}}]}\n'
-            'P: The laptop\'s battery is great. E: ["laptop","battery"] -> {"justification":"Possessive marks part–whole.","relations":[{"subject":"battery","object":"laptop","relation":{"type":"BELONGING","text":"\'s"}}]}\n'
-            'P: The computer is fast. E: ["computer"] -> {"justification":"Only one entity; no pairwise relation.","relations":[]}\n'
-            "<</EXAMPLES>>\n\n"
             "<<RESPONSE>>\n"
-            '{\n'
-            '  "justification": "",\n'
-            '  "relations": []\n'
-            "}\n"
         )
 
     def _query_gemma(self, prompt: str) -> str:
         if self.rate_limiter:
             self.rate_limiter.acquire()
+        config_kwargs: Dict[str, Any] = {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "max_output_tokens": self.max_output_tokens,
+        }
+        if self.response_mime_type:
+            config_kwargs["response_mime_type"] = self.response_mime_type
         model = genai.GenerativeModel(
             model_name=self.model,
-            generation_config=genai.types.GenerationConfig(
-                temperature=self.temperature,
-                top_p=self.top_p,
-                top_k=self.top_k,
-                max_output_tokens=self.max_output_tokens,
-                response_mime_type=self.response_mime_type,
-            )
+            generation_config=genai.types.GenerationConfig(**config_kwargs)
         )
         r = model.generate_content(prompt)
         return r.text
@@ -181,18 +187,22 @@ class GemmaRelationExtractor(RelationExtractor):
     def _clean_rel(self, r: Dict[str, Any], entities: List[str]) -> Optional[Dict[str, Any]]:
         if not isinstance(r, dict):
             return None
-        sub = r.get("subject") or {}
-        obj = r.get("object") or {}
+        sub = r.get("subject")
+        obj = r.get("object")
         rel = r.get("relation") or {}
-        sh = sub.get("head")
-        oh = obj.get("head")
+        
+        sub_text = sub if isinstance(sub, str) else (sub.get("head") if isinstance(sub, dict) else None)
+        obj_text = obj if isinstance(obj, str) else (obj.get("head") if isinstance(obj, dict) else None)
+
         t = rel.get("type")
         tx = rel.get("text", "")
-        if not isinstance(sh, str) or not isinstance(oh, str) or not isinstance(t, str):
+        if not isinstance(sub_text, str) or not isinstance(obj_text, str) or not isinstance(t, str):
             return None
-        sh_s = sh.strip()
-        oh_s = oh.strip()
+        
+        sh_s = sub_text.strip()
+        oh_s = obj_text.strip()
         t_s = t.strip().upper()
+        
         if sh_s not in entities or oh_s not in entities:
             return None
         if t_s not in {"ACTION","ASSOCIATION","BELONGING"}:
@@ -202,26 +212,12 @@ class GemmaRelationExtractor(RelationExtractor):
     def _parse_relation_response(self, text: str, entities: List[str]) -> Dict[str, Any]:
         data = _parse_json_from_text(text) or {}
         rels = data.get("relations") or []
-        acts = data.get("actions") or []
-        ascs = data.get("associations") or []
-        bels = data.get("belongings") or []
         out_rels = []
         for r in rels:
             c = self._clean_rel(r, entities)
             if c:
                 out_rels.append(c)
-        for r in acts:
-            c = self._clean_rel(r, entities)
-            if c:
-                out_rels.append(c)
-        for r in ascs:
-            c = self._clean_rel(r, entities)
-            if c:
-                out_rels.append(c)
-        for r in bels:
-            c = self._clean_rel(r, entities)
-            if c:
-                out_rels.append(c)
+
         actions = [r for r in out_rels if r["relation"]["type"]=="ACTION"]
         associations = [r for r in out_rels if r["relation"]["type"]=="ASSOCIATION"]
         belongings = [r for r in out_rels if r["relation"]["type"]=="BELONGING"]
@@ -238,28 +234,30 @@ class GemmaRelationExtractor(RelationExtractor):
     def extract(self, text: str, entities: List[str]) -> Dict[str, Any]:
         if not text or not entities:
             return {"entities": entities, "actions": [], "associations": [], "belongings": [], "relations": [], "justification": "empty input", "approach_used": self.model}
-        # caching to avoid duplicate LLM queries
-        cache_key = (text.strip(), tuple(e.strip() for e in entities))
+
+        cache_key = (
+            self.model,
+            text.strip(),
+            tuple(sorted(e.strip() for e in entities)),
+        )
         cached = self._cache.get(cache_key)
         if cached:
             return cached
+        
         prompt = self._create_prompt(text, entities)
         last_err = None
         for i in range(self.retries + 1):
             try:
                 resp = self._query_gemma(prompt)
                 out = self._parse_relation_response(resp, entities)
-                try:
-                    # keep cache size bounded
-                    if len(self._cache) > 10000:
-                        # drop an arbitrary item (FIFO-like) to avoid unbounded growth
-                        try:
-                            self._cache.pop(next(iter(self._cache)))
-                        except Exception:
-                            self._cache.clear()
-                    self._cache[cache_key] = out
-                except Exception:
-                    pass
+                if len(self._cache) > 10000:
+                    try:
+                        self._cache.pop(next(iter(self._cache)))
+                    except Exception:
+                        self._cache.clear()
+                self._cache[cache_key] = out
+                if self.cache_file:
+                    save_cache_to_file(self.cache_file, self._cache)
                 return out
             except Exception as e:
                 last_err = e

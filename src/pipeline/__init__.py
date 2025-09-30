@@ -36,8 +36,6 @@ from .sentiment_analysis import (
     DummySentimentAnalysis,
     MultiSentimentAnalysis,
 )
-from .presets import available_presets, build_pipeline, preset_details
-# from .task_system import TaskSystem, initialize_default_task_system
 
 __all__ = [
     "SentimentPipeline",
@@ -68,9 +66,4 @@ __all__ = [
     "PysentimientoSentimentAnalysis",
     "DummySentimentAnalysis",
     "MultiSentimentAnalysis",
-    "available_presets",
-    "build_pipeline",
-    "preset_details",
-    # "TaskSystem",
-    # "initialize_default_task_system",
 ]

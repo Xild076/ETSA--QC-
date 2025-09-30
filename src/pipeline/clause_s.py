@@ -3,6 +3,8 @@ import logging
 from typing import List, Optional, Iterable
 import nltk
 
+from utility import normalize_text
+
 logger = logging.getLogger(__name__)
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.WARNING)
@@ -33,11 +35,6 @@ class ClauseSplitter:
         raise NotImplementedError
 
 
-def _normalize_text(s: str) -> str:
-    s = re.sub(r"\s+", " ", (s or "").strip())
-    return s
-
-
 def _score_clause(s: str) -> float:
     s = s or ""
     if not s.strip():
@@ -59,13 +56,15 @@ def _score_clause(s: str) -> float:
 def _post_filter(clauses: Iterable[str], min_score: float = 0.5) -> List[str]:
     out = []
     for c in clauses:
-        t = _normalize_text(c)
-        if t and _score_clause(t) >= min_score:
-            out.append(t)
+        # Use the original non-normalized text for scoring and output
+        t_normalized_for_check = " ".join(c.split())
+        if t_normalized_for_check and _score_clause(t_normalized_for_check) >= min_score:
+            out.append(t_normalized_for_check)
     seen = set()
     dedup = []
     for c in out:
-        k = c.lower()
+        # Use a normalized key for deduplication
+        k = normalize_text(c)
         if k not in seen:
             seen.add(k)
             dedup.append(c)
@@ -85,7 +84,7 @@ class NLTKSentenceSplitter(ClauseSplitter):
         parts = []
         for piece in tmp:
             parts.extend(re.split(r",\s+(?=[A-Z])", piece))
-        return [p for p in parts if _normalize_text(p)]
+        return [p for p in parts if " ".join(p.split())]
 
     def split(self, text: str) -> List[str]:
         if not text or not text.strip():
@@ -111,7 +110,8 @@ try:
 except Exception:
     benepar = None
 
-def _normalize_text(s: str) -> str:
+
+def _benepar_normalize_text(s: str) -> str:
     s = " ".join(s.split())
     s = s.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?").replace(" ;", ";").replace(" :", ":")
     s = s.replace(" ’", "’").replace(" ’ s", "’s").replace(" n't", "n't")
@@ -125,7 +125,7 @@ def _join_tokens(tokens) -> str:
     for t in toks:
         out.append(t.text)
         out.append(t.whitespace_)
-    return _normalize_text("".join(out))
+    return _benepar_normalize_text("".join(out))
 
 def _is_verblike(t) -> bool:
     return t.pos_ in {"VERB", "AUX"} or t.tag_.startswith("VB")

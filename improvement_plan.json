@@ -1,0 +1,18 @@
+{
+  "sentiment_patterns": [
+    "Enhance double-negative pattern recognition (e.g., 'hard to find things I don't like')",
+    "Improve value framing detection for price justifications",
+    "Better handling of concessive clauses ('although... but...')",
+    "Strengthen sarcasm and irony detection",
+    "Add more sophisticated pattern matching",
+    "Improve clause-level sentiment analysis",
+    "Better handling of rhetorical questions and exclamations"
+  ],
+  "combination_logic": [
+    "Refine contextual weighting in _combine_contextual_v3",
+    "Improve mixed polarity resolution logic",
+    "Better context score calculation"
+  ],
+  "aspect_detection": [],
+  "context_handling": []
+}

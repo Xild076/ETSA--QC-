@@ -6,14 +6,18 @@ import pickle
 import random
 import logging
 import warnings
+import ast
 import spacy
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from string import punctuation
 from functools import lru_cache
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Set
+
+import config
+from utility import normalize_text
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -45,32 +49,12 @@ def get_cached_maverick_model(device: str = "cpu"):
             logger.info(f"Initializing Maverick with device: {device}")
             _MODEL_CACHE[cache_key] = Maverick(device=device)
         except ImportError:
-            raise RuntimeError("'maverick' package is required. Please install it via 'pip install maverick-api'.")
+            logger.warning("Maverick package not available, coreference resolution will be skipped")
+            _MODEL_CACHE[cache_key] = None
     return _MODEL_CACHE[cache_key]
 
 class ATE:
     def analyze(self, sentences: List[str]) -> Dict[int, Dict[str, Any]]:
-        """
-        Analyzes a list of sentences to extract and cluster aspect terms.
-
-        Args:
-            sentences: A list of sentences in order.
-
-        Returns:
-            A dictionary where each key is a unique entity ID and the value contains
-            the canonical name and all mentions with their clause (sentence) index.
-            Example:
-            {
-              "1": {
-                "first_mention": "the service",
-                "mentions": [["the service", 0], ["our server", 2], ["the staff", 2]]
-              },
-              "2": {
-                "first_mention": "The food",
-                "mentions": [["The food", 0]]
-              }
-            }
-        """
         raise NotImplementedError("This method should be overridden by subclasses.")
 
 @dataclass(eq=True, frozen=True)
@@ -139,6 +123,9 @@ class TrainConfig:
     surface_max_len:int=5
     surface_precision_threshold_single:float=0.55
     surface_precision_threshold_multi:float=0.4
+    generic_block_heads: frozenset = field(default_factory=lambda: frozenset({"place","restaurant","time","thing","table","dinner","drinks","price","prices","laptop","computer","bar","dining","product"}))
+    hard_block_singletons: frozenset = field(default_factory=lambda: frozenset({"area","room"}))
+    risky_hl_heads: frozenset = field(default_factory=lambda: frozenset({"food","service","restaurant","price","prices","pizza","staff","sushi","wine","meal","wait","chicken","dinner","quality","menu","drink","drinks","table","bar","place"}))
 
 class MultiStageRuleExtractor(ATE):
     def __init__(self, cfg:TrainConfig):
@@ -149,7 +136,6 @@ class MultiStageRuleExtractor(ATE):
         self.stopset = set(spacy.lang.en.stop_words.STOP_WORDS) | set(punctuation)
         self.aspect_lex_head_lemmas = set()
         self.frequent_single_gold_heads = set()
-        self.generic_block_heads = {"place","restaurant","time","thing","table","dinner","drinks","price","prices","laptop","computer","bar","dining","product"}
         self.block_phrases = set()
         self.last_selection_cache = {}
         self.chronic_heads = set()
@@ -157,8 +143,6 @@ class MultiStageRuleExtractor(ATE):
         self.surface_positive_counts = Counter()
         self.surface_whitelist_single = set()
         self.surface_whitelist_multi_by_len = defaultdict(set)
-        self.hard_block_singletons = {"area","room"}
-        self.risky_hl_heads = {"food","service","restaurant","price","prices","pizza","staff","sushi","wine","meal","wait","chicken","dinner","quality","menu","drink","drinks","table","bar","place"}
         self.surface_precision = {}
         logging.basicConfig(level=getattr(logging, cfg.trace_level.upper(), logging.INFO), format="%(message)s")
         self.log = logging.getLogger("RuleExtractor")
@@ -197,14 +181,7 @@ class MultiStageRuleExtractor(ATE):
 
     def _filter_allowed_heads(self, heads):
         if not heads: return set()
-        filtered = set()
-        for h in heads:
-            if h in self.generic_block_heads and self.gold_head_freq[h] < self.cfg.protect_heads_min_freq:
-                continue
-            if h in self.hard_block_singletons:
-                continue
-            filtered.add(h)
-        return filtered
+        return {h for h in heads if not (h in self.cfg.generic_block_heads and self.gold_head_freq[h] < self.cfg.protect_heads_min_freq) and h not in self.cfg.hard_block_singletons}
 
     def _build_surface_whitelist(self):
         self.surface_whitelist_single = set()
@@ -416,7 +393,7 @@ class MultiStageRuleExtractor(ATE):
             out.append((4, token.pos_, token.dep_, token.head.lemma_, token.head.pos_, (gp.lemma_, gp.pos_)))
         if self.cfg.use_child_profile and ch:
             out.append((5, token.pos_, token.dep_, token.head.lemma_, token.head.pos_, self._child_profile(token)))
-        if token.lemma_.lower() not in self.risky_hl_heads:
+        if token.lemma_.lower() not in self.cfg.risky_hl_heads:
             out.extend([
                 (6, token.pos_, token.dep_, None, None, ("HL", token.lemma_)),
                 (7, None, None, None, None, ("HL", token.lemma_)),
@@ -434,7 +411,7 @@ class MultiStageRuleExtractor(ATE):
             if nctx: out.append((11, token.pos_, token.dep_, nctx))
         out.append((12, token.pos_, token.dep_, token.shape_, token.like_num, token.is_title, token.is_upper))
         out.append((13, token.pos_, token.dep_, self._sent_pos(token)))
-        if token.lemma_.lower() not in self.risky_hl_heads:
+        if token.lemma_.lower() not in self.cfg.risky_hl_heads:
             out.append((14, 'HL_ONLY', token.lemma_, token.pos_))
         out.append((15, token.pos_, token.dep_, self._morph_bits(token)))
         out.append((16, token.pos_, token.dep_, self._affixes(token)))
@@ -524,12 +501,12 @@ class MultiStageRuleExtractor(ATE):
             return False
         if gate_union:
             if hl in gate_union: return True
-            if hl in self.generic_block_heads and hl not in gate_union: return False
+            if hl in self.cfg.generic_block_heads and hl not in gate_union: return False
             if entity_ok or compound_ok or (self.cfg.soft_restrict and hl in self.aspect_lex_head_lemmas) or frequent_head:
                 return True
-        if hl in self.hard_block_singletons and hl not in gate_union:
+        if hl in self.cfg.hard_block_singletons and hl not in gate_union:
             return False
-        if hl in self.generic_block_heads: return False
+        if hl in self.cfg.generic_block_heads: return False
         if self.cfg.soft_restrict and hl in self.aspect_lex_head_lemmas: return True
         if frequent_head: return True
         if compound_ok: return True
@@ -548,7 +525,7 @@ class MultiStageRuleExtractor(ATE):
                     gate_union.update(self._filter_allowed_heads(self.rule_allowed_heads.get(s, set())))
                     if s[0] in (6,7,14):
                         lemma_lower = tok.lemma_.lower()
-                        if lemma_lower not in self.generic_block_heads or self.gold_head_freq[lemma_lower] >= self.cfg.protect_heads_min_freq:
+                        if lemma_lower not in self.cfg.generic_block_heads or self.gold_head_freq[lemma_lower] >= self.cfg.protect_heads_min_freq:
                             gate_union.add(lemma_lower)
             if not fire: continue
             if not self._allowed_by_context(tok, gate_union): continue
@@ -557,7 +534,7 @@ class MultiStageRuleExtractor(ATE):
         final = set()
         for surf in res:
             parts = surf.split()
-            if len(parts) == 1 and parts[0] in self.hard_block_singletons:
+            if len(parts) == 1 and parts[0] in self.cfg.hard_block_singletons:
                 continue
             if skip_surface_filter or self._should_keep_surface(surf):
                 final.add(surf)
@@ -708,7 +685,7 @@ class MultiStageRuleExtractor(ATE):
         for surf, c in fp_counter.most_common(top_k):
             toks = surf.split()
             if len(toks) == 1 and not self.cfg.block_singletons: continue
-            if toks and toks[-1] in self.generic_block_heads and self.gold_head_freq[toks[-1]] < self.cfg.protect_heads_min_freq:
+            if toks and toks[-1] in self.cfg.generic_block_heads and self.gold_head_freq[toks[-1]] < self.cfg.protect_heads_min_freq:
                 candidates.append(surf)
             if len(candidates) >= self.cfg.max_block_phrases: break
         return set(candidates)
@@ -798,40 +775,51 @@ class MultiStageRuleExtractor(ATE):
 
     def save(self, file_path: str):
         state = {
-            "cfg": self.cfg, "rule_stages": self.rule_stages,
-            "rule_allowed_heads": self.rule_allowed_heads,
-            "block_phrases": self.block_phrases,
+            "cfg": self.cfg.__dict__,
+            "rule_stages": [list(stage) for stage in self.rule_stages],
+            "rule_allowed_heads": {str(k): list(v) for k, v in self.rule_allowed_heads.items()},
+            "block_phrases": list(self.block_phrases),
             "surface_precision": self.surface_precision,
             "gold_head_freq": self.gold_head_freq
         }
-        with open(file_path, 'wb') as f:
-            pickle.dump(state, f)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
         logger.info(f"Rule extractor state saved to {file_path}")
 
     @classmethod
     def load(cls, file_path: str):
-        import sys
-        import __main__
-        
-        old_trainconfig = getattr(__main__, 'TrainConfig', None)
-        __main__.TrainConfig = TrainConfig
-        
-        try:
+        file_path = str(file_path)
+        if file_path.endswith('.pkl'):
+            import __main__
+            __main__.TrainConfig = TrainConfig
             with open(file_path, 'rb') as f:
                 state = pickle.load(f)
-        finally:
-            if old_trainconfig is None:
-                if hasattr(__main__, 'TrainConfig'):
-                    delattr(__main__, 'TrainConfig')
-            else:
-                __main__.TrainConfig = old_trainconfig
+        else:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+
+        cfg_data = state["cfg"]
+        if hasattr(cfg_data, '__dict__'):
+            cfg_data = cfg_data.__dict__
+        cfg_data["generic_block_heads"] = frozenset(cfg_data.get("generic_block_heads", []))
+        cfg_data["hard_block_singletons"] = frozenset(cfg_data.get("hard_block_singletons", []))
+        cfg_data["risky_hl_heads"] = frozenset(cfg_data.get("risky_hl_heads", []))
         
-        extractor = cls(state["cfg"])
-        extractor.rule_stages = state["rule_stages"]
-        extractor.rule_allowed_heads = state.get("rule_allowed_heads", {})
-        extractor.block_phrases = state.get("block_phrases", set())
+        config_fields = {f.name for f in fields(TrainConfig) if f.init}
+        filtered_cfg_data = {k: v for k, v in cfg_data.items() if k in config_fields}
+        
+        cfg = TrainConfig(**filtered_cfg_data)
+        extractor = cls(cfg)
+
+        extractor.rule_stages = [set(map(tuple, stage)) for stage in state["rule_stages"]]
+        
+        extractor.rule_allowed_heads = {
+            k: set(v) for k, v in state.get("rule_allowed_heads", {}).items()
+        }
+        extractor.block_phrases = set(state.get("block_phrases", []))
         extractor.surface_precision = state.get("surface_precision", {})
-        extractor.gold_head_freq = state.get("gold_head_freq", Counter())
+        extractor.gold_head_freq = Counter(state.get("gold_head_freq", {}))
+        
         logger.info(f"Rule extractor loaded from {file_path}.")
         return extractor
 
@@ -852,14 +840,12 @@ class Mention:
         
         clause_id = 0
         if self.clause_boundaries:
-            # Use the provided clause boundaries to determine clause_id
             span_start_char = self.span.start_char
             for i, (start, end) in enumerate(self.clause_boundaries):
                 if start <= span_start_char < end:
                     clause_id = i
                     break
         else:
-            # Fallback to spaCy sentence segmentation
             for i, sent in enumerate(self.span.doc.sents):
                 if self.span.start >= sent.start and self.span.end <= sent.end:
                     clause_id = i
@@ -875,24 +861,23 @@ class Mention:
         return self.span.start_char == other.span.start_char and self.span.end_char == other.span.end_char
 
 class HybridAspectExtractor(ATE):
-    def __init__(self, rule_extractor_path: str = "models/ner_coref/rules/best/best_rules.pkl", spacy_model: str = "en_core_web_sm", device: str = "cpu"):
-        self.rule_extractor = MultiStageRuleExtractor.load(rule_extractor_path)
+    def __init__(self, rule_extractor_path: str = None, spacy_model: str = "en_core_web_sm", device: str = "cpu"):
+        path = rule_extractor_path or config.ASPECT_EXTRACTOR_RULES
+        self.rule_extractor = MultiStageRuleExtractor.load(path)
         self.nlp = get_cached_spacy_model(spacy_model)
         self.mav = get_cached_maverick_model(device)
         logger.info("HybridAspectExtractor initialized.")
         self._preferred_heads = {
             "restaurant", "service", "ambiance", "ambience", "staff",
             "server", "food", "pizza", "crust", "drink", "drinks",
-            "training", "price", "menu", "place"
+            "training", "price", "menu", "place", "battery", "screen",
+            "keyboard", "performance", "laptop", "computer", "display"
         }
-
-    def _normalize_text(self, text: str) -> str:
-        return re.sub(r"\s+", " ", text.strip().lower())
 
     def _normalize_for_output(self, text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
         lowered = cleaned.lower()
-        for prefix in ("the ", "this ", "that ", "these ", "those "):
+        for prefix in ("the ", "this ", "that ", "these ", "those ", "a ", "an ", "my ", "our "):
             if lowered.startswith(prefix):
                 cleaned = cleaned[len(prefix):]
                 break
@@ -904,7 +889,7 @@ class HybridAspectExtractor(ATE):
             return "PRON"
         if ent in {"PERSON"}:
             return "PERSON"
-        if ent in {"ORG", "FAC", "GPE", "LOC"}:
+        if ent in {"ORG", "FAC", "GPE", "LOC", "PRODUCT"}:
             return "ENTITY"
         if mention.span.root.pos_ == "PROPN":
             return "ENTITY"
@@ -951,8 +936,6 @@ class HybridAspectExtractor(ATE):
             "pron": 1,
             "other": 0,
         }.get(mention.origin, 0)
-
-    # legacy overlap management removed in favor of output-level ordering
 
     def _mention_priority(self, mention: Mention) -> tuple:
         bucket = self._mention_bucket(mention)
@@ -1079,8 +1062,11 @@ class HybridAspectExtractor(ATE):
             current_pos += len(sentence) + 1 
         
         all_mentions = self._extract_candidates(doc, clause_boundaries)
-        coref_output = self.mav.predict(full_text)
-        coref_clusters = coref_output.get("clusters_char_offsets", [])
+        if self.mav is not None:
+            coref_output = self.mav.predict(full_text)
+            coref_clusters = coref_output.get("clusters_char_offsets", [])
+        else:
+            coref_clusters = []
         clusters, mention_to_cluster, _ = self._assign_coref_clusters(all_mentions, coref_clusters)
 
         lemma_index: Dict[str, set] = defaultdict(set)
@@ -1092,9 +1078,9 @@ class HybridAspectExtractor(ATE):
         unassigned = [m for m in all_mentions if m not in mention_to_cluster]
         for mention in unassigned:
             assigned_idx = None
-            normalized_text = self._normalize_text(mention.text)
+            normalized_mention_text = normalize_text(mention.text)
             for idx, cluster in enumerate(clusters):
-                if any(self._normalize_text(existing.text) == normalized_text for existing in cluster):
+                if any(normalize_text(existing.text) == normalized_mention_text for existing in cluster):
                     if self._is_semantically_compatible(mention, cluster):
                         assigned_idx = idx
                         break
