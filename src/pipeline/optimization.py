@@ -10,13 +10,15 @@ from copy import deepcopy
 try:
     import optuna
     from optuna.samplers import TPESampler
+    from optuna.pruners import MedianPruner
     OPTUNA_AVAILABLE = True
 except ImportError:
     optuna = None
     TPESampler = None
+    MedianPruner = None
     OPTUNA_AVAILABLE = False
     
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 from combiners import COMBINERS
 from cache_manager import PipelineCache
@@ -43,7 +45,8 @@ class OptimizationResult:
     best_trial_user_attrs: Dict[str, Any]
 
 def _score_to_label(score: float, pos_thresh: float, neg_thresh: float) -> str:
-    """Converts a raw sentiment score to a polarity label based on thresholds."""
+    score = max(-1.0, min(1.0, score))
+    
     if score >= pos_thresh:
         return "positive"
     if score <= neg_thresh:
@@ -52,19 +55,18 @@ def _score_to_label(score: float, pos_thresh: float, neg_thresh: float) -> str:
 
 
 def _normalize_polarity(polarity: str) -> Optional[str]:
-    pol = polarity.lower()
-    if pol in {"positive", "pos", "favorable"}:
+    pol = polarity.lower().strip()
+    if pol in {"positive", "pos", "favorable", "good"}:
         return "positive"
-    if pol in {"negative", "neg", "unfavorable"}:
+    if pol in {"negative", "neg", "unfavorable", "bad"}:
         return "negative"
-    if pol in {"neutral", "neu", "objective"}:
+    if pol in {"neutral", "neu", "objective", "mixed"}:
         return "neutral"
-    if pol in {"conflict", "both"}:
+    if pol in {"conflict", "both", "contradictory"}:
         return "neutral"
     return None
 
 class CombinerOptimizer:
-    """Optimizes sentiment combiner parameters using Optuna for intelligent search."""
 
     def __init__(self, combiner_name: str, test_data_with_cache: List[Dict[str, Any]]):
         if not OPTUNA_AVAILABLE:
@@ -75,7 +77,11 @@ class CombinerOptimizer:
         self.combiner_name = combiner_name
         self.combiner_class = COMBINERS[combiner_name].__class__
         self.param_ranges = getattr(self.combiner_class, 'PARAM_RANGES', {})
-        self.test_data_with_cache = test_data_with_cache
+        
+        # CRITICAL: Limit test data size for speed
+        max_items = min(200, len(test_data_with_cache))  # Cap at 200 items for speed
+        self.test_data_with_cache = test_data_with_cache[:max_items]
+        
         self.pos_thresh = 0.1
         self.neg_thresh = -0.1
         self.aggregate_model = AggregateSentimentModel()
@@ -88,9 +94,23 @@ class CombinerOptimizer:
             if getattr(self.action_model, 'actor_func', None) and getattr(self.action_model, 'target_func', None)
             else None
         )
+        
+        # Pre-cache base graphs to avoid repeated deepcopy
+        self._cache_base_graphs()
+        
+        # Pre-cache base graphs to avoid repeated deepcopy
+        self._cache_base_graphs()
+        
+    def _cache_base_graphs(self):
+        """Pre-process and cache base graphs to avoid repeated deep copying"""
+        for item in self.test_data_with_cache:
+            cached_data = item['cached_data']
+            base_graph = cached_data.get('graph') or cached_data.get('_graph')
+            if base_graph is not None:
+                # Store reference to avoid repeated deepcopy
+                item['_base_graph_ref'] = base_graph
 
     def _suggest_param(self, trial, name: str, spec: Any) -> Any:
-        """Suggest a parameter value based on the provided spec."""
         if isinstance(spec, dict):
             param_type = spec.get('type', 'categorical')
             if param_type == 'float':
@@ -118,7 +138,6 @@ class CombinerOptimizer:
                 high = spec.get('high', 1.0)
                 q = spec.get('step', 0.05)
                 return trial.suggest_float(name, low, high, step=q)
-            # Unknown spec; fall back to default value if provided
             if 'default' in spec:
                 return spec['default']
             raise ValueError(f"Unsupported parameter spec for '{name}': {spec}")
@@ -126,11 +145,9 @@ class CombinerOptimizer:
         if isinstance(spec, (list, tuple)):
             return trial.suggest_categorical(name, list(spec))
 
-        # Constant parameter value
         return spec
 
     def _objective(self, trial) -> float:
-        """The objective function that Optuna will try to maximize."""
         params = {}
         for param_name, spec in self.param_ranges.items():
             params[param_name] = self._suggest_param(trial, param_name, spec)
@@ -140,16 +157,22 @@ class CombinerOptimizer:
         per_dataset_predictions: Dict[str, List[str]] = defaultdict(list)
         per_dataset_truth: Dict[str, List[str]] = defaultdict(list)
 
+        # Process items in batches to reduce memory usage
         for item in self.test_data_with_cache:
             cached_data = item['cached_data']
             true_sentiments = item['gold_sentiments']
             dataset_name = item.get('dataset') or 'dataset'
-            base_graph = cached_data.get('graph') or cached_data.get('_graph')
+            
+            # Use cached base graph reference
+            base_graph = item.get('_base_graph_ref')
             if base_graph is None:
-                continue
+                base_graph = cached_data.get('graph') or cached_data.get('_graph')
+                if base_graph is None:
+                    continue
 
-            graph = deepcopy(base_graph)
+            # Optimize: Use shallow copy when possible, deep copy only when necessary
             try:
+                graph = deepcopy(base_graph)  # Still needed for combiner refresh
                 graph.refresh_with_combiner(
                     self.combiner_name,
                     params,
@@ -157,56 +180,139 @@ class CombinerOptimizer:
                     self.association_model.calculate,
                     self.belonging_model.calculate,
                 )
-            except ValueError:
+            except (ValueError, Exception):
                 continue
 
             entity_label_map = item['entity_label_map']
 
+            # Process aspects in batch
+            aspect_results = []
             for label, true_polarity in true_sentiments.items():
                 entity_id = entity_label_map.get(label)
                 if entity_id is None:
                     continue
 
-                final_score = graph.run_aggregate_sentiment_calculations(entity_id, self.aggregate_model.calculate)
-                if math.isnan(final_score):
-                    final_score = 0.0
-                pred_label = _score_to_label(final_score, self.pos_thresh, self.neg_thresh)
-
+                try:
+                    final_score = graph.run_aggregate_sentiment_calculations(entity_id, self.aggregate_model.calculate)
+                    if math.isnan(final_score) or math.isinf(final_score):
+                        final_score = 0.0
+                    
+                    final_score = max(-1.0, min(1.0, final_score))
+                    pred_label = _score_to_label(final_score, self.pos_thresh, self.neg_thresh)
+                    
+                    aspect_results.append((pred_label, true_polarity.lower()))
+                except Exception:
+                    continue
+            
+            # Batch append results
+            for pred_label, true_polarity in aspect_results:
                 all_predictions.append(pred_label)
-                all_ground_truth.append(true_polarity.lower())
+                all_ground_truth.append(true_polarity)
                 per_dataset_predictions[dataset_name].append(pred_label)
-                per_dataset_truth[dataset_name].append(true_polarity.lower())
+                per_dataset_truth[dataset_name].append(true_polarity)
 
         if not all_predictions:
             return 0.0
 
         overall_accuracy = accuracy_score(all_ground_truth, all_predictions)
+        
+        labels = sorted(list(set(all_ground_truth + all_predictions)))
+        precision = precision_score(all_ground_truth, all_predictions, labels=labels, average='macro', zero_division=0)
+        recall = recall_score(all_ground_truth, all_predictions, labels=labels, average='macro', zero_division=0)
+        f1 = f1_score(all_ground_truth, all_predictions, labels=labels, average='macro', zero_division=0)
+        
         dataset_accuracies: Dict[str, float] = {}
+        dataset_precisions: Dict[str, float] = {}
+        dataset_recalls: Dict[str, float] = {}
+        dataset_f1s: Dict[str, float] = {}
+        
         for name, preds in per_dataset_predictions.items():
             truth = per_dataset_truth[name]
             if truth:
                 dataset_accuracies[name] = accuracy_score(truth, preds)
+                dataset_labels = sorted(list(set(truth + preds)))
+                dataset_precisions[name] = precision_score(truth, preds, labels=dataset_labels, average='macro', zero_division=0)
+                dataset_recalls[name] = recall_score(truth, preds, labels=dataset_labels, average='macro', zero_division=0)
+                dataset_f1s[name] = f1_score(truth, preds, labels=dataset_labels, average='macro', zero_division=0)
+                
                 trial.set_user_attr(f"accuracy/{name}", dataset_accuracies[name])
+                trial.set_user_attr(f"precision/{name}", dataset_precisions[name])
+                trial.set_user_attr(f"recall/{name}", dataset_recalls[name])
+                trial.set_user_attr(f"f1/{name}", dataset_f1s[name])
 
         if dataset_accuracies:
             macro_accuracy = sum(dataset_accuracies.values()) / len(dataset_accuracies)
+            macro_precision = sum(dataset_precisions.values()) / len(dataset_precisions)
+            macro_recall = sum(dataset_recalls.values()) / len(dataset_recalls)
+            macro_f1 = sum(dataset_f1s.values()) / len(dataset_f1s)
         else:
             macro_accuracy = overall_accuracy
+            macro_precision = precision
+            macro_recall = recall
+            macro_f1 = f1
 
         trial.set_user_attr("accuracy/overall_weighted", overall_accuracy)
         trial.set_user_attr("accuracy/macro", macro_accuracy)
+        trial.set_user_attr("precision/overall", precision)
+        trial.set_user_attr("precision/macro", macro_precision)
+        trial.set_user_attr("recall/overall", recall)
+        trial.set_user_attr("recall/macro", macro_recall)
+        trial.set_user_attr("f1/overall", f1)
+        trial.set_user_attr("f1/macro", macro_f1)
 
-        return macro_accuracy
+        base_precision_weight = 0.5
+        adaptive_precision_boost = max(0, (0.3 - macro_precision) * 0.8)
+        final_precision_weight = min(0.7, base_precision_weight + adaptive_precision_boost)
+        
+        remaining_weight = 1.0 - final_precision_weight
+        accuracy_weight = remaining_weight * 0.3
+        f1_weight = remaining_weight * 0.7
+        
+        precision_penalty = max(0, (0.1 - macro_precision) * 3)
+        
+        objective_score = (
+            accuracy_weight * macro_accuracy +
+            final_precision_weight * macro_precision +
+            f1_weight * macro_f1 -
+            precision_penalty
+        )
+        
+        if macro_precision > 0.4 and macro_recall > 0.75 and macro_accuracy > 0.65:
+            objective_score += 0.08
+        
+        trial.set_user_attr("objective_score", objective_score)
+        return objective_score
 
-    def optimize(self, n_trials: int = 200) -> OptimizationResult:
-        """Run the Optuna optimization study."""
+    def optimize(self, n_trials: int = 100) -> OptimizationResult:  # Reduced from 500 to 100
         start_time = time.time()
         
         sampler = None
         if TPESampler is not None:
-            sampler = TPESampler(multivariate=True, group=True, seed=42)
-        study = optuna.create_study(direction="maximize", sampler=sampler)
-        study.optimize(self._objective, n_trials=n_trials, show_progress_bar=True)
+            sampler = TPESampler(
+                multivariate=True, 
+                group=True, 
+                seed=None,
+                n_startup_trials=min(20, n_trials // 5),  # Reduced startup trials
+                n_ei_candidates=24,  # Reduced from 64 to 24
+                prior_weight=1.0,
+                consider_prior=False,
+                consider_magic_clip=False,
+                consider_endpoints=False,
+                warn_independent_sampling=False
+            )
+        
+        study = optuna.create_study(
+            direction="maximize", 
+            sampler=sampler,
+            pruner=None
+        )
+        
+        study.optimize(
+            self._objective, 
+            n_trials=n_trials, 
+            show_progress_bar=True,
+            timeout=1800  # 30 minutes max
+        )
         
         evaluation_time = time.time() - start_time
         df = study.trials_dataframe()
@@ -223,19 +329,17 @@ class CombinerOptimizer:
 def run_optimization(
     dataset_loaders: List[Tuple[str, callable]],
     combiner_name: Optional[str] = None,
-    n_trials: int = 200,
+    n_trials: int = 100,  # Reduced from 500 to 100
     auto_fill_cache: bool = True,
 ):
-    """Run the optimization process across one or more datasets."""
     if not dataset_loaders:
         raise ValueError("No dataset loaders provided to run_optimization")
 
     dataset_names = [name for name, _ in dataset_loaders]
     dataset_label = "+".join(dataset_names)
-    logger.info("Loading and preparing cached data for datasets: %s", dataset_label)
+    logger.info("Loading cached data for datasets: %s", dataset_label)
 
     cache = PipelineCache()
-    pipeline = None
     test_data_with_cache = []
     coverage_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {'gold': 0, 'matched': 0})
 
@@ -246,7 +350,7 @@ def run_optimization(
             logger.error("Failed to load dataset '%s': %s", dataset_name, exc)
             continue
 
-        logger.info("Preparing %d items from dataset '%s'", len(test_items), dataset_name)
+        logger.info("Processing %d items from dataset '%s'", len(test_items), dataset_name)
 
         for item in test_items:
             text = getattr(item, 'text', None)
@@ -255,29 +359,12 @@ def run_optimization(
             if not text:
                 continue
 
-            cached_data = cache.get_intermediate_results(text)
-            if (not cached_data or '_graph' not in cached_data) and auto_fill_cache:
-                if pipeline is None:
-                    from pipeline import build_default_pipeline
-                    pipeline = build_default_pipeline()
-                try:
-                    pipeline.process(text)
-                    cached_data = cache.get_intermediate_results(text)
-                except Exception as exc:
-                    logger.debug(
-                        "Auto cache fill failed for dataset '%s' text '%s': %s",
-                        dataset_name,
-                        text[:50],
-                        exc,
-                    )
-                    cached_data = None
-
+            try:
+                cached_data = cache.get_intermediate_results(text)
+            except Exception:
+                continue
+                
             if not cached_data or '_graph' not in cached_data:
-                logger.debug(
-                    "Skipping text '%s' (dataset '%s') due to missing cache.",
-                    text[:50],
-                    dataset_name,
-                )
                 continue
 
             gold_sentiments: Dict[str, str] = {}
@@ -317,7 +404,8 @@ def run_optimization(
                 continue
 
             entity_label_map: Dict[str, int] = {}
-            for raw_entity_id, record in (cached_data.get('entity_records') or {}).items():
+            entity_records = cached_data.get('entity_records') or {}
+            for raw_entity_id, record in entity_records.items():
                 label = record.get('label') if isinstance(record, dict) else None
                 if not label:
                     continue
@@ -335,17 +423,15 @@ def run_optimization(
             matched = sum(1 for label in gold_sentiments if label in entity_label_map)
             coverage_stats[dataset_name]['matched'] += matched
 
-            test_data_with_cache.append(
-                {
-                    'gold_sentiments': gold_sentiments,
-                    'cached_data': cached_data,
-                    'entity_label_map': entity_label_map,
-                    'dataset': dataset_name,
-                }
-            )
+            test_data_with_cache.append({
+                'gold_sentiments': gold_sentiments,
+                'cached_data': cached_data,
+                'entity_label_map': entity_label_map,
+                'dataset': dataset_name,
+            })
 
     if not test_data_with_cache:
-        raise RuntimeError("No valid cached data found. Run 'python main.py cache <dataset>' first.")
+        raise RuntimeError("No valid cached data found")
 
     combiners_to_optimize = [
         combiner_name

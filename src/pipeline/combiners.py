@@ -31,7 +31,36 @@ _VALUE_POSITIVE_PATTERNS = [
 _NEUTRAL_LISTING_PATTERNS = [
     re.compile(r"include[s]?\s+classics", re.IGNORECASE),
     re.compile(r"features? include", re.IGNORECASE),
+    re.compile(r"comes with", re.IGNORECASE),
+    re.compile(r"has (?:a|an|the)?\s*(?:built-in|integrated)", re.IGNORECASE),
+    re.compile(r"specs?\s+(?:are|include)", re.IGNORECASE),
 ]
+
+# New patterns for aspect-sentiment alignment
+_ASPECT_FOCUS_PATTERNS = [
+    # Patterns that indicate sentiment is specifically about the aspect
+    re.compile(r"\b(?:this|that|the)\s+(\w+)\s+(?:is|was|are|were)\s+(very\s+)?(\w+)", re.IGNORECASE),
+    re.compile(r"(\w+)\s+(?:is|was|are|were)\s+(?:really|quite|very|extremely)?\s*(\w+)", re.IGNORECASE),
+    re.compile(r"(?:love|hate|like|dislike)\s+(?:the|this|that)?\s*(\w+)", re.IGNORECASE),
+]
+
+_CONTEXT_ISOLATION_PATTERNS = [
+    # Patterns to isolate sentiment from general context
+    re.compile(r"(?:although|though|however|but|while|whereas)", re.IGNORECASE),
+    re.compile(r"(?:on the other hand|in contrast|conversely)", re.IGNORECASE),
+    re.compile(r"(?:except|apart from|aside from)", re.IGNORECASE),
+]
+
+_ASPECT_RELEVANCE_KEYWORDS = {
+    # Technology/Computer aspects
+    "performance", "speed", "battery", "screen", "display", "keyboard", "trackpad", 
+    "build", "quality", "design", "price", "value", "size", "weight", "portability",
+    "software", "hardware", "memory", "storage", "processor", "graphics", "camera",
+    "speakers", "audio", "connectivity", "ports", "wifi", "bluetooth",
+    # General product aspects
+    "reliability", "durability", "usability", "functionality", "appearance", 
+    "comfort", "convenience", "efficiency", "effectiveness", "versatility"
+}
 
 _HEAD_OPINION_KEYWORDS = {
     "good",
@@ -59,6 +88,9 @@ _HEAD_OPINION_KEYWORDS = {
 }
 
 def _clamp_score(score: float) -> float:
+    # Handle NaN and infinity cases
+    if not math.isfinite(score):
+        return 0.0
     return max(min(score, 1.0), -1.0)
 
 def _modifier_polarity_summary(per_scores: Dict[str, float], threshold: tuple) -> Dict[str, int]:
@@ -168,7 +200,6 @@ def _legacy_blend(
 
 class SentimentCombiner:
     def __init__(self, **kwargs):
-        # Default parameters that can be overridden
         self.head_dampening_factor = kwargs.get('head_dampening_factor', 0.35)
         self.modifier_weight = kwargs.get('modifier_weight', 0.5)
         self.head_weight = kwargs.get('head_weight', 0.5)
@@ -177,10 +208,10 @@ class SentimentCombiner:
         self.mixed_polarity_context_boost = kwargs.get('mixed_polarity_context_boost', 0.4)
         self.adaptive_strength_threshold = kwargs.get('adaptive_strength_threshold', 0.0)
         self.no_modifier_dampening = kwargs.get('no_modifier_dampening', 0.4)
-        # Default parameter ranges for optimization (can be overridden in subclasses)
+
     PARAM_RANGES = {
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
-        'no_modifier_dampening': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.01},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
+        'no_modifier_dampening': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.005},
     }
 
     def combine(
@@ -197,12 +228,78 @@ class SentimentCombiner:
         raise NotImplementedError
 
     def get_debug_info(self) -> Dict[str, Any]:
-        """Get debug information about the combiner's current parameters."""
         return {
             'combiner_type': self.__class__.__name__,
             'parameters': {k: v for k, v in self.__dict__.items() if not k.startswith('_')},
             'param_ranges': getattr(self, 'PARAM_RANGES', {})
         }
+    
+    def _assess_aspect_relevance(self, head_text: str, clause_text: str) -> float:
+        """Assess how relevant the head aspect is to the context for sentiment focus."""
+        if not head_text or not clause_text:
+            return 1.0
+        
+        head_lower = head_text.lower()
+        clause_lower = clause_text.lower()
+        
+        # Check if aspect is explicitly mentioned with sentiment indicators
+        for pattern in _ASPECT_FOCUS_PATTERNS:
+            if pattern.search(clause_lower):
+                match = pattern.search(clause_lower)
+                if match and head_lower in match.group().lower():
+                    return 1.2  # Higher relevance for explicit aspect-sentiment patterns
+        
+        # Check if aspect is a recognizable product aspect
+        aspect_words = head_lower.split()
+        relevant_count = sum(1 for word in aspect_words if word in _ASPECT_RELEVANCE_KEYWORDS)
+        if relevant_count > 0:
+            return 1.0 + (relevant_count * 0.1)  # Boost for product-relevant aspects
+        
+        # Check if aspect appears multiple times (indicates importance)
+        aspect_frequency = clause_lower.count(head_lower)
+        if aspect_frequency > 1:
+            return 1.0 + min(aspect_frequency * 0.05, 0.2)
+        
+        return 1.0
+    
+    def _detect_context_isolation(self, clause_text: str) -> bool:
+        """Detect if the clause contains patterns that separate contexts."""
+        if not clause_text:
+            return False
+        
+        for pattern in _CONTEXT_ISOLATION_PATTERNS:
+            if pattern.search(clause_text):
+                return True
+        return False
+    
+    def _apply_aspect_focus_adjustment(self, sentiment: float, head_text: str, 
+                                     clause_text: str, modifiers: List[str]) -> Tuple[float, List[str]]:
+        """Apply adjustments to focus sentiment on the specific aspect."""
+        notes = []
+        
+        # Assess aspect relevance
+        relevance = self._assess_aspect_relevance(head_text, clause_text)
+        if relevance > 1.0:
+            sentiment *= relevance
+            notes.append(f"aspect_relevance_boost: {relevance:.2f}")
+        
+        # Check for context isolation (conflicting sentiments in same sentence)
+        if self._detect_context_isolation(clause_text):
+            # Reduce influence of general context when there are contrasting elements
+            sentiment *= 0.9  # Slight dampening to focus on aspect-specific sentiment
+            notes.append("context_isolation_detected")
+        
+        # If no modifiers but aspect appears in a sentiment-rich context, be conservative
+        if not modifiers and clause_text:
+            clause_lower = clause_text.lower()
+            sentiment_word_count = sum(1 for word in clause_lower.split() 
+                                     if word in {'good', 'bad', 'great', 'terrible', 'amazing', 
+                                               'awful', 'excellent', 'poor', 'love', 'hate'})
+            if sentiment_word_count > 2:  # Rich sentiment context but no direct modifiers
+                sentiment *= 0.8  # Be more conservative
+                notes.append("rich_context_conservative")
+        
+        return sentiment, notes
 
 class BalancedV1Combiner(SentimentCombiner):
     def __init__(self, **kwargs):
@@ -214,13 +311,13 @@ class BalancedV1Combiner(SentimentCombiner):
         self.confidence_gamma = kwargs.get('confidence_gamma', 1.2)
         self.context_recovery_weight = kwargs.get('context_recovery_weight', 0.4)
     PARAM_RANGES = {
-        'context_blend_weight': {'type': 'float', 'low': 0.3, 'high': 0.85, 'step': 0.01},
-        'context_blend_factor': {'type': 'float', 'low': 0.0, 'high': 0.6, 'step': 0.01},
-        'modifier_confidence_weight': {'type': 'float', 'low': 0.2, 'high': 0.8, 'step': 0.01},
-        'neutral_guard_band': {'type': 'float', 'low': 0.0, 'high': 0.25, 'step': 0.01},
+        'context_blend_weight': {'type': 'float', 'low': 0.3, 'high': 0.85, 'step': 0.005},
+        'context_blend_factor': {'type': 'float', 'low': 0.0, 'high': 0.6, 'step': 0.005},
+        'modifier_confidence_weight': {'type': 'float', 'low': 0.2, 'high': 0.8, 'step': 0.005},
+        'neutral_guard_band': {'type': 'float', 'low': 0.0, 'high': 0.25, 'step': 0.005},
         'confidence_gamma': {'type': 'float', 'low': 0.5, 'high': 2.5, 'step': 0.01},
-        'context_recovery_weight': {'type': 'float', 'low': 0.0, 'high': 0.8, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
+        'context_recovery_weight': {'type': 'float', 'low': 0.0, 'high': 0.8, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
     }
 
     def combine(
@@ -363,14 +460,14 @@ class ModifierDominantV2Combiner(SentimentCombiner):
         }
 
     PARAM_RANGES = {
-        'modifier_weight_conflict': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.01},
-        'head_weight_conflict': {'type': 'float', 'low': 0.05, 'high': 0.4, 'step': 0.01},
-        'context_stabilizer_weight': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.01},
-        'context_stabilizer_factor': {'type': 'float', 'low': 0.05, 'high': 0.4, 'step': 0.01},
-        'no_modifier_dampening': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
-        'reliability_floor': {'type': 'float', 'low': 0.1, 'high': 0.5, 'step': 0.01},
-        'reliability_gamma': {'type': 'float', 'low': 0.8, 'high': 1.6, 'step': 0.01},
+        'modifier_weight_conflict': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.005},
+        'head_weight_conflict': {'type': 'float', 'low': 0.05, 'high': 0.4, 'step': 0.005},
+        'context_stabilizer_weight': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.005},
+        'context_stabilizer_factor': {'type': 'float', 'low': 0.05, 'high': 0.4, 'step': 0.005},
+        'no_modifier_dampening': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
+        'reliability_floor': {'type': 'float', 'low': 0.1, 'high': 0.5, 'step': 0.005},
+        'reliability_gamma': {'type': 'float', 'low': 0.8, 'high': 1.6, 'step': 0.005},
     }
 
 class ContextualV3Combiner(SentimentCombiner):
@@ -390,17 +487,17 @@ class ContextualV3Combiner(SentimentCombiner):
         self.reliability_floor = kwargs.get('reliability_floor', 0.25)
         self.mixed_context_boost = kwargs.get('mixed_context_boost', 0.35)
     PARAM_RANGES = {
-        'mixed_polarity_avg_weight': {'type': 'float', 'low': 0.4, 'high': 0.8, 'step': 0.01},
-        'mixed_polarity_context_weight': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.01},
-        'modifier_weight_strong': {'type': 'float', 'low': 0.45, 'high': 0.65, 'step': 0.01},
-        'modifier_weight_weak': {'type': 'float', 'low': 0.35, 'high': 0.55, 'step': 0.01},
-        'head_weight_strong': {'type': 'float', 'low': 0.2, 'high': 0.4, 'step': 0.01},
-        'head_weight_weak': {'type': 'float', 'low': 0.15, 'high': 0.35, 'step': 0.01},
-        'no_modifier_head_weight': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.01},
-        'no_modifier_context_weight': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.01},
-        'no_modifier_dampening_v3': {'type': 'float', 'low': 0.15, 'high': 0.35, 'step': 0.01},
-        'context_confidence_weight': {'type': 'float', 'low': 0.2, 'high': 0.8, 'step': 0.01},
-        'reliability_gamma': {'type': 'float', 'low': 0.8, 'high': 1.8, 'step': 0.01},
+        'mixed_polarity_avg_weight': {'type': 'float', 'low': 0.4, 'high': 0.8, 'step': 0.005},
+        'mixed_polarity_context_weight': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.005},
+        'modifier_weight_strong': {'type': 'float', 'low': 0.45, 'high': 0.65, 'step': 0.005},
+        'modifier_weight_weak': {'type': 'float', 'low': 0.35, 'high': 0.55, 'step': 0.005},
+        'head_weight_strong': {'type': 'float', 'low': 0.2, 'high': 0.4, 'step': 0.005},
+        'head_weight_weak': {'type': 'float', 'low': 0.15, 'high': 0.35, 'step': 0.005},
+        'no_modifier_head_weight': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.005},
+        'no_modifier_context_weight': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.005},
+        'no_modifier_dampening_v3': {'type': 'float', 'low': 0.15, 'high': 0.35, 'step': 0.005},
+        'context_confidence_weight': {'type': 'float', 'low': 0.2, 'high': 0.8, 'step': 0.005},
+        'reliability_gamma': {'type': 'float', 'low': 0.8, 'high': 1.8, 'step': 0.005},
         'reliability_floor': {'type': 'float', 'low': 0.1, 'high': 0.5, 'step': 0.01},
         'mixed_context_boost': {'type': 'float', 'low': 0.1, 'high': 0.6, 'step': 0.01},
         'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
@@ -475,6 +572,10 @@ class ContextualV3Combiner(SentimentCombiner):
         reliability = max(self.reliability_floor, min(1.0, reliability))
         score *= max(self.reliability_floor, reliability ** self.reliability_gamma)
         heuristic_notes.append(f"reliability={reliability:.2f}")
+
+        # Apply aspect-focused adjustments for improved precision
+        score, aspect_notes = self._apply_aspect_focus_adjustment(score, head_text, clause_text, modifiers)
+        heuristic_notes.extend(aspect_notes)
 
         if heuristic_notes:
             justification += " Heuristics: " + "; ".join(heuristic_notes) + "."
@@ -554,13 +655,13 @@ class HeadDominantV4Combiner(SentimentCombiner):
             }
         }
     PARAM_RANGES = {
-        'head_weight_v4': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.01},
-        'modifier_weight_v4': {'type': 'float', 'low': 0.05, 'high': 0.4, 'step': 0.01},
-        'context_stabilizer_weight_v4': {'type': 'float', 'low': 0.7, 'high': 0.95, 'step': 0.01},
-        'context_stabilizer_factor_v4': {'type': 'float', 'low': 0.05, 'high': 0.3, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
-        'reliability_gamma_v4': {'type': 'float', 'low': 0.8, 'high': 1.6, 'step': 0.01},
-        'reliability_floor_v4': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.01},
+        'head_weight_v4': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.005},
+        'modifier_weight_v4': {'type': 'float', 'low': 0.05, 'high': 0.4, 'step': 0.005},
+        'context_stabilizer_weight_v4': {'type': 'float', 'low': 0.7, 'high': 0.95, 'step': 0.005},
+        'context_stabilizer_factor_v4': {'type': 'float', 'low': 0.05, 'high': 0.3, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
+        'reliability_gamma_v4': {'type': 'float', 'low': 0.8, 'high': 1.6, 'step': 0.005},
+        'reliability_floor_v4': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.005},
     }
 
 class EqualWeightV5Combiner(SentimentCombiner):
@@ -622,16 +723,21 @@ class EqualWeightV5Combiner(SentimentCombiner):
             }
         }
     PARAM_RANGES = {
-        'equal_weight_blend': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.01},
-        'context_influence_weight': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.01},
-        'context_influence_factor': {'type': 'float', 'low': 0.05, 'high': 0.35, 'step': 0.01},
-        'no_modifier_softening': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
-        'reliability_gamma_v5': {'type': 'float', 'low': 0.8, 'high': 1.5, 'step': 0.01},
-        'reliability_floor_v5': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.01},
+        'equal_weight_blend': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.005},
+        'context_influence_weight': {'type': 'float', 'low': 0.6, 'high': 0.95, 'step': 0.005},
+        'context_influence_factor': {'type': 'float', 'low': 0.05, 'high': 0.35, 'step': 0.005},
+        'no_modifier_softening': {'type': 'float', 'low': 0.3, 'high': 0.7, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
+        'reliability_gamma_v5': {'type': 'float', 'low': 0.8, 'high': 1.5, 'step': 0.005},
+        'reliability_floor_v5': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.005},
     }
 
 class AdaptiveV6Combiner(SentimentCombiner):
+    NEGATION_PATTERNS = {
+        'not', 'no', 'never', 'nothing', "n't", 'dont', "doesn't", "didn't",
+        'cannot', "can't", 'wont', "won't", 'neither', 'nor', 'without', 'none'
+    }
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.adaptive_mod_strong_weight = kwargs.get('adaptive_mod_strong_weight', 0.7)
@@ -643,6 +749,28 @@ class AdaptiveV6Combiner(SentimentCombiner):
         self.adaptive_no_modifier_dampening = kwargs.get('adaptive_no_modifier_dampening', 0.6)
         self.reliability_gamma_v6 = kwargs.get('reliability_gamma_v6', 1.1)
         self.reliability_floor_v6 = kwargs.get('reliability_floor_v6', 0.25)
+        self.negation_boost = kwargs.get('negation_boost', 1.25)
+        self.modifier_quality_weight = kwargs.get('modifier_quality_weight', 0.15)
+    
+    def _detect_negation(self, text: str) -> bool:
+        tokens = text.lower().split()
+        text_lower = text.lower()
+        return any(neg in tokens or neg in text_lower for neg in self.NEGATION_PATTERNS)
+    
+    def _assess_modifier_quality(self, modifiers: List[str]) -> float:
+        if not modifiers:
+            return 0.0
+        quality_score = 0.0
+        for mod in modifiers:
+            mod_lower = mod.lower()
+            if any(neg in mod_lower.split() for neg in self.NEGATION_PATTERNS):
+                quality_score += 0.3
+            if len(mod.split()) >= 3:
+                quality_score += 0.2
+            if any(word in mod_lower for word in ['very', 'extremely', 'quite', 'really', 'highly']):
+                quality_score += 0.15
+            quality_score += 0.35
+        return min(quality_score / len(modifiers), 1.0)
 
     def combine(
         self,
@@ -658,22 +786,43 @@ class AdaptiveV6Combiner(SentimentCombiner):
         head_adjusted, head_note = _adjust_head_sentiment(head_text, head_sentiment, modifiers, self.head_dampening_factor)
         modifier_adjusted, modifier_note = _adjust_modifier_sentiment(modifiers, modifier_sentiment, clause_text)
 
+        has_negation = self._detect_negation(clause_text) or any(self._detect_negation(m) for m in modifiers)
+        modifier_quality = self._assess_modifier_quality(modifiers)
+
         reliability = self.reliability_floor_v6
         if modifiers:
             mod_strength = abs(modifier_adjusted)
             head_strength = abs(head_adjusted)
-            if mod_strength > head_strength:
+            
+            quality_factor = 1.0 + (modifier_quality * self.modifier_quality_weight)
+            mod_strength_adjusted = mod_strength * quality_factor
+            
+            if mod_strength_adjusted > head_strength:
                 weight_mod = self.adaptive_mod_strong_weight
                 weight_head = self.adaptive_head_strong_weight
             else:
                 weight_mod = self.adaptive_mod_weak_weight
                 weight_head = self.adaptive_head_weak_weight
+            
             score = weight_mod * modifier_adjusted + weight_head * head_adjusted
             justification = f"Adaptive blend (mod {weight_mod:.1f}, head {weight_head:.1f}) based on strengths ({mod_strength:.2f} vs {head_strength:.2f})."
+            
+            if has_negation:
+                if score < 0:
+                    score *= self.negation_boost
+                    justification += f" Negation boost applied ({self.negation_boost:.2f}x)."
+                elif score > 0:
+                    score *= (2.0 - self.negation_boost)
+                    justification += f" Negation damping applied."
+            
             if context_score is not None:
                 score = self.adaptive_context_weight * score + self.adaptive_context_factor * context_score
                 justification += f" Context adjustment ({context_score:+.2f})."
-            reliability = max(self.reliability_floor_v6, min(1.0, (mod_strength + head_strength) / 2))
+            
+            reliability = max(self.reliability_floor_v6, min(1.0, (mod_strength_adjusted + head_strength) / 2))
+            if modifier_quality > 0.5:
+                reliability *= (1.0 + modifier_quality * 0.2)
+                reliability = min(1.0, reliability)
         else:
             score = head_adjusted * self.adaptive_no_modifier_dampening
             justification = f"No modifiers; moderately dampened head ({head_adjusted:+.2f})."
@@ -684,6 +833,10 @@ class AdaptiveV6Combiner(SentimentCombiner):
 
         heuristic_notes = [note for note in (head_note, modifier_note) if note]
         heuristic_notes.append(f"reliability={reliability:.2f}")
+        if has_negation:
+            heuristic_notes.append("negation_detected")
+        if modifier_quality > 0.5:
+            heuristic_notes.append(f"quality={modifier_quality:.2f}")
         if heuristic_notes:
             justification += " Heuristics: " + "; ".join(heuristic_notes) + "."
 
@@ -700,16 +853,16 @@ class AdaptiveV6Combiner(SentimentCombiner):
             }
         }
     PARAM_RANGES = {
-        'adaptive_mod_strong_weight': {'type': 'float', 'low': 0.5, 'high': 0.85, 'step': 0.01},
-        'adaptive_head_strong_weight': {'type': 'float', 'low': 0.15, 'high': 0.45, 'step': 0.01},
-        'adaptive_mod_weak_weight': {'type': 'float', 'low': 0.25, 'high': 0.55, 'step': 0.01},
-        'adaptive_head_weak_weight': {'type': 'float', 'low': 0.45, 'high': 0.75, 'step': 0.01},
-        'adaptive_context_weight': {'type': 'float', 'low': 0.7, 'high': 0.95, 'step': 0.01},
-        'adaptive_context_factor': {'type': 'float', 'low': 0.05, 'high': 0.3, 'step': 0.01},
-        'adaptive_no_modifier_dampening': {'type': 'float', 'low': 0.4, 'high': 0.75, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
-        'reliability_gamma_v6': {'type': 'float', 'low': 0.8, 'high': 1.6, 'step': 0.01},
-        'reliability_floor_v6': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.01},
+        'adaptive_mod_strong_weight': {'type': 'float', 'low': 0.5, 'high': 0.85, 'step': 0.005},
+        'adaptive_head_strong_weight': {'type': 'float', 'low': 0.15, 'high': 0.45, 'step': 0.005},
+        'adaptive_mod_weak_weight': {'type': 'float', 'low': 0.25, 'high': 0.55, 'step': 0.005},
+        'adaptive_head_weak_weight': {'type': 'float', 'low': 0.45, 'high': 0.75, 'step': 0.005},
+        'adaptive_context_weight': {'type': 'float', 'low': 0.7, 'high': 0.95, 'step': 0.005},
+        'adaptive_context_factor': {'type': 'float', 'low': 0.05, 'high': 0.3, 'step': 0.005},
+        'adaptive_no_modifier_dampening': {'type': 'float', 'low': 0.4, 'high': 0.75, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
+        'reliability_gamma_v6': {'type': 'float', 'low': 0.8, 'high': 1.6, 'step': 0.005},
+        'reliability_floor_v6': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.005},
     }
 
 
@@ -724,13 +877,13 @@ class LogisticReliabilityV7Combiner(SentimentCombiner):
         self.context_floor = kwargs.get('context_floor', 0.05)
 
     PARAM_RANGES = {
-        'logistic_scale': {'type': 'float', 'low': 1.0, 'high': 6.0, 'step': 0.1},
-        'logistic_shift': {'type': 'float', 'low': -0.3, 'high': 0.3, 'step': 0.02},
-        'modifier_bias': {'type': 'float', 'low': 0.3, 'high': 0.8, 'step': 0.02},
-        'context_gate': {'type': 'float', 'low': 0.1, 'high': 0.8, 'step': 0.02},
-        'residual_weight': {'type': 'float', 'low': 0.05, 'high': 0.3, 'step': 0.01},
-        'context_floor': {'type': 'float', 'low': 0.0, 'high': 0.2, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
+        'logistic_scale': {'type': 'float', 'low': 1.0, 'high': 6.0, 'step': 0.05},
+        'logistic_shift': {'type': 'float', 'low': -0.3, 'high': 0.3, 'step': 0.01},
+        'modifier_bias': {'type': 'float', 'low': 0.3, 'high': 0.8, 'step': 0.01},
+        'context_gate': {'type': 'float', 'low': 0.1, 'high': 0.8, 'step': 0.01},
+        'residual_weight': {'type': 'float', 'low': 0.05, 'high': 0.3, 'step': 0.005},
+        'context_floor': {'type': 'float', 'low': 0.0, 'high': 0.2, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
     }
 
     def combine(
@@ -802,14 +955,14 @@ class ContextFusionV8Combiner(SentimentCombiner):
         self.context_minimum = kwargs.get('context_minimum', 0.05)
 
     PARAM_RANGES = {
-        'context_primary_weight': {'type': 'float', 'low': 0.2, 'high': 0.8, 'step': 0.02},
-        'context_secondary_weight': {'type': 'float', 'low': 0.0, 'high': 0.4, 'step': 0.02},
-        'head_gate_threshold': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.02},
-        'modifier_gate_threshold': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.02},
-        'context_decay': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.02},
-        'context_amplifier': {'type': 'float', 'low': 0.3, 'high': 1.0, 'step': 0.02},
-        'context_minimum': {'type': 'float', 'low': 0.0, 'high': 0.2, 'step': 0.01},
-        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
+        'context_primary_weight': {'type': 'float', 'low': 0.2, 'high': 0.8, 'step': 0.01},
+        'context_secondary_weight': {'type': 'float', 'low': 0.0, 'high': 0.4, 'step': 0.01},
+        'head_gate_threshold': {'type': 'float', 'low': 0.2, 'high': 0.6, 'step': 0.01},
+        'modifier_gate_threshold': {'type': 'float', 'low': 0.15, 'high': 0.5, 'step': 0.01},
+        'context_decay': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.01},
+        'context_amplifier': {'type': 'float', 'low': 0.3, 'high': 1.0, 'step': 0.01},
+        'context_minimum': {'type': 'float', 'low': 0.0, 'high': 0.2, 'step': 0.005},
+        'head_dampening_factor': {'type': 'float', 'low': 0.1, 'high': 0.7, 'step': 0.005},
     }
 
     def combine(

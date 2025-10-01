@@ -8,8 +8,10 @@ import logging
 import os
 
 import config
-from utility import get_env
+from utility import get_env, ensure_env_loaded
 from cache_utils import load_cache_from_file, save_cache_to_file
+
+ensure_env_loaded()
 
 try:
     import spacy
@@ -124,10 +126,15 @@ class GemmaModifierExtractor(ModifierExtractor):
             self._cache: Dict[tuple[str, str], Dict[str, Any]] = {}
         if genai is None:
             raise RuntimeError("google-generativeai not available")
-        key = api_key or get_env("GOOGLE_API_KEY")
+        ensure_env_loaded()
+        key = api_key or get_env("GOOGLE_API_KEY") or get_env("GENAI_API_KEY") or get_env("GEMINI_API_KEY")
         if not key:
-            raise RuntimeError("No API key provided for GemmaModifierExtractor")
-        genai.configure(api_key=key)
+            raise RuntimeError("No API key provided for GemmaModifierExtractor. Check .env file for GOOGLE_API_KEY")
+        try:
+            genai.configure(api_key=key)
+            logger.info(f"GemmaModifierExtractor initialized with model: {self.model}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to configure Gemini API: {e}")
 
     def _prompt(self, passage: str, entity: str) -> str:
         return f"""<<SYS>>
@@ -135,17 +142,26 @@ You are an expert linguist performing aspect-based sentiment analysis. Your task
 
 ## Directives
 1.  **Extract Full Predicates**: Do not extract single adjectives. Capture the entire evaluative phrase.
-    -   **Correct**: "is very quiet", "lasts a long time", "is not worth the price"
+    -   **Correct**: "is very quiet", "lasts a long time", "is not worth the price", "works better than USB3"
     -   **Incorrect**: "quiet", "long", "not worth"
 2.  **Verbatim Extraction**: All extracted modifiers must be exact, verbatim substrings from the PASSAGE.
-3.  **Include Full Context**: Capture all words necessary to understand the sentiment, especially negation ("doesn't have a disk drive"), modals ("could be better"), and comparisons ("works better than USB3").
+3.  **Include Full Context**: Capture all words necessary to understand the sentiment, especially:
+    -   **Negation**: "doesn't have", "is not", "can't", "won't", "never"
+    -   **Modals**: "could be better", "should work", "might fail"
+    -   **Comparisons**: "works better than", "worse than expected", "as good as"
+    -   **Intensifiers**: "very quiet", "extremely fast", "quite good", "somewhat disappointing"
+    -   **Qualifying phrases**: "worth the price", "good enough for", "better than expected"
 4.  **Handle Multiple & Contrasting Opinions**: If an entity has multiple descriptions, extract all of them. For "The screen is bright but has glare", if ENTITY is "screen", extract both "is bright" and "has glare".
-5.  **Output Format**: Return a single, valid JSON object with no markdown fences.
+5.  **Capture Contextual Sentiment**: Include phrases that provide context for evaluation:
+    -   **Value framing**: "expensive but worth it", "cheap and reliable"
+    -   **Use case specific**: "good for gaming", "not suitable for work"
+    -   **Temporal aspects**: "works well initially", "degrades over time"
+6.  **Output Format**: Return a single, valid JSON object with no markdown fences.
 
 ## Schema
 {{
   "entity": "{entity}",
-  "justification": "Brief note on the extraction logic.",
+  "justification": "Brief note on the extraction logic and patterns found.",
   "modifiers": ["string"],
   "approach_used": "{self.model}"
 }}
@@ -277,42 +293,201 @@ class SpacyModifierExtractor(ModifierExtractor):
     def _extract_helper(self, text: str, entity: str) -> Dict[str, Any]:
         nlp = _get_spacy_nlp()
         if not nlp or not text or not entity:
-            return {"entity": entity, "modifiers": [], "approach_used": "spacy_fallback", "justification": "unavailable"}
+            return {"entity": entity, "modifiers": [], "approach_used": "spacy_enhanced", "justification": "unavailable"}
         doc = nlp(text)
         t = text.lower()
         e = entity.strip()
         if not e:
-            return {"entity": entity, "modifiers": [], "approach_used": "spacy_fallback", "justification": "empty"}
-        idx = t.find(e.lower())
-        tokens = []
-        if idx >= 0:
-            start = idx
-            end = idx + len(e)
-            span = doc.char_span(start, end)
-            if span:
-                tokens = [token for token in span]
-        if not tokens:
-            words = {w for w in e.lower().split() if w not in {"the","a","an","this","that"}}
-            for tok in doc:
-                if tok.text.lower() in words:
-                    tokens.append(tok)
+            return {"entity": entity, "modifiers": [], "approach_used": "spacy_enhanced", "justification": "empty"}
         
+        # Find entity tokens more robustly
+        entity_tokens = []
+        entity_lower = e.lower()
+        
+        # Try exact phrase match first
+        for i, token in enumerate(doc):
+            if token.text.lower() == entity_lower:
+                entity_tokens.append(token)
+            elif entity_lower in token.text.lower():
+                entity_tokens.append(token)
+        
+        # If no direct matches, try word-by-word matching
+        if not entity_tokens:
+            entity_words = {w for w in entity_lower.split() if w not in {"the","a","an","this","that"}}
+            for token in doc:
+                if token.text.lower() in entity_words:
+                    entity_tokens.append(token)
+        
+        if not entity_tokens:
+            return {"entity": entity, "modifiers": [], "approach_used": "spacy_enhanced", "justification": "entity not found"}
+        
+        # Find heads of entity tokens
         heads = set()
-        for token in tokens:
+        for token in entity_tokens:
             head = token
-            while head.head != head:
+            while head.head != head and head.head != head.head:
                 head = head.head
             heads.add(head)
-
-        mods = []
-        for head in heads:
-            for child in head.children:
-                if child.dep_ in ("amod", "acomp"):
-                    subtree_text = "".join(sub.text_with_ws for sub in child.subtree)
-                    mods.append(subtree_text.strip())
         
-        unique_mods = sorted(list(set(mods)))
-        return {"entity": entity, "modifiers": unique_mods, "approach_used": "spacy_fallback", "justification": f"{len(unique_mods)} cues"}
+        mods = []
+        
+        # Extract comprehensive modifier patterns for each head
+        for head in heads:
+            # 1. Adjectival modifiers (enhanced)
+            for child in head.children:
+                if child.dep_ in ("amod", "acomp", "nmod", "compound"):
+                    mod_phrase = self._extract_full_modifier_phrase(child)
+                    if mod_phrase:
+                        mods.append(mod_phrase)
+            
+            # 2. Adverbial modifiers  
+            for child in head.children:
+                if child.dep_ in ("advmod", "npadvmod"):
+                    mod_phrase = self._extract_full_modifier_phrase(child)
+                    if mod_phrase:
+                        mods.append(mod_phrase)
+            
+            # 3. Verbal predicates (key for sentiment)
+            if head.head != head:
+                parent = head.head
+                if parent.pos_ == "VERB":
+                    # Extract full verb phrase with modifiers
+                    verb_phrase = self._extract_verb_phrase(parent, head)
+                    if verb_phrase:
+                        mods.append(verb_phrase)
+            
+            # 4. Relative clauses and prepositional phrases
+            for child in head.children:
+                if child.dep_ in ("relcl", "acl", "prep", "pcomp"):
+                    clause_phrase = self._extract_clause_phrase(child)
+                    if clause_phrase:
+                        mods.append(clause_phrase)
+                        
+            # 5. Negation and modal constructions  
+            for child in head.children:
+                if child.dep_ in ("neg", "aux", "auxpass"):
+                    neg_phrase = self._extract_negation_phrase(child, head)
+                    if neg_phrase:
+                        mods.append(neg_phrase)
+        
+        # Filter and clean modifiers
+        unique_mods = self._clean_and_filter_modifiers(mods, entity)
+        return {"entity": entity, "modifiers": unique_mods, "approach_used": "spacy_enhanced", "justification": f"{len(unique_mods)} enhanced patterns"}
+    
+    def _extract_full_modifier_phrase(self, token) -> Optional[str]:
+        """Extract full modifier phrase including intensifiers and qualifiers."""
+        phrase_tokens = []
+        
+        # Include intensifiers (very, quite, extremely, etc.)
+        for child in token.children:
+            if child.dep_ == "advmod":
+                phrase_tokens.append(child)
+        
+        # Add the main modifier
+        phrase_tokens.append(token)
+        
+        # Include any dependent elements
+        for child in token.children:
+            if child.dep_ in ("prep", "pcomp", "dobj", "attr"):
+                phrase_tokens.extend(list(child.subtree))
+        
+        phrase_tokens.sort(key=lambda t: t.i)
+        phrase = " ".join([t.text for t in phrase_tokens]).strip()
+        return phrase if len(phrase) > 1 else None
+    
+    def _extract_verb_phrase(self, verb_token, entity_token) -> Optional[str]:
+        """Extract full verb phrase that relates to the entity."""
+        phrase_tokens = []
+        
+        # Check if entity is subject or object of verb
+        entity_is_subj = any(child.dep_ in ("nsubj", "nsubjpass") and child == entity_token for child in verb_token.children)
+        entity_is_obj = any(child.dep_ in ("dobj", "pobj") and child == entity_token for child in verb_token.children)
+        
+        if not (entity_is_subj or entity_is_obj):
+            return None
+        
+        # Include auxiliaries and negation
+        for child in verb_token.children:
+            if child.dep_ in ("aux", "auxpass", "neg"):
+                phrase_tokens.append(child)
+        
+        # Add main verb
+        phrase_tokens.append(verb_token)
+        
+        # Include adverbial modifiers
+        for child in verb_token.children:
+            if child.dep_ in ("advmod", "npadvmod"):
+                phrase_tokens.extend(list(child.subtree))
+        
+        # Include complements and objects (but not the entity itself)
+        for child in verb_token.children:
+            if child.dep_ in ("dobj", "attr", "acomp") and child != entity_token:
+                phrase_tokens.extend(list(child.subtree))
+        
+        phrase_tokens.sort(key=lambda t: t.i)
+        phrase = " ".join([t.text for t in phrase_tokens]).strip()
+        return phrase if len(phrase) > 1 else None
+    
+    def _extract_clause_phrase(self, token) -> Optional[str]:
+        """Extract relative clauses and prepositional phrases."""
+        if token.dep_ in ("relcl", "acl"):
+            # Relative clause - extract full clause
+            clause_tokens = list(token.subtree)
+            clause_tokens.sort(key=lambda t: t.i)
+            phrase = " ".join([t.text for t in clause_tokens]).strip()
+            return phrase if len(phrase) > 3 else None
+        elif token.dep_ in ("prep", "pcomp"):
+            # Prepositional phrase
+            prep_tokens = list(token.subtree)
+            prep_tokens.sort(key=lambda t: t.i)
+            phrase = " ".join([t.text for t in prep_tokens]).strip()
+            return phrase if len(phrase) > 2 else None
+        return None
+    
+    def _extract_negation_phrase(self, neg_token, head_token) -> Optional[str]:
+        """Extract negation constructions."""
+        phrase_tokens = [neg_token]
+        
+        # Find what's being negated
+        if head_token.pos_ == "VERB":
+            phrase_tokens.append(head_token)
+            # Include verb complements
+            for child in head_token.children:
+                if child.dep_ in ("acomp", "attr", "dobj"):
+                    phrase_tokens.extend(list(child.subtree))
+        elif head_token.pos_ in ("ADJ", "NOUN"):
+            phrase_tokens.append(head_token)
+        
+        phrase_tokens.sort(key=lambda t: t.i)
+        phrase = " ".join([t.text for t in phrase_tokens]).strip()
+        return phrase if len(phrase) > 2 else None
+    
+    def _clean_and_filter_modifiers(self, modifiers: List[str], entity: str) -> List[str]:
+        """Clean and filter extracted modifiers."""
+        cleaned = []
+        entity_lower = entity.lower()
+        
+        for mod in modifiers:
+            if not mod or len(mod.strip()) < 2:
+                continue
+            
+            mod_clean = mod.strip()
+            
+            # Skip if modifier is just the entity itself
+            if mod_clean.lower() == entity_lower:
+                continue
+            
+            # Skip generic words
+            if mod_clean.lower() in {"the", "a", "an", "this", "that", "it", "is", "was", "are", "were"}:
+                continue
+            
+            # Skip if too long (likely extracted too much)
+            if len(mod_clean) > 100:
+                continue
+                
+            cleaned.append(mod_clean)
+        
+        return sorted(list(set(cleaned)))
 
     @lru_cache(maxsize=4096)
     def extract(self, text: str, entity: str) -> Dict[str, Any]:

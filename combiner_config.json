@@ -1,0 +1,32 @@
+{
+  "combiner_name": "adaptive_v6",
+  "combiner_params": {
+    "negation_boost": 1.5,
+    "modifier_quality_weight": 0.25,
+    "adaptive_mod_strong_weight": 0.7,
+    "adaptive_head_strong_weight": 0.3,
+    "adaptive_mod_weak_weight": 0.4,
+    "adaptive_head_weak_weight": 0.6,
+    "adaptive_no_modifier_dampening": 0.8,
+    "adaptive_context_weight": 0.8,
+    "adaptive_context_factor": 0.2,
+    "reliability_floor_v6": 0.3,
+    "reliability_gamma_v6": 0.8,
+    "head_dampening_factor": 0.85
+  },
+  "description": "Manual configuration for AdaptiveV6Combiner with improved negation handling",
+  "notes": [
+    "negation_boost=1.5: Amplify negative scores when negation detected",
+    "modifier_quality_weight=0.25: Weight modifier contribution by quality assessment",
+    "adaptive_mod_strong_weight=0.7: When modifiers are stronger than head",
+    "adaptive_head_strong_weight=0.3: Complement to mod_strong",
+    "adaptive_mod_weak_weight=0.4: When modifiers are weaker than head",
+    "adaptive_head_weak_weight=0.6: Complement to mod_weak (head gets more weight)",
+    "adaptive_no_modifier_dampening=0.8: Dampen head-only sentiments",
+    "reliability_floor_v6=0.3: Minimum reliability score",
+    "reliability_gamma_v6=0.8: Reliability scaling exponent",
+    "head_dampening_factor=0.85: Dampen head sentiment slightly"
+  ],
+  "last_updated": "2025-10-01",
+  "version": "1.0"
+}

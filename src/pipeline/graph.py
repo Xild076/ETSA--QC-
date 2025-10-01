@@ -1,5 +1,6 @@
 from typing import Callable, List, Dict, Tuple, Optional, Any
 import logging
+import math
 import networkx as nx
 from combiners import COMBINERS, _modifier_polarity_summary
 
@@ -62,13 +63,28 @@ class RelationGraph:
         if key not in self.graph.nodes:
             raise ValueError(f"Node {key} not found in the graph.")
 
-    def _sent(self, text: str) -> float:
+    def _sent(self, text: str, aspect: str = "", modifiers: List[str] = None) -> float:
+        """Enhanced sentiment analysis with optional aspect-focused context."""
         if not self.sentiment_analyzer_system:
             return 0.0
         try:
-            raw_result = self.sentiment_analyzer_system.analyze(text or "")
-            return self._coerce_sentiment_score(raw_result)
-        except Exception:
+            # If aspect and modifiers provided, use focused analysis
+            if aspect and modifiers is not None:
+                from sentiment.sentiment import analyze_aspect_sentiment_focused
+                # Create a wrapper function for the sentiment analyzer
+                def analyzer_wrapper(text_input):
+                    return self.sentiment_analyzer_system.analyze(text_input or "")
+                
+                result = analyze_aspect_sentiment_focused(
+                    text or "", aspect, modifiers or [], analyzer_wrapper
+                )
+                return self._coerce_sentiment_score(result)
+            else:
+                # Standard sentiment analysis
+                raw_result = self.sentiment_analyzer_system.analyze(text or "")
+                return self._coerce_sentiment_score(raw_result)
+        except Exception as e:
+            logger.debug(f"Sentiment analysis failed: {e}")
             return 0.0
 
     def _coerce_sentiment_score(self, result: Any) -> float:
@@ -169,7 +185,8 @@ class RelationGraph:
 
         clean_head = (head or "").strip()
         modifiers_clean = _unique_modifiers(modifier)
-        head_sentiment = float(self._sent(clean_head)) if clean_head else 0.0
+        # Use focused sentiment analysis for head with its modifiers
+        head_sentiment = float(self._sent(clean_head, aspect=clean_head, modifiers=modifiers_clean)) if clean_head else 0.0
         modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(clean_head, modifiers_clean)
 
         final_sentiment, base_justification, extras = self._combine_sentiments(
@@ -415,7 +432,6 @@ class RelationGraph:
             logger.warning(f"Unknown combiner '{self.combiner}'; falling back to contextual_v3.")
             combiner_cls = COMBINERS["contextual_v3"]
         
-        # Instantiate the combiner with the stored parameters for this trial
         combiner_obj = combiner_cls.__class__(**self.combiner_params)
         try:
             return combiner_obj.combine(
@@ -659,10 +675,22 @@ class RelationGraph:
         for layer in layers:
             key = self._node_key(entity_id, layer)
             if "compound_sentiment" in self.graph.nodes[key]:
-                sentiments.append(float(self.graph.nodes[key].get("compound_sentiment", 0.0)))
+                sentiment = float(self.graph.nodes[key].get("compound_sentiment", 0.0))
             else:
-                sentiments.append(float(self.graph.nodes[key].get("init_sentiment", 0.0)))
+                sentiment = float(self.graph.nodes[key].get("init_sentiment", 0.0))
+            
+            # Validate and clamp sentiment values
+            if not math.isfinite(sentiment):
+                sentiment = 0.0
+            sentiment = max(-1.0, min(1.0, sentiment))
+            sentiments.append(sentiment)
+        
         result = float(function(sentiments)) if sentiments else 0.0
+        # Ensure result is finite and within bounds
+        if not math.isfinite(result):
+            result = 0.0
+        result = max(-1.0, min(1.0, result))
+        
         self.aggregate_sentiments[entity_id] = result
         return result
 

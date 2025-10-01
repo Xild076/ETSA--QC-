@@ -1,0 +1,177 @@
+{
+  "base_sentiment_results": [
+    {
+      "text": "the weight is acceptable",
+      "issue": "acceptable_word_negative",
+      "priority": "critical",
+      "expected": "positive",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.9984351718819516
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.3182
+        },
+        "textblob": {
+          "correct": false,
+          "in_range": false,
+          "score": 0.0
+        }
+      }
+    },
+    {
+      "text": "Did not enjoy the new Windows 8 and touchscreen functions",
+      "issue": "negation_not_handled",
+      "priority": "critical",
+      "expected": "negative",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.9993524618783092
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.3875
+        },
+        "textblob": {
+          "correct": false,
+          "in_range": false,
+          "score": -0.03181818181818183
+        }
+      }
+    },
+    {
+      "text": "No installation disk (DVD) is included",
+      "issue": "contextual_negation",
+      "priority": "critical",
+      "expected": "negative",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.9948981751574265
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.296
+        },
+        "textblob": {
+          "correct": false,
+          "in_range": false,
+          "score": 0.0
+        }
+      }
+    },
+    {
+      "text": "Its size is ideal and the weight is acceptable",
+      "issue": "mixed_sentiment_compound",
+      "priority": "high",
+      "expected": "positive",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.9994724943501493
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.6908
+        },
+        "textblob": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.9
+        }
+      }
+    },
+    {
+      "text": "This product is not bad",
+      "issue": "double_negation",
+      "priority": "medium",
+      "expected": "positive",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.9985125942724473
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.431
+        },
+        "textblob": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.3499999999999999
+        }
+      }
+    },
+    {
+      "text": "I hate this laptop",
+      "issue": "strong_negative",
+      "priority": "high",
+      "expected": "negative",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.9992971234734385
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.5719
+        },
+        "textblob": {
+          "correct": true,
+          "in_range": true,
+          "score": -0.8
+        }
+      }
+    },
+    {
+      "text": "This is an excellent device",
+      "issue": "strong_positive",
+      "priority": "high",
+      "expected": "positive",
+      "methods": {
+        "distilbert": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.9997503021387928
+        },
+        "vader": {
+          "correct": true,
+          "in_range": true,
+          "score": 0.5719
+        },
+        "textblob": {
+          "correct": true,
+          "in_range": true,
+          "score": 1.0
+        }
+      }
+    }
+  ],
+  "failure_summary": {
+    "all_methods_fail": [],
+    "critical_failures_by_method": {
+      "distilbert": [],
+      "vader": [],
+      "textblob": [
+        "acceptable_word_negative",
+        "negation_not_handled",
+        "contextual_negation"
+      ]
+    }
+  }
+}

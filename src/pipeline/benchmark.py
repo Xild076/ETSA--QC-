@@ -306,11 +306,17 @@ def _prepare_predicted(
         canonical = data.get("label", f"entity_{entity_id}")
         score = float(data.get("aggregate_sentiment", 0.0) or 0.0)
         
-        if math.isnan(score): score = 0.0
+        # Handle invalid scores
+        if math.isnan(score) or math.isinf(score): 
+            score = 0.0
+        # Clamp score to reasonable bounds
+        score = max(-1.0, min(1.0, score))
         
         polarity = "neutral"
-        if score >= pos_thresh: polarity = "positive"
-        elif score <= neg_thresh: polarity = "negative"
+        if score >= pos_thresh: 
+            polarity = "positive"
+        elif score <= neg_thresh: 
+            polarity = "negative"
         
         tokens = _tokens(canonical)
         predicted.append(
@@ -332,11 +338,15 @@ def _prepare_predicted(
         except Exception:
             pass # Keep score at 0.0
     
-    if math.isnan(score): score = 0.0
+    if math.isnan(score) or math.isinf(score): 
+        score = 0.0
+    score = max(-1.0, min(1.0, score))
     
     polarity = "neutral"
-    if score >= pos_thresh: polarity = "positive"
-    elif score <= neg_thresh: polarity = "negative"
+    if score >= pos_thresh: 
+        polarity = "positive"
+    elif score <= neg_thresh: 
+        polarity = "negative"
     
     tokens = _tokens(fallback_text)
     predicted.append(
@@ -392,6 +402,7 @@ def run_benchmark(
     
     items = get_dataset(dataset_name)
     if limit and limit > 0:
+        random.seed(42)
         random.shuffle(items)
         items = items[:limit]
     

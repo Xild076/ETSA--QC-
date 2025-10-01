@@ -9,22 +9,40 @@ from pathlib import Path
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
-nltk.download("punkt", quiet=True)
-afn, sia = Afinn(), SentimentIntensityAnalyzer()
+# Lazy initialization to avoid hanging on import
+_nltk_initialized = False
+_afn = None
+_sia = None
+
+def _ensure_nltk_ready():
+    """Ensure NLTK resources are downloaded only when needed."""
+    global _nltk_initialized, _afn, _sia
+    if not _nltk_initialized:
+        try:
+            # Try to check if punkt is already downloaded
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+            # Only download if not found
+            nltk.download("punkt", quiet=True)
+        _afn = Afinn()
+        _sia = SentimentIntensityAnalyzer()
+        _nltk_initialized = True
 
 _rand = random.Random()
 
 def normalized_afinn_score(text):
+    _ensure_nltk_ready()
     tokens = nltk.word_tokenize(text)
-    word_scores = [afn.score(word) for word in tokens]
+    word_scores = [_afn.score(word) for word in tokens]
     relevant_scores = [s for s in word_scores if s != 0]
     if relevant_scores:
         return sum(relevant_scores) / len(relevant_scores) / 5
     return 0
 
 def get_sentiment(text):
+    _ensure_nltk_ready()
     afn_score = normalized_afinn_score(text)
-    polarity_score = sia.polarity_scores(text)['compound']
+    polarity_score = _sia.polarity_scores(text)['compound']
     return (afn_score + polarity_score) / 2
 
 names = [

@@ -8,6 +8,7 @@ import logging
 import warnings
 import ast
 import spacy
+import torch
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -28,6 +29,15 @@ logger = logging.getLogger(__name__)
 
 _MODEL_CACHE = {}
 
+def get_optimal_device():
+    """Get the optimal device for computation (MPS > CUDA > CPU)"""
+    if torch.backends.mps.is_available():
+        return "mps"
+    elif torch.cuda.is_available():
+        return "cuda"
+    else:
+        return "cpu"
+
 @lru_cache(maxsize=4)
 def get_cached_spacy_model(model_name: str):
     if model_name not in _MODEL_CACHE:
@@ -41,7 +51,14 @@ def get_cached_spacy_model(model_name: str):
     return _MODEL_CACHE[model_name]
 
 @lru_cache(maxsize=1)
-def get_cached_maverick_model(device: str = "cpu"):
+def get_cached_maverick_model(device: str = None):
+    if device is None:
+        device = get_optimal_device()
+    
+    # Force CPU for Maverick on MPS due to float64 compatibility issues
+    if device == "mps":
+        device = "cpu"
+        
     cache_key = f"maverick_{device}"
     if cache_key not in _MODEL_CACHE:
         try:
@@ -51,6 +68,15 @@ def get_cached_maverick_model(device: str = "cpu"):
         except ImportError:
             logger.warning("Maverick package not available, coreference resolution will be skipped")
             _MODEL_CACHE[cache_key] = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize Maverick on {device}, falling back to CPU: {e}")
+            try:
+                from maverick import Maverick
+                _MODEL_CACHE[f"maverick_cpu"] = Maverick(device="cpu")
+                return _MODEL_CACHE[f"maverick_cpu"]
+            except:
+                _MODEL_CACHE[f"maverick_cpu"] = None
+                return None
     return _MODEL_CACHE[cache_key]
 
 class ATE:
@@ -861,12 +887,15 @@ class Mention:
         return self.span.start_char == other.span.start_char and self.span.end_char == other.span.end_char
 
 class HybridAspectExtractor(ATE):
-    def __init__(self, rule_extractor_path: str = None, spacy_model: str = "en_core_web_sm", device: str = "cpu"):
+    def __init__(self, rule_extractor_path: str = None, spacy_model: str = "en_core_web_sm", device: str = None):
+        if device is None:
+            device = get_optimal_device()
+        self.device = device
         path = rule_extractor_path or config.ASPECT_EXTRACTOR_RULES
         self.rule_extractor = MultiStageRuleExtractor.load(path)
         self.nlp = get_cached_spacy_model(spacy_model)
         self.mav = get_cached_maverick_model(device)
-        logger.info("HybridAspectExtractor initialized.")
+        logger.info(f"HybridAspectExtractor initialized with device: {device}")
         self._preferred_heads = {
             "restaurant", "service", "ambiance", "ambience", "staff",
             "server", "food", "pizza", "crust", "drink", "drinks",

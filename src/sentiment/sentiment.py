@@ -14,17 +14,32 @@ from pysentimiento import create_analyzer
 import numpy as np
 from transformers import pipeline
 import hashlib
+import string
 
 import logging
 
+def get_optimal_device():
+    """Get the optimal device for computation (MPS > CUDA > CPU)"""
+    if torch.backends.mps.is_available():
+        return "mps"
+    elif torch.cuda.is_available():
+        return "cuda"
+    else:
+        return "cpu"
+
+_DEVICE = get_optimal_device()
+print(f"Using device: {_DEVICE}")
+
 _ENV_DEFAULTS = {
     "KMP_DUPLICATE_LIB_OK": "TRUE",
-    "OMP_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "2" if _DEVICE == "cpu" else "1",
     "KMP_AFFINITY": "disabled",
     "KMP_INIT_AT_FORK": "FALSE",
+    "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.0" if _DEVICE == "mps" else None,
 }
 for key, value in _ENV_DEFAULTS.items():
-    os.environ.setdefault(key, value)
+    if value is not None:
+        os.environ.setdefault(key, value)
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -56,8 +71,26 @@ _HF_PIPELINES: Dict[str, Any] = {}
 
 
 def _get_hf_pipeline(model_name: str) -> Any:
-    if model_name not in _HF_PIPELINES:
-        _HF_PIPELINES[model_name] = pipeline("sentiment-analysis", model=model_name)
+    existing = _HF_PIPELINES.get(model_name)
+    if existing is None or not getattr(existing, "return_all_scores", False):
+        try:
+            device_id = 0 if _DEVICE in ["cuda", "mps"] else -1
+            _HF_PIPELINES[model_name] = pipeline(
+                "sentiment-analysis", 
+                model=model_name, 
+                return_all_scores=True,
+                device=device_id,
+                torch_dtype=torch.float16 if _DEVICE != "cpu" else torch.float32
+            )
+            logger.info(f"Loaded {model_name} on device: {_DEVICE}")
+        except Exception as e:
+            logger.warning(f"Failed to load {model_name} on {_DEVICE}, falling back to CPU: {e}")
+            _HF_PIPELINES[model_name] = pipeline(
+                "sentiment-analysis", 
+                model=model_name, 
+                return_all_scores=True,
+                device=-1
+            )
     return _HF_PIPELINES[model_name]
 
 
@@ -140,26 +173,53 @@ def _convert_confidence_to_valence(confidence_score: float, prediction_label: st
     else:
         return confidence_score * 2 - 1 if confidence_score >= 0 else confidence_score * 2 + 1
 
-def _get_hf_pipeline_score(result: List[Dict[str, Any]], is_confidence_only: bool, model_name:str) -> float:
-    if is_confidence_only:
-        if len(result) == 1:
-            item = result[0]
-            return _convert_confidence_to_valence(item['score'], item['label'], 'linear_transform')
-        else:
-            score_map = {item['label'].lower().replace('pos', 'positive').replace('neg', 'negative').replace('neu', 'neutral'): item['score'] for item in result}
-            pos_conf = score_map.get('positive', 0.0)
-            neg_conf = score_map.get('negative', 0.0)
-            
-            conf_diff = pos_conf - neg_conf
-            return _convert_confidence_to_valence(abs(conf_diff), 'POSITIVE' if conf_diff >= 0 else 'NEGATIVE', 'linear_transform')
+def _label_valence_from_rating(label: str, max_rating: int = 5) -> float:
+    digits = re.findall(r"\d+", label)
+    if not digits:
+        return 0.0
+    rating = max(1, min(int(digits[0]), max_rating))
+    if max_rating <= 1:
+        return 0.0
+    return -1.0 + 2.0 * (rating - 1) / (max_rating - 1)
 
-    else:
-        score_map = {item['label'].lower().replace('pos', 'positive').replace('neg', 'negative').replace('neu', 'neutral'): item['score'] for item in result}
-        if "nlptown" in model_name:
-            score_val = int(re.search(r'\d+', result[0]['label']).group())
-            return -1.0 + (2.0 * (score_val - 1) / 4.0)
+
+def _label_valence_basic(label: str) -> float:
+    lowered = label.lower()
+    if any(token in lowered for token in ("positive", "pos", "bullish")):
+        return 1.0
+    if any(token in lowered for token in ("negative", "neg", "bearish")):
+        return -1.0
+    if any(token in lowered for token in ("neutral", "neu", "mixed", "none")):
+        return 0.0
+    return 0.0
+
+
+def _get_hf_pipeline_score(result: List[Dict[str, Any]], is_confidence_only: bool, model_name:str) -> tuple[float, float]:
+    if not result:
+        return 0.0, 0.0
+    records = result[0] if isinstance(result[0], list) else result
+    if not isinstance(records, list):
+        records = [records]
+    model_lower = (model_name or "").lower()
+    valence = 0.0
+    confidence = 0.0
+    total = 0.0
+    use_ratings = "nlptown" in model_lower
+    for item in records:
+        score = float(item.get("score", 0.0))
+        label = item.get("label", "")
+        confidence = max(confidence, score)
+        if use_ratings:
+            polarity = _label_valence_from_rating(label, max_rating=5)
         else:
-            return score_map.get('positive', 0.0) - score_map.get('negative', 0.0)
+            polarity = _label_valence_basic(label)
+        valence += polarity * score
+        total += score
+    if use_ratings and total > 0:
+        valence = max(-1.0, min(1.0, valence))
+    elif not use_ratings and total > 0:
+        valence = max(-1.0, min(1.0, valence))
+    return valence, confidence
 
 def _get_hf_logit_score(text: str, model, tokenizer) -> float:
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(model.device)
@@ -214,7 +274,15 @@ def get_textblob_sentiment(text: str) -> Dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _get_flair_classifier() -> TextClassifier:
-    return TextClassifier.load('sentiment')
+    try:
+        classifier = TextClassifier.load('sentiment')
+        if _DEVICE in ["cuda", "mps"] and hasattr(classifier, 'to'):
+            classifier.to(_DEVICE)
+            logger.info(f"Loaded Flair classifier on device: {_DEVICE}")
+        return classifier
+    except Exception as e:
+        logger.warning(f"Failed to load Flair on {_DEVICE}, using CPU: {e}")
+        return TextClassifier.load('sentiment')
 
 
 def get_flair_sentiment(text: str) -> Dict[str, Any]:
@@ -283,8 +351,7 @@ def get_nlptown_sentiment(text: str) -> Dict[str, Any]:
     try:
         model = _get_hf_pipeline("nlptown/bert-base-multilingual-uncased-sentiment")
         results = model([text], batch_size=32, truncation=True)
-        score = _get_hf_pipeline_score(results, is_confidence_only=False, model_name="nlptown")
-        confidence = float(results[0].get('score', abs(score))) if results else abs(score)
+        score, confidence = _get_hf_pipeline_score(results, is_confidence_only=False, model_name="nlptown")
         return _build_sentiment_result(score, confidence=confidence, raw=results)
     except Exception as exc:
         logger.debug("NLP Town sentiment failed: %s", exc)
@@ -297,8 +364,7 @@ def get_finiteautomata_sentiment(text: str) -> Dict[str, Any]:
     try:
         model = _get_hf_pipeline("finiteautomata/bertweet-base-sentiment-analysis")
         results = model([text], batch_size=32, truncation=True)
-        score = _get_hf_pipeline_score(results, is_confidence_only=False, model_name="finiteautomata")
-        confidence = float(results[0].get('score', abs(score))) if results else abs(score)
+        score, confidence = _get_hf_pipeline_score(results, is_confidence_only=False, model_name="finiteautomata")
         return _build_sentiment_result(score, confidence=confidence, raw=results)
     except Exception as exc:
         logger.debug("FiniteAutomata sentiment failed: %s", exc)
@@ -311,8 +377,7 @@ def get_ProsusAI_sentiment(text: str) -> Dict[str, Any]:
     try:
         model = _get_hf_pipeline("ProsusAI/finbert")
         results = model([text], batch_size=32, truncation=True)
-        score = _get_hf_pipeline_score(results, is_confidence_only=False, model_name="ProsusAI")
-        confidence = float(results[0].get('score', abs(score))) if results else abs(score)
+        score, confidence = _get_hf_pipeline_score(results, is_confidence_only=False, model_name="ProsusAI")
         return _build_sentiment_result(score, confidence=confidence, raw=results)
     except Exception as exc:
         logger.debug("ProsusAI sentiment failed: %s", exc)
@@ -330,3 +395,191 @@ def get_distilbert_logit_sentiment(text: str) -> Dict[str, Any]:
     except Exception as exc:
         logger.debug("DistilBERT sentiment failed: %s", exc)
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
+
+
+# ==================== CONTEXT-AWARE SENTIMENT ANALYSIS ====================
+
+def create_focused_context_window(text: str, aspect: str, modifiers: List[str], 
+                                 window_size: int = 50) -> str:
+    """
+    Create a focused context window around an aspect while preserving sentence structure.
+    Removes unnecessary words but keeps punctuation for proper idea separation.
+    """
+    if not text or not aspect:
+        return text
+    
+    # Find aspect position in text
+    text_lower = text.lower()
+    aspect_lower = aspect.lower()
+    aspect_pos = text_lower.find(aspect_lower)
+    
+    if aspect_pos == -1:
+        # Aspect not found, try word-by-word matching
+        aspect_words = aspect_lower.split()
+        for i, word in enumerate(text_lower.split()):
+            if any(aw in word for aw in aspect_words):
+                aspect_pos = text_lower.find(word)
+                break
+    
+    if aspect_pos == -1:
+        return text  # Fallback to original text
+    
+    # Create window around aspect
+    start_pos = max(0, aspect_pos - window_size)
+    end_pos = min(len(text), aspect_pos + len(aspect) + window_size)
+    
+    # Expand to sentence boundaries
+    start_pos = _find_sentence_start(text, start_pos)
+    end_pos = _find_sentence_end(text, end_pos)
+    
+    context_window = text[start_pos:end_pos].strip()
+    
+    # Clean while preserving structure
+    focused_context = _clean_preserving_structure(context_window, aspect, modifiers)
+    
+    return focused_context
+
+def _find_sentence_start(text: str, pos: int) -> int:
+    """Find the start of the sentence containing the given position."""
+    sentence_markers = {'.', '!', '?', '\n'}
+    while pos > 0:
+        if text[pos] in sentence_markers:
+            # Skip the marker and any whitespace
+            pos += 1
+            while pos < len(text) and text[pos].isspace():
+                pos += 1
+            break
+        pos -= 1
+    return pos
+
+def _find_sentence_end(text: str, pos: int) -> int:
+    """Find the end of the sentence containing the given position."""
+    sentence_markers = {'.', '!', '?', '\n'}
+    while pos < len(text):
+        if text[pos] in sentence_markers:
+            pos += 1
+            break
+        pos += 1
+    return pos
+
+def _clean_preserving_structure(text: str, aspect: str, modifiers: List[str]) -> str:
+    """
+    Remove unnecessary words while preserving sentence structure and punctuation.
+    Keeps words that are relevant to the aspect or provide context for sentiment.
+    """
+    if not text:
+        return text
+    
+    # Words to always keep (sentiment-relevant)
+    keep_words = {
+        # Aspect and its variations
+        aspect.lower(),
+        # Modifiers
+        *[mod.lower() for mod in modifiers],
+        # Sentiment words
+        'good', 'bad', 'great', 'terrible', 'amazing', 'awful', 'excellent', 'poor',
+        'love', 'hate', 'like', 'dislike', 'enjoy', 'despise',
+        'fast', 'slow', 'quick', 'sluggish', 'responsive', 'laggy',
+        'beautiful', 'ugly', 'attractive', 'hideous', 'stunning',
+        'reliable', 'unreliable', 'stable', 'unstable', 'buggy',
+        'expensive', 'cheap', 'affordable', 'overpriced', 'costly',
+        'worth', 'worthless', 'valuable', 'useless', 'useful',
+        # Intensifiers
+        'very', 'extremely', 'quite', 'really', 'super', 'incredibly', 
+        'somewhat', 'rather', 'fairly', 'pretty', 'highly', 'totally',
+        # Negation
+        'not', 'no', 'never', 'nothing', 'none', 'neither', 'nor',
+        'dont', "don't", 'cant', "can't", 'wont', "won't", 'isnt', "isn't",
+        'wasnt', "wasn't", 'arent', "aren't", 'werent', "weren't",
+        # Modals and auxiliaries
+        'can', 'could', 'should', 'would', 'will', 'shall', 'may', 'might',
+        'must', 'ought', 'need', 'dare', 'used',
+        # Comparatives
+        'better', 'worse', 'best', 'worst', 'more', 'less', 'most', 'least',
+        'than', 'as', 'like', 'unlike', 'compared', 'versus',
+        # Temporal markers
+        'now', 'then', 'before', 'after', 'during', 'while', 'when',
+        'initially', 'finally', 'eventually', 'suddenly', 'immediately',
+        # Conjunctions and logical connectors
+        'and', 'or', 'but', 'however', 'although', 'though', 'despite',
+        'because', 'since', 'so', 'therefore', 'thus', 'hence',
+        'if', 'unless', 'when', 'while', 'whereas', 'until'
+    }
+    
+    # Split into words while preserving punctuation
+    tokens = re.findall(r'\w+|[^\w\s]', text)
+    
+    filtered_tokens = []
+    for token in tokens:
+        token_lower = token.lower()
+        
+        # Always keep punctuation
+        if token in string.punctuation:
+            filtered_tokens.append(token)
+        # Keep important words
+        elif token_lower in keep_words:
+            filtered_tokens.append(token)
+        # Keep words that are part of the aspect
+        elif aspect.lower() in token_lower or token_lower in aspect.lower():
+            filtered_tokens.append(token)
+        # Keep words that appear in modifiers
+        elif any(token_lower in mod.lower() or mod.lower() in token_lower for mod in modifiers):
+            filtered_tokens.append(token)
+        # Keep words with sentiment-indicating suffixes/prefixes
+        elif any(token_lower.endswith(suffix) for suffix in ['ly', 'ing', 'ed', 'er', 'est', 'ful', 'less']):
+            filtered_tokens.append(token)
+        # Skip common filler words (but keep important function words above)
+        elif token_lower in {'the', 'a', 'an', 'this', 'that', 'these', 'those', 
+                           'i', 'you', 'he', 'she', 'it', 'we', 'they',
+                           'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                           'have', 'has', 'had', 'do', 'does', 'did'}:
+            # Keep only if followed by important words
+            continue
+        else:
+            filtered_tokens.append(token)
+    
+    # Reconstruct text with proper spacing
+    result = ""
+    for i, token in enumerate(filtered_tokens):
+        if i == 0:
+            result += token
+        elif token in string.punctuation:
+            result += token
+        else:
+            result += " " + token
+    
+    return result.strip()
+
+def analyze_aspect_sentiment_focused(text: str, aspect: str, modifiers: List[str], 
+                                   analysis_function) -> Dict[str, Any]:
+    """
+    Analyze sentiment for a specific aspect using focused context windows.
+    Maps extracted information back to sentence structure while removing noise.
+    """
+    if not text or not aspect:
+        return {"score": 0.0, "confidence": 0.0, "method": "focused_context", "error": "missing_input"}
+    
+    # Create focused context
+    focused_context = create_focused_context_window(text, aspect, modifiers)
+    
+    # If context is too short, fall back to original
+    if len(focused_context) < 10:
+        focused_context = text
+    
+    # Analyze sentiment on focused context
+    try:
+        result = analysis_function(focused_context)
+        
+        # Enhance result with context information
+        if isinstance(result, dict):
+            result["focused_context"] = focused_context
+            result["original_length"] = len(text)
+            result["focused_length"] = len(focused_context)
+            result["context_reduction"] = 1.0 - (len(focused_context) / len(text)) if len(text) > 0 else 0.0
+            result["method"] = "focused_context"
+        
+        return result
+    except Exception as e:
+        logger.warning(f"Focused sentiment analysis failed: {e}")
+        # Fallback to original text
+        return analysis_function(text)
