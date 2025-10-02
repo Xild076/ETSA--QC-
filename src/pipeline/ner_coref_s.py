@@ -55,7 +55,7 @@ def get_cached_maverick_model(device: str = None):
     if device is None:
         device = get_optimal_device()
     
-    # Force CPU for Maverick on MPS due to float64 compatibility issues
+                                                                       
     if device == "mps":
         device = "cpu"
         
@@ -962,7 +962,8 @@ class HybridAspectExtractor(ATE):
             "rule": 4,
             "entity": 3,
             "chunk": 2,
-            "pron": 1,
+            "noun": 1,
+            "pron": 0,
             "other": 0,
         }.get(mention.origin, 0)
 
@@ -980,11 +981,16 @@ class HybridAspectExtractor(ATE):
         char_len = len(self._normalize_for_output(mention.text))
         proper_tokens = sum(1 for t in tokens if t.pos_ == "PROPN")
         is_proper_phrase = proper_tokens == token_len and token_len > 0
+        
+        # Strong boost for proper names (people, places, etc.)
+        proper_name_bonus = 10 if is_proper_phrase else 0
+        
         head = mention.span.root.lemma_.lower()
         head_bonus = 3 if head in self._preferred_heads else 0
         coverage_bonus = 1 if token_len > 1 else 0
+        
         return (
-            bucket_score + head_bonus + coverage_bonus + source_bonus,
+            bucket_score + head_bonus + coverage_bonus + source_bonus + proper_name_bonus,
             -is_proper_phrase,
             token_len,
             char_len,
@@ -1063,19 +1069,33 @@ class HybridAspectExtractor(ATE):
         mentions = set()
         text = doc.text
 
+        # Priority 1: Rule-based extraction (highest priority)
         rule_aspects = self.rule_extractor.predict(text)
         for aspect_text in rule_aspects:
             for span in self._find_spans_for_text(doc, aspect_text):
                 mentions.add(Mention(span, origin="rule", clause_boundaries=clause_boundaries))
+        
+        # Priority 2: Named entities from spaCy NER
         for ent in doc.ents:
             mentions.add(Mention(ent, origin="entity", clause_boundaries=clause_boundaries))
+        
+        # Priority 3: Noun chunks (all noun phrases)
         for chunk in doc.noun_chunks:
             if chunk.root.pos_ in ("NOUN", "PROPN"):
                 mentions.add(Mention(chunk, origin="chunk", clause_boundaries=clause_boundaries))
+        
+        # Priority 4: Individual nouns and proper nouns not captured above
+        for token in doc:
+            if token.pos_ in ("NOUN", "PROPN"):
+                span = doc[token.i:token.i+1]
+                mentions.add(Mention(span, origin="noun", clause_boundaries=clause_boundaries))
+        
+        # Priority 5: Pronouns for coreference
         for token in doc:
             if token.pos_ == "PRON":
                 span = doc[token.i:token.i+1]
                 mentions.add(Mention(span, origin="pron", clause_boundaries=clause_boundaries))
+        
         return sorted(list(mentions), key=lambda m: m.span.start)
 
     def analyze(self, sentences: List[str]) -> Dict[int, Dict[str, Any]]:

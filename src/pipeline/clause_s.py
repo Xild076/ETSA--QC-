@@ -56,14 +56,14 @@ def _score_clause(s: str) -> float:
 def _post_filter(clauses: Iterable[str], min_score: float = 0.5) -> List[str]:
     out = []
     for c in clauses:
-        # Use the original non-normalized text for scoring and output
+                                                                     
         t_normalized_for_check = " ".join(c.split())
         if t_normalized_for_check and _score_clause(t_normalized_for_check) >= min_score:
             out.append(t_normalized_for_check)
     seen = set()
     dedup = []
     for c in out:
-        # Use a normalized key for deduplication
+                                                
         k = normalize_text(c)
         if k not in seen:
             seen.add(k)
@@ -230,7 +230,17 @@ class BeneparClauseSplitter:
     def _dep_split(self, text: str) -> List[str]:
         if self._nlp is None:
             return []
-        doc = self._nlp(text)
+        try:
+            doc = self._nlp(text)
+        except (AssertionError, StopIteration, Exception) as e:
+            # Benepar tokenization can fail on certain inputs
+            # Fall back to simple sentence splitting
+            logger.warning(f"Spacy/benepar processing failed: {e}. Using fallback.")
+            try:
+                return NLTKSentenceSplitter().split(text)
+            except Exception:
+                return [x.strip() for x in text.replace("\n", " ").split(".") if x.strip()]
+        
         out = []
         for sent in doc.sents:
             segs = self._segment_on_semicolons(sent)

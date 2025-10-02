@@ -49,7 +49,7 @@ def execute_benchmark_run(dataset: str, mode: str, limit: int, pos_thresh: float
         prev_dirs = set(get_run_dirs())
         for i, current_mode in enumerate(all_modes):
             overall_status.text(f"Running mode {i+1}/{len(all_modes)}: {current_mode}")
-            run_name = f"{selected_dataset}_{selected_mode}"  # Use dataset_mode format
+            run_name = f"{selected_dataset}_{selected_mode}"                           
             try:
                 with st.expander(f"Running {current_mode}...", expanded=False):
                     progress_bar = st.progress(0)
@@ -69,10 +69,10 @@ def execute_benchmark_run(dataset: str, mode: str, limit: int, pos_thresh: float
                         progress_callback=progress_callback
                     )
                     st.success(f"✅ {current_mode} completed")
-                    # Find the new directory created
+                                                    
                     new_dirs = set(get_run_dirs()) - prev_dirs
                     if new_dirs:
-                        # Should only be one new dir
+                                                    
                         completed_runs.append(sorted(new_dirs)[-1])
                         prev_dirs = set(get_run_dirs())
             except Exception as e:
@@ -86,7 +86,7 @@ def execute_benchmark_run(dataset: str, mode: str, limit: int, pos_thresh: float
             st.session_state.show_batch_comparison = True
         
     else:
-        run_name = f"{selected_dataset}_{selected_mode}"  # Use dataset_mode format
+        run_name = f"{selected_dataset}_{selected_mode}"                           
         
         st.info(f"Starting benchmark run: **{run_name}**")
 
@@ -129,7 +129,7 @@ def execute_benchmark_run(dataset: str, mode: str, limit: int, pos_thresh: float
             )
             st.success(f"Benchmark '{run_name}' completed successfully!")
             status_text.text("Completed!")
-            # Find the new directory created
+                                            
             new_dirs = set(get_run_dirs()) - prev_dirs
             if new_dirs:
                 actual_run_name = sorted(new_dirs)[-1]
@@ -213,47 +213,47 @@ def display_batch_comparison():
                     metrics = json.load(f)
                 
                 parts = run_name.split('_')
-                # Find timestamp (8 digits)
+                                           
                 timestamp_idx = None
                 for i, part in enumerate(parts):
                     if len(part) == 8 and part.isdigit():
                         timestamp_idx = i
                         break
                 
-                # Known mode patterns (ordered by specificity - longest first)
+                                                                              
                 known_modes = ['transformer_absa', 'vader_baseline', 'full_stack', 'ner_basic', 'no_modifiers', 'no_relations', 'baseline', 'absa']
                 
                 if timestamp_idx:
                     pre_timestamp = '_'.join(parts[:timestamp_idx])
                     
-                    # Remove common prefixes like single_run, batch_X
+                                                                     
                     cleaned_pre_timestamp = pre_timestamp
                     if cleaned_pre_timestamp.startswith('single_run_'):
-                        cleaned_pre_timestamp = cleaned_pre_timestamp[11:]  # Remove "single_run_"
+                        cleaned_pre_timestamp = cleaned_pre_timestamp[11:]                        
                     elif cleaned_pre_timestamp.startswith('batch_') and '_' in cleaned_pre_timestamp[6:]:
-                        # Remove "batch_X_" pattern
+                                                   
                         first_underscore_after_batch = cleaned_pre_timestamp.find('_', 6)
                         if first_underscore_after_batch != -1:
                             cleaned_pre_timestamp = cleaned_pre_timestamp[first_underscore_after_batch + 1:]
                     
-                    # Find which known mode this run contains
+                                                             
                     mode = 'unknown'
                     dataset = 'unknown'
                     
                     for known_mode in known_modes:
                         if known_mode in cleaned_pre_timestamp:
                             mode = known_mode
-                            # Dataset is everything before the mode
+                                                                   
                             mode_start = cleaned_pre_timestamp.find(known_mode)
                             if mode_start > 0:
                                 dataset = cleaned_pre_timestamp[:mode_start].rstrip('_')
                             else:
-                                # Mode is at the beginning, unusual but handle it
+                                                                                 
                                 dataset = "unknown"
                             break
                     
                     if mode == 'unknown':
-                        # Fallback - assume last part before timestamp is mode
+                                                                              
                         cleaned_parts = cleaned_pre_timestamp.split('_')
                         if len(cleaned_parts) >= 2:
                             dataset = '_'.join(cleaned_parts[:-1])
@@ -602,7 +602,7 @@ def display_results(run_name: str):
                         "📥 Export Trace"
                     ])
                     
-                    with analysis_tabs[0]:  # Executive Summary
+                    with analysis_tabs[0]:                     
                         st.markdown("#### 🎯 Error Summary")
                         summary_col1, summary_col2 = st.columns(2)
                         
@@ -643,7 +643,7 @@ def display_results(run_name: str):
                         else:
                             st.info("No module execution data available for this trace.")
                     
-                    with analysis_tabs[1]:  # Pipeline Trace
+                    with analysis_tabs[1]:                  
                         st.markdown("#### 🔄 Step-by-Step Pipeline Execution")
                         
                         actual_exec_trace = exec_trace.get('execution_trace', {})
@@ -703,7 +703,7 @@ def display_results(run_name: str):
                         else:
                             st.info("No pipeline execution stages found in trace data. The execution may not have completed or the trace format may be different.")
                     
-                    with analysis_tabs[2]:  # Module Analysis
+                    with analysis_tabs[2]:                   
                         st.markdown("#### 🧩 Individual Module Analysis")
                         
                         for module_name, module_data in modules.items():
@@ -721,7 +721,7 @@ def display_results(run_name: str):
                                     if key not in ['status', 'error']:
                                         st.write(f"**{key}:** {value}")
                     
-                    with analysis_tabs[3]:  # Graph Visualization
+                    with analysis_tabs[3]:                       
                         st.markdown("#### 📊 Graph Structure Visualization")
                         
                         graph_html_path = exec_trace.get('graph_html_path') or trace_data.get('graph_html_path')
@@ -763,7 +763,7 @@ def display_results(run_name: str):
                             else:
                                 st.info("No graph edges available")
                     
-                    with analysis_tabs[4]:  # Parameter Testing
+                    with analysis_tabs[4]:                     
                         st.markdown("#### ⚙️ Interactive Parameter Testing")
                         st.markdown("Test different threshold values to see how they affect the prediction:")
                         
@@ -780,7 +780,7 @@ def display_results(run_name: str):
                         st.markdown(f"**New Prediction:** {new_prediction}")
                         st.markdown(f"**Would this fix the error?** {'✅ Yes' if new_prediction == selected_row['gold'] else '❌ No'}")
                     
-                    with analysis_tabs[5]:  # Export Trace
+                    with analysis_tabs[5]:                
                         st.markdown("#### 📥 Export Detailed Trace")
                         st.markdown("Download the complete execution trace for research or debugging:")
                         
@@ -867,12 +867,12 @@ with st.sidebar:
         "test_restaurant_2014", 
         "test_laptop_2016", 
         "test_restaurant_2016",
-        "unified_2014",  # 54 restaurant + 40 laptop = 94 total
-        "unified_2016"   # Combined 2016 datasets
+        "unified_2014",                                        
+        "unified_2016"                           
     ]
     selected_dataset = st.selectbox("Select Dataset", options=dataset_options, key="sb_dataset")
     
-    # Show dataset info
+                       
     if selected_dataset == "unified_2014":
         st.info("📊 Unified 2014: Restaurant (54) + Laptop (40) = 94 samples")
     elif selected_dataset == "unified_2016":
@@ -930,10 +930,10 @@ with st.sidebar:
         on_change=on_change_run
     )
 
-    # Preset group comparison option
+                                    
     st.markdown("---")
     st.subheader("Preset Group Comparison")
-    # Example: all full_stack runs, or all runs for a dataset
+                                                             
     group_options = [
         "All full_stack runs",
         "All vader_baseline runs",
@@ -951,9 +951,9 @@ with st.sidebar:
     ]
     selected_group = st.selectbox("Select a group to compare:", group_options, index=len(group_options)-1, key="sb_group_compare")
     
-    # Only process group selection if user explicitly changes it
+                                                                
     if selected_group != "None (off)":
-        # Find matching runs
+                            
         if selected_group.startswith("All runs for "):
             dataset = selected_group.replace("All runs for ", "")
             group_run_names = [d for d in run_dirs if dataset in d]
@@ -967,7 +967,7 @@ with st.sidebar:
         else:
             st.warning("No runs found for this group.")
     
-    # Add button to clear group comparison and return to individual view
+                                                                        
     if st.session_state.get('show_batch_comparison', False):
         if st.button("🔄 Clear Group Comparison", use_container_width=True):
             st.session_state.show_batch_comparison = False

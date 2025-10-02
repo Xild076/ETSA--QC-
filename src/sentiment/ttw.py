@@ -540,10 +540,10 @@ class LexiconOptimizer:
                     
                     weights = self.config["GOODNESS_WEIGHTS"]
                     for j, cand in enumerate(potential_pool):
-                        cand['goodness'] = (norm_distances[j] * weights['distance']) + \
-                                           (norm_stds[j] * weights['std_dev']) + \
-                                           ((1 - norm_cohesions[j]) * weights['cohesion']) + \
-                                           (norm_perplexities[j] * weights['perplexity']) + \
+                        cand['goodness'] = (norm_distances[j] * weights['distance']) +\
+                                           (norm_stds[j] * weights['std_dev']) +\
+                                           ((1 - norm_cohesions[j]) * weights['cohesion']) +\
+                                           (norm_perplexities[j] * weights['perplexity']) +\
                                            (norm_brevity[j] * weights['brevity'])
                     
                     for cand in sorted(potential_pool, key=lambda x: x['goodness']):

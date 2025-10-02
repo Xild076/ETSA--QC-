@@ -61,7 +61,7 @@ If not None the site will be pinged every sleeps_seconds seconds (default: {200}
         count += 1
         logging.info("Sleeping %s seconds", sleep_secs)
         if sleep_secs:
-            time.sleep(sleep_secs + random.randint(-10, 10))  # type: ignore
+            time.sleep(sleep_secs + random.randint(-10, 10))                
 
 
 if __name__ == "__main__":

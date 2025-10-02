@@ -7,53 +7,53 @@ from dataclasses import dataclass
 from collections import Counter, defaultdict
 from string import punctuation
 
-# =========================
-# Config
-# =========================
+                           
+        
+                           
 
 @dataclass
 class TrainConfig:
-    # Core
+          
     model: str = "en_core_web_md"
     restrict_pos: tuple = ("NOUN","PROPN")
     min_pos_support: int = 2
     min_rule_precision: float = 0.50
 
-    # Training schedule
+                       
     max_stages: int = 20
     max_iterations_per_stage: int = 15
     new_rules_per_iteration: int = 60
 
-    # Inference
+               
     n_process: int = 1
     batch_size: int = 4000
 
-    # Targets / gating
+                      
     target_precision: float = 0.90
     target_recall: float = 0.90
     target_f1: float = 0.90
     pr_margin: float = 0.01
-    max_precision_drop: float = 0.03  # allow up to 3pts precision drop from base_p if F1 improves
+    max_precision_drop: float = 0.03                                                              
 
-    # F1 evaluation sampling
+                            
     f1_eval_sample: int = 1200
     f1_eval_topk: int = 400
 
-    # Pruning
+             
     prune: bool = True
     max_prune_drop: float = 0.0
 
-    # Early stopping heuristics
+                               
     early_stop_residual: int = 2000
     min_gain_per_stage: float = 0.0005
 
-    # Debug
+           
     debug: bool = False
-    debug_every_n_stages: int = 0  # 0 = only when explicitly called
+    debug_every_n_stages: int = 0                                   
     debug_top_k: int = 15
     dump_dir: str | None = None
 
-    # Feature toggles
+                     
     use_grandparent: bool = True
     use_child_profile: bool = True
     child_profile_k: int = 2
@@ -65,16 +65,16 @@ class TrainConfig:
     neighbor_window: int = 1
     coord_backoff: bool = True
 
-    # NEW: more spaCy signal toggles
-    use_morph: bool = True             # Morph features (subset)
-    use_shape: bool = True             # token.shape_, head.shape_
-    use_orth_flags: bool = True        # is_alpha, is_upper, is_title, like_num
-    use_ent_iob: bool = True           # ent_iob_ for token & head
-    use_geom: bool = True              # distance to head, child count, path-to-root length
+                                    
+    use_morph: bool = True                                      
+    use_shape: bool = True                                        
+    use_orth_flags: bool = True                                                
+    use_ent_iob: bool = True                                      
+    use_geom: bool = True                                                                  
 
-# =========================
-# Extractor
-# =========================
+                           
+           
+                           
 
 class MultiStageRuleExtractor:
     def __init__(self, cfg:TrainConfig):
@@ -88,22 +88,22 @@ class MultiStageRuleExtractor:
         self.rule_allowed_heads = {}
         self.stopset = set(spacy.lang.en.stop_words.STOP_WORDS) | set(punctuation)
 
-        # Knowledge gleaned from data
+                                     
         self.aspect_lex_head_lemmas = set()
         self.frequent_single_gold_heads = set()
 
-        # Global blocks
+                       
         self.generic_block_heads = {
             "place","restaurant","time","thing","table","dinner","drinks",
             "price","prices","laptop","computer","bar","dining","product"
         }
         self.block_phrases = set()
 
-        # Debug caches
+                      
         self.last_selection_cache = {}
         self.chronic_heads = set()
 
-    # ------------- Utils -------------
+                                       
 
     def _valid_surface(self, s: str) -> bool:
         if not s: return False
@@ -171,7 +171,7 @@ class MultiStageRuleExtractor:
 
     def _morph_tuple(self, token):
         if not self.cfg.use_morph: return ()
-        # We select a small, stable subset; missing keys -> ""
+                                                              
         md = token.morph.to_dict()
         keys = ("Number","Case","Gender","Tense","Degree","VerbForm")
         return tuple(md.get(k, "") for k in keys)
@@ -187,27 +187,27 @@ class MultiStageRuleExtractor:
 
     def _geom_tuple(self, token):
         if not self.cfg.use_geom: return (0,0,0)
-        # distance to head
+                          
         d2h = abs(token.i - token.head.i) if token.head is not None else 0
-        # child count
+                     
         cc = sum(1 for _ in token.children)
-        # path length to root
+                             
         p = 0
         cur = token
         while cur.head is not None and cur.head.i != cur.i:
             p += 1
-            if p > 50:  # guard cycles, extremely rare
+            if p > 50:                                
                 break
             cur = cur.head
         return (d2h, cc, p)
 
-    # ------------- Signature builder -------------
+                                                   
 
     def _sig_variants(self, token, doc, chunk_map):
         if self.cfg.restrict_pos and token.pos_ not in self.cfg.restrict_pos:
             return []
 
-        # base components (string attrs)
+                                        
         ch = tuple(sorted([c.dep_ for c in token.children]))
         gp = token.head.head if token.head is not None else None
         gp_lemma = gp.lemma_.lower() if gp is not None else None
@@ -222,7 +222,7 @@ class MultiStageRuleExtractor:
         orth = self._orth_flags(token)
         geom = self._geom_tuple(token)
 
-        # helper: pack common extras
+                                    
         def extras(include_neighbors=True):
             return (
                 ent_tok, ent_head,
@@ -233,7 +233,7 @@ class MultiStageRuleExtractor:
                 nctx if include_neighbors else ()
             )
 
-        # Canonical signature ladders (increasingly coarse)
+                                                           
         s0 = (0, token.pos_, token.dep_, token.head.lemma_.lower(), token.head.pos_, ch) + extras(True)
         s1 = (1, token.pos_, token.dep_, token.head.lemma_.lower(), token.head.pos_, ()) + extras(False)
         s2 = (2, token.pos_, token.dep_, token.head.lemma_.lower(), None, ()) + extras(False)
@@ -248,7 +248,7 @@ class MultiStageRuleExtractor:
             s5 = (5, token.pos_, token.dep_, token.head.lemma_.lower(), token.head.pos_, prof) + extras(False)
             out.append(s5)
 
-        # HL backoffs (headline lemma)
+                                      
         s6 = (6, token.pos_, token.dep_, None, None, ("HL", token.lemma_.lower())) + extras(False)
         s7 = (7, None, None, None, None, ("HL", token.lemma_.lower())) + extras(False)
 
@@ -261,7 +261,7 @@ class MultiStageRuleExtractor:
 
         return out
 
-    # ------------- Data prep -------------
+                                           
 
     def prepare(self, raw_items):
         print("\n--- Pre-processing ---")
@@ -303,7 +303,7 @@ class MultiStageRuleExtractor:
         print(f"Pre-processing done in {time.time()-t0:.2f}s")
         return prepped
 
-    # ------------- Prediction -------------
+                                            
 
     def _allowed_by_context(self, tok, gate_union):
         hl = tok.lemma_.lower()
@@ -346,7 +346,7 @@ class MultiStageRuleExtractor:
                 res.add(surf)
         return list(res)
 
-    # ------------- Evaluation -------------
+                                            
 
     def _evaluate_prepared(self, prepared, rules):
         tp = pp = ap = 0
@@ -361,7 +361,7 @@ class MultiStageRuleExtractor:
         f1 = 2 * p * r / (p + r) if (p + r) else 0.0
         return {"precision": p, "recall": r, "f1": f1}
 
-    # ------------- Candidate scoring & selection -------------
+                                                               
 
     def _score_candidates(self, residual, existing_rules, chronic_focus=None):
         pos_counts = Counter()
@@ -459,7 +459,7 @@ class MultiStageRuleExtractor:
         cache = {}
         level_outcomes = defaultdict(lambda: {"accepted":0,"Δtp":0,"Δfp":0})
 
-        # precision floor with bounded drop
+                                           
         allowed_floor = max(self.cfg.target_precision, base_p - self.cfg.max_precision_drop)
 
         for sig, pos, tot, prec in scored[:topk]:
@@ -494,7 +494,7 @@ class MultiStageRuleExtractor:
         self._last_base = (base_p, base_r, base_f1, allowed_floor)
         return set(out), allowed, base_f1
 
-    # ------------- Analytics / Debug -------------
+                                                   
 
     def _estimate_chronic_heads(self, residual):
         c = Counter()
@@ -723,7 +723,7 @@ class MultiStageRuleExtractor:
                 if self.cfg.use_ent_iob:
                     iob_t = r.ent_iob_ or ""
                     iob_h = r.head.ent_iob_ if r.head is not None and r.head.ent_iob_ else ""
-                    shape_pos[((iob_t,iob_h,"IOB"), hit)] += 1  # piggyback in shape_pos bucket
+                    shape_pos[((iob_t,iob_h,"IOB"), hit)] += 1                                 
 
                 if self.cfg.use_chunks:
                     c = cm.get(r.i)
@@ -784,7 +784,7 @@ class MultiStageRuleExtractor:
         self._feature_breakdown(prepared, rules, topn=30)
         print("--- END DEBUG ---\n")
 
-    # ------------- Training loop -------------
+                                               
 
     def _learn_rules_iteratively(self, residual, existing_rule_sets):
         stage_rules = set()
@@ -835,7 +835,7 @@ class MultiStageRuleExtractor:
             combined = set().union(*self.rule_stages) if self.rule_stages else set()
             m = self._evaluate_prepared(prepared, combined)
             print(f"\n--- Stage {stage}/{self.cfg.max_stages} --- P:{m['precision']:.4f} R:{m['recall']:.4f} F1:{m['f1']:.4f}")
-            # Stage summary header
+                                  
             if hasattr(self, "_last_level_outcomes"):
                 lv = self._last_level_outcomes
                 lv_str = " | ".join([f"lev{k}: acc={v['accepted']} ΔTP={v['Δtp']} ΔFP={v['Δfp']}" for k,v in sorted(lv.items())])
@@ -878,7 +878,7 @@ class MultiStageRuleExtractor:
         for i, rs in enumerate(self.rule_stages, 1):
             print(f"Stage {i}: {len(rs)} rules")
 
-    # ------------- Public predict -------------
+                                                
 
     def predict(self, text):
         doc = self.nlp(text)
@@ -891,9 +891,9 @@ class MultiStageRuleExtractor:
         combined = set().union(*self.rule_stages) if self.rule_stages else set()
         return self.predict_doc(doc, sigs, combined)
 
-# =========================
-# Data loading & Eval
-# =========================
+                           
+                     
+                           
 
 def load_data(file_paths):
     all_data = []
@@ -976,9 +976,9 @@ def evaluate_and_show_failures_prepared(extractor, raw_items, top_n_errors=10, d
         except Exception:
             pass
 
-# =========================
-# Main
-# =========================
+                           
+      
+                           
 
 if __name__ == "__main__":
     train_files = [
@@ -1010,7 +1010,7 @@ if __name__ == "__main__":
             target_recall=0.90,
             target_f1=0.90,
             pr_margin=0.01,
-            max_precision_drop=0.03,      # unlock recall safely
+            max_precision_drop=0.03,                            
             f1_eval_sample=1200,
             f1_eval_topk=400,
             prune=True,
@@ -1031,7 +1031,7 @@ if __name__ == "__main__":
             use_neighbor_pos=True,
             neighbor_window=1,
             coord_backoff=True,
-            # NEW extra spaCy features
+                                      
             use_morph=True,
             use_shape=True,
             use_orth_flags=True,

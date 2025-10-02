@@ -615,7 +615,7 @@ class MultiStageRuleExtractor:
                         if r.i+off < len(doc): L.append(doc[r.i+off].pos_)
                     neigh_pos[(tuple(L), hit)] += 1
                 m = r.morph
-                # Normalize morph values to hashable primitives (strings or None)
+                                                                                 
                 ms_vals = []
                 for k in ("Number", "Tense", "VerbForm", "Mood", "Degree", "Aspect"):
                     v = m.get(k)
@@ -636,7 +636,7 @@ class MultiStageRuleExtractor:
                     path_len += 1
                     cur = cur.head
                     if path_len > 20: break
-                # geom_pos key should be ((d2h, child_count, path_len), hit)
+                                                                            
                 geom_pos[((min(d2h,15), min(child_count,15), min(path_len,15)), hit)] += 1
             fps = pred - gt
             if fps:
@@ -800,7 +800,7 @@ def evaluate_minimal(extractor, raw_items):
 
 def optimize_hyperparams(train_raw, val_raw, n_trials=25, timeout=None, seed=42):
     def objective(trial: optuna.Trial):
-        # Use serializable string choices for Optuna storage, then parse to tuples below
+                                                                                        
         restrict_choice_label = trial.suggest_categorical("restrict_pos", [
             "None",
             "NOUN,PROPN",
@@ -823,7 +823,7 @@ def optimize_hyperparams(train_raw, val_raw, n_trials=25, timeout=None, seed=42)
         use_entities = trial.suggest_categorical("use_entities",[True, False])
         use_chunks = trial.suggest_categorical("use_chunks",[True, False])
         use_neighbor_pos = trial.suggest_categorical("use_neighbor_pos",[True, False])
-        # parse restrict_choice_label to actual tuple or None
+                                                             
         if restrict_choice_label == "None":
             restrict_choice = None
         else:
@@ -869,18 +869,18 @@ def optimize_hyperparams(train_raw, val_raw, n_trials=25, timeout=None, seed=42)
         return f1
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction="maximize", sampler=sampler)
-    # Run optimization with tqdm progress. Some environments may run faster with batch optimize,
-    # but iterating per-trial allows us to show progress and current best score.
+                                                                                                
+                                                                                
     if n_trials and n_trials > 0:
         pbar = tqdm(total=n_trials, desc="Optuna trials", unit="trial")
         try:
             for _ in range(n_trials):
                 study.optimize(objective, n_trials=1, timeout=timeout)
                 pbar.update(1)
-                # update description with best value so far
+                                                           
                 if study.best_trial:
                     pbar.set_postfix(best_f1=f"{study.best_trial.value:.4f}")
-                # if timeout reached, break early
+                                                 
                 if timeout is not None and study._storage.get_trials_count(study._study_id) >= n_trials:
                     break
         finally:
@@ -942,7 +942,7 @@ def run_pipeline(train_files, test_files, optimize_trials=0, timeout=None):
         print("--- Hyperparameter optimization ---")
         study = optimize_hyperparams(train_raw, test_raw, n_trials=optimize_trials, timeout=timeout)
         best_params = study.best_trial.params
-        # Parse best_params for fields that require non-string types saved earlier
+                                                                                  
         for k, v in best_params.items():
             if k == "restrict_pos":
                 if v == "None":
@@ -954,7 +954,7 @@ def run_pipeline(train_files, test_files, optimize_trials=0, timeout=None):
                 setattr(best_cfg, k, v)
         print("--- Best params applied ---")
     extractor = MultiStageRuleExtractor(best_cfg)
-    # If a previous best_overall exists, apply its params and load model to continue training
+                                                                                             
     best_overall_path = os.path.join("outputs/ner_coref/parameters", "best_overall.json")
     if os.path.exists(best_overall_path):
         try:
@@ -962,7 +962,7 @@ def run_pipeline(train_files, test_files, optimize_trials=0, timeout=None):
                 bo = json.load(f)
             bo_params = bo.get("params", {})
             bo_model = bo.get("model_path")
-            # apply any params from best_overall (parse restrict_pos if present)
+                                                                                
             for k, v in bo_params.items():
                 if k == "restrict_pos":
                     if v == "None":
@@ -972,7 +972,7 @@ def run_pipeline(train_files, test_files, optimize_trials=0, timeout=None):
                     setattr(best_cfg, k, parsed)
                 else:
                     setattr(best_cfg, k, v)
-            # reload extractor with updated cfg
+                                               
             extractor = MultiStageRuleExtractor(best_cfg)
             if bo_model and os.path.exists(bo_model):
                 loaded = extractor.load_rules(bo_model)

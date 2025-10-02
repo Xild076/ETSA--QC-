@@ -1,8 +1,7 @@
 from typing import Callable, List, Dict, Tuple, Optional, Any
 import logging
-import math
+import re
 import networkx as nx
-from combiners import COMBINERS, _modifier_polarity_summary
 
 logger = logging.getLogger(__name__)
 
@@ -22,28 +21,15 @@ RELATION_TYPES: Dict[str, Dict[str, str]] = {
     "association": {"description": "Indicates an association between entities"},
 }
 
+
 class RelationGraph:
-    def __init__(
-        self,
-        text: str = "",
-        clauses: List[str] = [],
-        sentiment_analyzer_system=None,
-        combiner: str = "contextual_v3",
-        combiner_params: Optional[Dict[str, Any]] = None,
-    ):
+    def __init__(self, text: str = "", clauses: List[str] = [], sentiment_analyzer_system=None):
         self.graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self.text: str = text
         self.clauses: List[str] = clauses
         self.sentiment_analyzer_system = sentiment_analyzer_system
         self.entity_ids: set[int] = set()
         self.aggregate_sentiments: Dict[int, float] = {}
-        self.combiner = combiner
-        self.combiner_params = combiner_params or {}
-        self._last_combiner_signature: Tuple[str, Tuple[Tuple[str, Any], ...]] = (
-            combiner,
-            tuple(sorted((combiner_params or {}).items())),
-        )
-
 
     def _validate_role(self, role: str) -> None:
         if role not in ENTITY_ROLES:
@@ -62,29 +48,67 @@ class RelationGraph:
         key = self._node_key(entity_id, clause_layer)
         if key not in self.graph.nodes:
             raise ValueError(f"Node {key} not found in the graph.")
+    
+    def _build_context_snippet(self, head: str, modifiers: List[str], clause_text: str) -> str:
+        if not clause_text:
+            clause_text = self.text
+        elements: List[Tuple[int, int, str]] = []
+        clause_lower = clause_text.lower()
+        occupied: List[Tuple[int, int]] = []
 
-    def _sent(self, text: str, aspect: str = "", modifiers: List[str] = None) -> float:
-        """Enhanced sentiment analysis with optional aspect-focused context."""
+        def locate_segment(target: str) -> Optional[Tuple[int, int]]:
+            target_lower = target.lower()
+            if not target_lower:
+                return None
+            start = 0
+            while True:
+                idx = clause_lower.find(target_lower, start)
+                if idx == -1:
+                    return None
+                span = (idx, idx + len(target_lower))
+                if not any(max(a, span[0]) < min(b, span[1]) for a, b in occupied):
+                    occupied.append(span)
+                    return span
+                start = idx + 1
+
+        for modifier in modifiers:
+            span = locate_segment(modifier)
+            if span:
+                start, end = span
+                elements.append((start, end, clause_text[start:end]))
+
+        head_span = locate_segment(head)
+        if head_span:
+            start, end = head_span
+            elements.append((start, end, clause_text[start:end]))
+
+        if not elements:
+            tokens = modifiers + ([head] if head else [])
+            return " ".join(token.strip() for token in tokens if token and token.strip())
+
+        elements.sort(key=lambda item: item[0])
+        snippet_parts: List[str] = []
+        last_end: Optional[int] = None
+        for start, end, content in elements:
+            if last_end is not None and start > last_end:
+                gap = clause_text[last_end:start]
+                punct = "".join(ch for ch in gap if not ch.isalnum())
+                if punct.strip():
+                    snippet_parts.append(punct.strip())
+            snippet_parts.append(content.strip())
+            last_end = end
+
+        snippet = " ".join(part for part in snippet_parts if part)
+        snippet = re.sub(r"\s+([,.;!?])", r"\1", snippet)
+        return snippet.strip()
+
+    def _sent(self, text: str) -> float:
         if not self.sentiment_analyzer_system:
             return 0.0
         try:
-            # If aspect and modifiers provided, use focused analysis
-            if aspect and modifiers is not None:
-                from sentiment.sentiment import analyze_aspect_sentiment_focused
-                # Create a wrapper function for the sentiment analyzer
-                def analyzer_wrapper(text_input):
-                    return self.sentiment_analyzer_system.analyze(text_input or "")
-                
-                result = analyze_aspect_sentiment_focused(
-                    text or "", aspect, modifiers or [], analyzer_wrapper
-                )
-                return self._coerce_sentiment_score(result)
-            else:
-                # Standard sentiment analysis
-                raw_result = self.sentiment_analyzer_system.analyze(text or "")
-                return self._coerce_sentiment_score(raw_result)
-        except Exception as e:
-            logger.debug(f"Sentiment analysis failed: {e}")
+            raw_result = self.sentiment_analyzer_system.analyze(text or "")
+            return self._coerce_sentiment_score(raw_result)
+        except Exception:
             return 0.0
 
     def _coerce_sentiment_score(self, result: Any) -> float:
@@ -120,132 +144,34 @@ class RelationGraph:
             new_id += 1
         return new_id
 
-    def add_entity_node(
-        self,
-        id: int,
-        head: str,
-        modifier: List[str],
-        entity_role: str,
-        clause_layer: int,
-        threshold: tuple = (0.1, -0.1),
-    ) -> None:
-        logger.info("Adding entity node %s at layer %s", id, clause_layer)
+    def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int) -> None:
+        logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
         key = self._node_key(id, clause_layer)
-
-        def _unique_modifiers(spans: List[str]) -> List[str]:
-            unique: List[str] = []
-            seen = set()
-            for span in spans or []:
-                if not isinstance(span, str):
-                    continue
-                cleaned = span.strip()
-                if not cleaned:
-                    continue
-                norm = cleaned.lower()
-                if norm in seen:
-                    continue
-                seen.add(norm)
-                unique.append(cleaned)
-            return unique
-
-        def _compute_modifier_sentiment(head_text: str, spans: List[str]) -> Tuple[float, Dict[str, float], Optional[float]]:
-            if not spans:
-                return 0.0, {}, None
-            per_scores: Dict[str, float] = {}
-            weighted_sum = 0.0
-            magnitude_sum = 0.0
-            for span in spans:
-                score_raw = self._sent(span)
-                if not isinstance(score_raw, (int, float)):
-                    continue
-                score = float(score_raw)
-                per_scores[span] = score
-                weight = abs(score)
-                if weight > 0:
-                    weighted_sum += score * weight
-                    magnitude_sum += weight
-            if not per_scores:
-                return 0.0, {}, None
-            mean_score = (
-                weighted_sum / magnitude_sum if magnitude_sum > 0 else sum(per_scores.values()) / len(per_scores)
-            )
-            context_score: Optional[float] = None
-            if head_text and spans:
-                context_text = ". ".join(f"{head_text} {span}" for span in spans)
-                ctx_raw = self._sent(context_text)
-                if isinstance(ctx_raw, (int, float)):
-                    context_score = float(ctx_raw)
-            if context_score is not None:
-                combined = 0.7 * mean_score + 0.3 * context_score
+        clause_text = self.clauses[clause_layer] if 0 <= clause_layer < len(self.clauses) else self.text
+        text_for_sent = self._build_context_snippet(head, modifier, clause_text)
+        if modifier:
+            sentiment = self._sent(text_for_sent)
+        else:
+            head_sentiment = self._sent(head)
+            context_sentiment = self._sent(clause_text[:200]) if len(clause_text) > len(head) else head_sentiment
+            if abs(head_sentiment) > 0.3:
+                sentiment = head_sentiment * 0.6
+            elif abs(context_sentiment) > 0.2:
+                sentiment = context_sentiment * 0.4
             else:
-                combined = mean_score
-            return combined, per_scores, context_score
-
-        clean_head = (head or "").strip()
-        modifiers_clean = _unique_modifiers(modifier)
-        # Use focused sentiment analysis for head with its modifiers
-        head_sentiment = float(self._sent(clean_head, aspect=clean_head, modifiers=modifiers_clean)) if clean_head else 0.0
-        modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(clean_head, modifiers_clean)
-
-        final_sentiment, base_justification, extras = self._combine_sentiments(
-            clean_head,
-            head_sentiment,
-            modifiers_clean,
-            modifier_sentiment,
-            threshold,
-            context_score,
-            per_scores,
-            self.text,
-        )
-
-        head_adjusted = extras.get("head_adjusted", head_sentiment)
-        modifier_adjusted = extras.get("modifier_adjusted", modifier_sentiment)
-        heuristic_notes = extras.get("heuristic_notes", []) or []
-
-        polarity_counts = _modifier_polarity_summary(per_scores, threshold)
-        detail_parts = [
-            f"head={head_sentiment:+.2f}",
-            f"modifier_mean={modifier_sentiment:+.2f}",
-        ]
-        if head_adjusted != head_sentiment:
-            detail_parts.append(f"head_adj={head_adjusted:+.2f}")
-        if modifier_adjusted != modifier_sentiment:
-            detail_parts.append(f"modifier_adj={modifier_adjusted:+.2f}")
-        if context_score is not None:
-            detail_parts.append(f"context={context_score:+.2f}")
-        if per_scores:
-            ordered = [f"{span}: {per_scores[span]:+.2f}" for span in modifiers_clean if span in per_scores]
-            detail_parts.append("per_modifiers={" + ", ".join(ordered) + "}")
-        if heuristic_notes:
-            detail_parts.append("heuristics=" + ", ".join(heuristic_notes))
-        sentiment_justification = base_justification
-        if detail_parts:
-            sentiment_justification = f"{base_justification} Details: {'; '.join(detail_parts)}."
-
+                sentiment = head_sentiment * 0.1
         self.graph.add_node(
             key,
-            head=clean_head,
-            modifier=modifiers_clean,
+            head=head,
+            modifier=list(modifier),
             text=self.text,
             entity_role=entity_role,
             clause_layer=clause_layer,
-            init_sentiment=final_sentiment,
-            head_sentiment=head_sentiment,
-            head_sentiment_adjusted=head_adjusted,
-            modifier_sentiment=modifier_sentiment,
-            modifier_sentiment_adjusted=modifier_adjusted,
-            modifier_context_sentiment=context_score,
-            modifier_sentiment_components=per_scores,
-            modifier_polarity_counts=polarity_counts,
-            modifier_conflict=polarity_counts["positive"] > 0 and polarity_counts["negative"] > 0,
-            sentiment_justification=sentiment_justification,
-            sentiment_strategy=self.combiner,
-            sentiment_heuristics=heuristic_notes,
-            sentiment_threshold=threshold,
+            init_sentiment=sentiment,
         )
-
+    
     def get_entities_at_layer(self, clause_layer: int) -> List[Dict]:
         entities = []
         for (entity_id, layer), data in self.graph.nodes(data=True):
@@ -272,132 +198,15 @@ class RelationGraph:
         return mentions
 
     def add_entity_modifier(self, entity_id: int, modifier: List[str], clause_layer: int) -> None:
-        logger.info("Adding entity modifiers for %s at layer %s", entity_id, clause_layer)
+        logger.info("Adding entity modifiers...")
         self._assert_node_exists(entity_id, clause_layer)
         key = self._node_key(entity_id, clause_layer)
-        node = self.graph.nodes[key]
-
-        def _unique_modifiers(spans: List[str]) -> List[str]:
-            unique: List[str] = []
-            seen = set()
-            for span in spans or []:
-                if not isinstance(span, str):
-                    continue
-                cleaned = span.strip()
-                if not cleaned:
-                    continue
-                norm = cleaned.lower()
-                if norm in seen:
-                    continue
-                seen.add(norm)
-                unique.append(cleaned)
-            return unique
-
-        def _compute_modifier_sentiment(head_text: str, spans: List[str]) -> Tuple[float, Dict[str, float], Optional[float]]:
-            if not spans:
-                return 0.0, {}, None
-            per_scores: Dict[str, float] = {}
-            weighted_sum = 0.0
-            magnitude_sum = 0.0
-            for span in spans:
-                score_raw = self._sent(span)
-                if not isinstance(score_raw, (int, float)):
-                    continue
-                score = float(score_raw)
-                per_scores[span] = score
-                weight = abs(score)
-                if weight > 0:
-                    weighted_sum += score * weight
-                    magnitude_sum += weight
-            if not per_scores:
-                return 0.0, {}, None
-            mean_score = (
-                weighted_sum / magnitude_sum if magnitude_sum > 0 else sum(per_scores.values()) / len(per_scores)
-            )
-            context_score: Optional[float] = None
-            if head_text and spans:
-                context_text = ". ".join(f"{head_text} {span}" for span in spans)
-                ctx_raw = self._sent(context_text)
-                if isinstance(ctx_raw, (int, float)):
-                    context_score = float(ctx_raw)
-            if context_score is not None:
-                combined = 0.7 * mean_score + 0.3 * context_score
-            else:
-                combined = mean_score
-            return combined, per_scores, context_score
-
-        existing_modifiers = _unique_modifiers(node.get("modifier", []))
-        incoming_modifiers = _unique_modifiers(modifier)
-        previous_norm = {span.lower() for span in existing_modifiers}
-        combined_modifiers: List[str] = []
-        seen = set()
-        for span in existing_modifiers + incoming_modifiers:
-            norm = span.lower()
-            if norm in seen:
-                continue
-            seen.add(norm)
-            combined_modifiers.append(span)
-        added_modifiers = [span for span in combined_modifiers if span.lower() not in previous_norm]
-
-        node['modifier'] = combined_modifiers
-        head_text = (node.get('head') or '').strip()
-        head_sentiment = node.get('head_sentiment')
-        if head_sentiment is None:
-            head_sentiment = float(self._sent(head_text)) if head_text else 0.0
-
-        modifier_sentiment, per_scores, context_score = _compute_modifier_sentiment(head_text, combined_modifiers)
-        threshold = node.get('sentiment_threshold', (0.1, -0.1))
-        final_sentiment, base_justification, extras = self._combine_sentiments(
-            head_text,
-            head_sentiment,
-            combined_modifiers,
-            modifier_sentiment,
-            threshold,
-            context_score,
-            per_scores,
-            self.text,
-        )
-
-        head_adjusted = extras.get("head_adjusted", head_sentiment)
-        modifier_adjusted = extras.get("modifier_adjusted", modifier_sentiment)
-        heuristic_notes = extras.get("heuristic_notes", []) or []
-
-        polarity_counts = _modifier_polarity_summary(per_scores, threshold)
-        detail_parts = [
-            f"head={head_sentiment:+.2f}",
-            f"modifier_mean={modifier_sentiment:+.2f}",
-        ]
-        if head_adjusted != head_sentiment:
-            detail_parts.append(f"head_adj={head_adjusted:+.2f}")
-        if modifier_adjusted != modifier_sentiment:
-            detail_parts.append(f"modifier_adj={modifier_adjusted:+.2f}")
-        if context_score is not None:
-            detail_parts.append(f"context={context_score:+.2f}")
-        if per_scores:
-            ordered = [f"{span}: {per_scores[span]:+.2f}" for span in combined_modifiers if span in per_scores]
-            detail_parts.append("per_modifiers={" + ", ".join(ordered) + "}")
-        if added_modifiers:
-            detail_parts.append("added=" + ", ".join(added_modifiers))
-        if heuristic_notes:
-            detail_parts.append("heuristics=" + ", ".join(heuristic_notes))
-        sentiment_justification = base_justification
-        if detail_parts:
-            sentiment_justification = f"{base_justification} Details: {'; '.join(detail_parts)}."
-
-        node['modifier'] = combined_modifiers
-        node['head_sentiment'] = head_sentiment
-        node['head_sentiment_adjusted'] = head_adjusted
-        node['modifier_sentiment'] = modifier_sentiment
-        node['modifier_sentiment_adjusted'] = modifier_adjusted
-        node['modifier_context_sentiment'] = context_score
-        node['modifier_sentiment_components'] = per_scores
-        node['modifier_polarity_counts'] = polarity_counts
-        node['modifier_conflict'] = polarity_counts['positive'] > 0 and polarity_counts['negative'] > 0
-        node['init_sentiment'] = final_sentiment
-        node['sentiment_justification'] = sentiment_justification
-        node['last_added_modifiers'] = added_modifiers
-        node['sentiment_strategy'] = self.combiner
-        node['sentiment_heuristics'] = heuristic_notes
+        current_modifiers = list(self.graph.nodes[key].get("modifier", []))
+        new_mods = current_modifiers + list(modifier)
+        self.graph.nodes[key]["modifier"] = new_mods
+        head = self.graph.nodes[key].get("head", "")
+        text_for_sent = (" " + ", ".join(new_mods) + head).strip()
+        self.graph.nodes[key]["init_sentiment"] = self._sent(text_for_sent)
 
     def set_entity_role(self, entity_id: int, entity_role: str, clause_layer: int) -> None:
         logger.info("Setting entity role...")
@@ -415,131 +224,6 @@ class RelationGraph:
             u = self._node_key(entity_id, layers[i])
             v = self._node_key(entity_id, layers[i + 1])
             self.graph.add_edge(u, v, relation="temporal")
-
-    def _combine_sentiments(
-        self,
-        head: str,
-        head_sentiment: float,
-        modifier: List[str],
-        modifier_sentiment: float,
-        threshold: tuple = (0.1, -0.1),
-        context_score: Optional[float] = None,
-        per_scores: Optional[Dict[str, float]] = None,
-        clause_text: str = "",
-    ) -> Tuple[float, str, Dict[str, Any]]:
-        combiner_cls = COMBINERS.get(self.combiner)
-        if combiner_cls is None:
-            logger.warning(f"Unknown combiner '{self.combiner}'; falling back to contextual_v3.")
-            combiner_cls = COMBINERS["contextual_v3"]
-        
-        combiner_obj = combiner_cls.__class__(**self.combiner_params)
-        try:
-            return combiner_obj.combine(
-                head,
-                head_sentiment,
-                modifier,
-                modifier_sentiment,
-                threshold,
-                context_score,
-                per_scores or {},
-                clause_text,
-            )
-        except Exception:
-            logger.exception(f"{self.combiner} sentiment combiner failed; falling back to legacy blend.")
-            from .combiners import _legacy_blend, _clamp_score
-            score, justification = _legacy_blend(head_sentiment, modifier_sentiment, bool(modifier), threshold)
-            return _clamp_score(score), justification, {
-                "head_adjusted": head_sentiment,
-                "modifier_adjusted": modifier_sentiment,
-                "heuristic_notes": ["combiner_fallback"],
-            }
-
-    def refresh_with_combiner(
-        self,
-        combiner: str,
-        combiner_params: Optional[Dict[str, Any]] = None,
-        action_function: Optional[Callable[..., Any]] = None,
-        association_function: Optional[Callable[..., Any]] = None,
-        belonging_function: Optional[Callable[..., Any]] = None,
-    ) -> None:
-        """Recompute node- and relation-level sentiments for a combiner configuration."""
-        self.combiner = combiner
-        self.combiner_params = combiner_params or {}
-        self._last_combiner_signature = (
-            combiner,
-            tuple(sorted((self.combiner_params or {}).items())),
-        )
-
-        base_instance = COMBINERS.get(self.combiner)
-        if base_instance is None:
-            raise ValueError(f"Unknown combiner '{self.combiner}'")
-
-        combiner_cls = base_instance.__class__
-        combiner_obj = combiner_cls(**self.combiner_params)
-
-        for node_key, data in list(self.graph.nodes(data=True)):
-            clause_idx = int(data.get("clause_layer", 0) or 0)
-            if self.clauses and 0 <= clause_idx < len(self.clauses):
-                clause_text = self.clauses[clause_idx]
-            else:
-                clause_text = self.text
-
-            threshold = data.get("sentiment_threshold", (0.1, -0.1))
-            init_sentiment, justification, extras = combiner_obj.combine(
-                head_text=data.get("head", ""),
-                head_sentiment=float(data.get("head_sentiment", 0.0) or 0.0),
-                modifiers=list(data.get("modifier", [])),
-                modifier_sentiment=float(data.get("modifier_sentiment", 0.0) or 0.0),
-                threshold=threshold,
-                context_score=data.get("modifier_context_sentiment"),
-                per_scores=data.get("modifier_sentiment_components", {}),
-                clause_text=clause_text,
-            )
-            extras = extras or {}
-
-            head_adjusted = extras.get("head_adjusted", data.get("head_sentiment_adjusted", data.get("head_sentiment", 0.0)))
-            modifier_adjusted = extras.get("modifier_adjusted", data.get("modifier_sentiment_adjusted", data.get("modifier_sentiment", 0.0)))
-
-            data["init_sentiment"] = init_sentiment
-            data["head_sentiment_adjusted"] = head_adjusted
-            data["modifier_sentiment_adjusted"] = modifier_adjusted
-            data["sentiment_justification"] = justification
-            data["sentiment_strategy"] = self.combiner
-            data["sentiment_heuristics"] = extras.get("heuristic_notes", [])
-            if "combiner_debug" in extras:
-                data["combiner_debug"] = extras["combiner_debug"]
-
-        # Ensure edge payloads that depend on node sentiment are refreshed.
-        for _, _, edge_data in self.graph.edges(data=True):
-            if edge_data.get("relation") == "action":
-                action_node = edge_data.get("action")
-                if action_node in self.graph.nodes:
-                    edge_data["init_sentiment"] = float(self.graph.nodes[action_node].get("init_sentiment", 0.0))
-
-        # Clear previous compound / aggregate caches to avoid stale values.
-        for node_key in list(self.graph.nodes):
-            node_data = self.graph.nodes[node_key]
-            node_data.pop("compound_sentiment", None)
-        self.aggregate_sentiments.clear()
-
-        if action_function is not None:
-            self.run_compound_action_sentiment_calculations(action_function)
-        if association_function is not None:
-            self.run_compound_association_sentiment_calculations(association_function)
-        if belonging_function is not None:
-            self.run_compound_belonging_sentiment_calculations(belonging_function)
-
-
-
-    def add_belonging_edge(self, parent_id: int, child_id: int, clause_layer: int) -> None:
-        logger.info(f"Adding belonging edge between {parent_id} and {child_id}...")
-        if parent_id not in self.entity_ids or child_id not in self.entity_ids:
-            raise ValueError(f"Parent ID {parent_id} or Child ID {child_id} not found in the graph.")
-        parent = self._node_key(parent_id, clause_layer)
-        child = self._node_key(child_id, clause_layer)
-        if parent not in self.graph.nodes or child not in self.graph.nodes:
-            raise ValueError(f"Layer {clause_layer} missing parent or child node.")
-        self.graph.add_edge(parent, child, relation="belonging", parent=parent, child=child)
 
     def add_action_edge(
         self,
@@ -592,6 +276,16 @@ class RelationGraph:
 
         self.graph.add_edge(actor, target, **edge_payload)
 
+    def add_belonging_edge(self, parent_id: int, child_id: int, clause_layer: int) -> None:
+        logger.info(f"Adding belonging edge between {parent_id} and {child_id}...")
+        if parent_id not in self.entity_ids or child_id not in self.entity_ids:
+            raise ValueError(f"Parent ID {parent_id} or Child ID {child_id} not found in the graph.")
+        parent = self._node_key(parent_id, clause_layer)
+        child = self._node_key(child_id, clause_layer)
+        if parent not in self.graph.nodes or child not in self.graph.nodes:
+            raise ValueError(f"Layer {clause_layer} missing parent or child node.")
+        self.graph.add_edge(parent, child, relation="belonging", parent=parent, child=child)
+
     def add_association_edge(self, entity1_id: int, entity2_id: int, clause_layer: int) -> None:
         logger.info(f"Adding association edge between {entity1_id} and {entity2_id}...")
         if entity1_id not in self.entity_ids or entity2_id not in self.entity_ids:
@@ -613,16 +307,9 @@ class RelationGraph:
                 actor_init = float(self.graph.nodes[actor].get("init_sentiment", 0.0))
                 action_init = float(data.get("init_sentiment", 0.0))
                 target_init = float(self.graph.nodes[target].get("init_sentiment", 0.0))
-                result = function(actor_init, action_init, target_init)
-                if isinstance(result, (list, tuple)) and len(result) >= 2:
-                    actor_score, target_score = result[0], result[1]
-                else:
-                    actor_score = result
-                    target_score = result
-                actor_value = actor_score if isinstance(actor_score, (int, float)) else 0.0
-                target_value = target_score if isinstance(target_score, (int, float)) else 0.0
-                self.graph.nodes[actor]["compound_sentiment"] = float(actor_value)
-                self.graph.nodes[target]["compound_sentiment"] = float(target_value)
+                a_s, t_s = function(actor_init, action_init, target_init)
+                self.graph.nodes[actor]["compound_sentiment"] = float(a_s)
+                self.graph.nodes[target]["compound_sentiment"] = float(t_s)
 
     def run_compound_belonging_sentiment_calculations(self, function: Optional[Callable] = None) -> None:
         logger.info("Running compound belonging sentiment calculations...")
@@ -634,16 +321,9 @@ class RelationGraph:
                 child = data["child"]
                 p_init = float(self.graph.nodes[parent].get("init_sentiment", 0.0))
                 c_init = float(self.graph.nodes[child].get("init_sentiment", 0.0))
-                result = function(p_init, c_init)
-                if isinstance(result, (list, tuple)) and len(result) >= 2:
-                    parent_score, child_score = result[0], result[1]
-                else:
-                    parent_score = result
-                    child_score = result
-                parent_value = parent_score if isinstance(parent_score, (int, float)) else 0.0
-                child_value = child_score if isinstance(child_score, (int, float)) else 0.0
-                self.graph.nodes[parent]["compound_sentiment"] = float(parent_value)
-                self.graph.nodes[child]["compound_sentiment"] = float(child_value)
+                p_s, c_s = function(p_init, c_init)
+                self.graph.nodes[parent]["compound_sentiment"] = float(p_s)
+                self.graph.nodes[child]["compound_sentiment"] = float(c_s)
 
     def run_compound_association_sentiment_calculations(self, function: Optional[Callable] = None) -> None:
         logger.info("Running compound association sentiment calculations...")
@@ -655,16 +335,9 @@ class RelationGraph:
                 e2 = data["entity2"]
                 s1 = float(self.graph.nodes[e1].get("init_sentiment", 0.0))
                 s2 = float(self.graph.nodes[e2].get("init_sentiment", 0.0))
-                result = function(s1, s2)
-                if isinstance(result, (list, tuple)) and len(result) >= 2:
-                    score_one, score_two = result[0], result[1]
-                else:
-                    score_one = result
-                    score_two = result
-                value_one = score_one if isinstance(score_one, (int, float)) else 0.0
-                value_two = score_two if isinstance(score_two, (int, float)) else 0.0
-                self.graph.nodes[e1]["compound_sentiment"] = float(value_one)
-                self.graph.nodes[e2]["compound_sentiment"] = float(value_two)
+                r1, r2 = function(s1, s2)
+                self.graph.nodes[e1]["compound_sentiment"] = float(r1)
+                self.graph.nodes[e2]["compound_sentiment"] = float(r2)
 
     def run_aggregate_sentiment_calculations(self, entity_id: int, function: Optional[Callable] = None) -> float:
         logger.info(f"Running aggregate sentiment calculations for entity {entity_id}...")
@@ -675,22 +348,10 @@ class RelationGraph:
         for layer in layers:
             key = self._node_key(entity_id, layer)
             if "compound_sentiment" in self.graph.nodes[key]:
-                sentiment = float(self.graph.nodes[key].get("compound_sentiment", 0.0))
+                sentiments.append(float(self.graph.nodes[key].get("compound_sentiment", 0.0)))
             else:
-                sentiment = float(self.graph.nodes[key].get("init_sentiment", 0.0))
-            
-            # Validate and clamp sentiment values
-            if not math.isfinite(sentiment):
-                sentiment = 0.0
-            sentiment = max(-1.0, min(1.0, sentiment))
-            sentiments.append(sentiment)
-        
+                sentiments.append(float(self.graph.nodes[key].get("init_sentiment", 0.0)))
         result = float(function(sentiments)) if sentiments else 0.0
-        # Ensure result is finite and within bounds
-        if not math.isfinite(result):
-            result = 0.0
-        result = max(-1.0, min(1.0, result))
-        
         self.aggregate_sentiments[entity_id] = result
         return result
 

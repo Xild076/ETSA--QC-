@@ -16,7 +16,7 @@ for text, ent in cases:
     print("SPACY MODIFIERS:", out)
     print('-'*80)
 
-# Note: GemmaModifierExtractor requires API key; we only print the generated prompt for inspection if available
+                                                                                                               
 try:
     gm = GemmaModifierExtractor(api_key=None)
     for text, ent in cases:

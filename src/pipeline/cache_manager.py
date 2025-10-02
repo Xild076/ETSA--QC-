@@ -22,16 +22,19 @@ class PipelineCache:
         self._pickle_dir = self.cache_dir / "pickles"
         self._pickle_dir.mkdir(exist_ok=True)
 
-    def _get_cache_key(self, text: str, combiner_name: str = "", combiner_params: Dict[str, Any] = None) -> str:
+    def _get_cache_key(self, text: str, settings: Optional[Dict[str, Any]] = None) -> str:
         key_data = {
             "text": text,
-            "combiner_name": combiner_name or "",
-            "combiner_params": combiner_params or {}
+            "settings": settings or {},
         }
         key_str = json.dumps(key_data, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(key_str.encode('utf-8')).hexdigest()
 
-    def get_intermediate_results(self, text: str, combiner_name: str = "", combiner_params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+    def get_intermediate_results(
+        self,
+        text: str,
+        settings: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not self.intermediate_cache_file.exists():
             return None
 
@@ -41,7 +44,7 @@ class PipelineCache:
         except (json.JSONDecodeError, IOError):
             return None
 
-        cache_key = self._get_cache_key(text, combiner_name, combiner_params)
+        cache_key = self._get_cache_key(text, settings)
         entry = cache_data.get(cache_key)
         if not entry:
             return None
@@ -62,10 +65,15 @@ class PipelineCache:
 
         return entry
 
-    def store_intermediate_results(self, text: str, combiner_name: str = "", combiner_params: Dict[str, Any] = None,
-                                  intermediate_results: Dict[str, Any] = None, include_graph: bool = False) -> None:
+    def store_intermediate_results(
+        self,
+        text: str,
+        settings: Optional[Dict[str, Any]] = None,
+        intermediate_results: Dict[str, Any] = None,
+        include_graph: bool = False,
+    ) -> None:
         intermediate_results = intermediate_results or {}
-        cache_key = self._get_cache_key(text, combiner_name, combiner_params)
+        cache_key = self._get_cache_key(text, settings)
 
         cache_data = {}
         if self.intermediate_cache_file.exists():
@@ -76,8 +84,7 @@ class PipelineCache:
                 cache_data = {}
 
         entry = dict(intermediate_results)
-        entry['_cached_combiner'] = combiner_name
-        entry['_cached_combiner_params'] = combiner_params or {}
+        entry['_cache_signature'] = settings or {}
         entry = _make_json_serializable(entry)
         if include_graph and 'graph' in entry:
             try:

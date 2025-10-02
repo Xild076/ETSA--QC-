@@ -11,7 +11,7 @@ from string import punctuation
 @dataclass
 class TrainConfig:
     model:str="en_core_web_md"
-    restrict_pos:tuple=None # ("NOUN","PROPN")
+    restrict_pos:tuple=None                   
     min_pos_support:int=2
     min_rule_precision:float=0.48
     max_stages:int=20

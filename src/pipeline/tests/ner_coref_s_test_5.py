@@ -1126,11 +1126,11 @@ def run_pipeline(train_files, test_files, optimize_trials=0, timeout=None, appcf
 if __name__ == "__main__":
     train_files = [
         "data/dataset/train_laptop_2014.xml","data/dataset/train_restaurant_2014.xml",
-        # "data/dataset/train_laptop_2016.xml","data/dataset/train_restaurant_2016.xml"
+                                                                                       
     ]
     test_files = [
         "data/dataset/test_laptop_2016.xml","data/dataset/test_restaurant_2016.xml",
-        # "data/dataset/test_laptop_2014.xml","data/dataset/test_restaurant_2014.xml"
+                                                                                     
     ]
     appcfg = default_app_config()
     run_pipeline(train_files, test_files, optimize_trials=500, timeout=None, appcfg=appcfg)

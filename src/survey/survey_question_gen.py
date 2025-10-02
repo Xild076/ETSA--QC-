@@ -9,7 +9,7 @@ from pathlib import Path
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# Lazy initialization to avoid hanging on import
+                                                
 _nltk_initialized = False
 _afn = None
 _sia = None
@@ -19,10 +19,10 @@ def _ensure_nltk_ready():
     global _nltk_initialized, _afn, _sia
     if not _nltk_initialized:
         try:
-            # Try to check if punkt is already downloaded
+                                                         
             nltk.data.find('tokenizers/punkt')
         except LookupError:
-            # Only download if not found
+                                        
             nltk.download("punkt", quiet=True)
         _afn = Afinn()
         _sia = SentimentIntensityAnalyzer()

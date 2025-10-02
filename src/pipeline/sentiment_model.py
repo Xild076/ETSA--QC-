@@ -51,23 +51,22 @@ class AssociationSentimentModel(SentimentModel):
     def __init__(self, score_key: str = 'user_normalized_sentiment_scores'):
         self.func = get_association_function(score_key)
 
-    def calculate(self, s_entity: float, s_other: float, split: bool = False) -> float:
+    def calculate(self, s_entity: float, s_other: float, split: bool = False) -> tuple:
         if not self.func:
-            return 0.0
-        return self.func(s_entity, s_other), self.func(s_other, s_entity) if split else self.func(s_entity, s_other)
+            return (0.0, 0.0) if split else (0.0, 0.0)
+        if split:
+            return self.func(s_entity, s_other), self.func(s_other, s_entity)
+        return (self.func(s_entity, s_other), self.func(s_other, s_entity))
 
 class BelongingSentimentModel(SentimentModel):
     def __init__(self, score_key: str = 'user_normalized_sentiment_scores'):
         self.parent_func = get_parent_function(score_key)
         self.child_func = get_child_function(score_key)
 
-    def calculate(self, s_parent: float, s_child: float, split: bool = False) -> float:
+    def calculate(self, s_parent: float, s_child: float, split: bool = False) -> tuple:
         if not self.parent_func or not self.child_func:
-            return 0.0
-        if split:
-            return self.parent_func(s_parent, s_child), self.child_func(s_child, s_parent)
-        # By default return a symmetric aggregation (parent perspective)
-        return self.parent_func(s_parent, s_child)
+            return (0.0, 0.0)
+        return self.parent_func(s_parent, s_child), self.child_func(s_child, s_parent)
 
 class AggregateSentimentModel(SentimentModel):
     def __init__(self, score_key: str = 'user_normalized_sentiment_scores'):

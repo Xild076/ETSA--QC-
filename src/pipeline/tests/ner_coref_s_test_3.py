@@ -10,9 +10,9 @@ from string import punctuation
 @dataclass
 class TrainConfig:
     model:str="en_core_web_md"
-    restrict_pos:tuple=None #("NOUN","PROPN")
+    restrict_pos:tuple=None                  
     min_pos_support:int=2
-    min_rule_precision:float=0.50 # Lowered to allow more recall-oriented candidates
+    min_rule_precision:float=0.50                                                   
     max_stages:int=20
     max_iterations_per_stage:int=15
     new_rules_per_iteration:int=60
@@ -25,7 +25,7 @@ class TrainConfig:
     f1_eval_sample:int=1200
     f1_eval_topk:int=400
     prune:bool=True
-    max_prune_drop:float=0.005 # Increased tolerance to prevent premature stalling
+    max_prune_drop:float=0.005                                                    
     early_stop_residual:int=2000
     min_gain_per_stage:float=0.0005
     debug:bool=False
@@ -142,7 +142,7 @@ class MultiStageRuleExtractor:
         if self.cfg.use_neighbor_pos:
             nctx = self._neighbors(doc, token.i)
             if nctx: out.append((11, token.pos_, token.dep_, nctx))
-        # Add new, more specific feature rules
+                                              
         out.append((12, token.pos_, token.dep_, token.shape_, token.like_num))
         if token.dep_ == 'appos': out.append((13, 'appos', token.head.pos_))
         return out
@@ -183,7 +183,7 @@ class MultiStageRuleExtractor:
         if hl in self.frequent_single_gold_heads: return True
         if self._compound_len(tok) >= 2: return True
         if self.cfg.use_entities and tok.ent_type_ in {"PRODUCT", "ORG", "WORK_OF_ART", "MONEY", "FAC"}: return True
-        # The generic_block_heads is too aggressive to use here. Let the rules and other context decide.
+                                                                                                        
         return True
 
     def predict_doc(self, doc, sigs, rules):
@@ -333,7 +333,7 @@ class MultiStageRuleExtractor:
         for ex in prepared:
             pred = self.predict_doc(ex["doc"], ex["sigs"], rules)
             fp_counter.update({p.lower() for p in pred if p.lower() not in ex["gold_terms"]})
-        # Use generic_block_heads here to prevent blocking "great food" but allow blocking "great price"
+                                                                                                        
         return {surf for surf, c in fp_counter.most_common(top_k) if len(surf.split()) <= 2 and surf.split()[-1] in self.generic_block_heads}
 
     def _prune_rules(self, prepared, existing_rule_sets, new_stage_rules):

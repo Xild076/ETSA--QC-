@@ -14,8 +14,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- MODEL CACHING ---
-# Load models once to avoid repeated loading on each call
+                       
+                                                         
 _models: Dict[str, Any] = {}
 
 def _get_model(model_name: str, task: str = "sentiment-analysis"):
@@ -27,7 +27,7 @@ def _get_model(model_name: str, task: str = "sentiment-analysis"):
         elif "vader" in model_name:
             _models[model_name] = SentimentIntensityAnalyzer()
         elif "distilbert" in model_name:
-            # For logits, we need model and tokenizer separately
+                                                                
             tokenizer = AutoTokenizer.from_pretrained(model_name)
             model = AutoModelForSequenceClassification.from_pretrained(model_name)
             _models[model_name] = {"model": model, "tokenizer": tokenizer}
@@ -35,7 +35,7 @@ def _get_model(model_name: str, task: str = "sentiment-analysis"):
             _models[model_name] = pipeline(task, model=model_name)
     return _models[model_name]
 
-# --- STANDARDIZED OUTPUT FUNCTIONS ---
+                                       
 
 def get_vader_sentiment(text: str) -> Dict[str, float]:
     if not text or not text.strip():
@@ -96,7 +96,7 @@ def get_nlptown_sentiment(text: str) -> Dict[str, float]:
     model = _get_model("nlptown/bert-base-multilingual-uncased-sentiment")
     result = model(text)[0]
     score_val = int(re.search(r'\d+', result['label']).group())
-    # Simple mapping from 1-5 stars to a distribution
+                                                     
     if score_val == 1: return {'positive': 0.0, 'negative': 1.0, 'neutral': 0.0}
     if score_val == 2: return {'positive': 0.1, 'negative': 0.6, 'neutral': 0.3}
     if score_val == 3: return {'positive': 0.1, 'negative': 0.1, 'neutral': 0.8}
@@ -129,7 +129,7 @@ def get_distilbert_logit_sentiment(text: str) -> Dict[str, float]:
     with torch.no_grad():
         logits = model(**inputs).logits
     
-    # This model only has POS/NEG classes, so we can use softmax
+                                                                
     probabilities = torch.softmax(logits, dim=1).squeeze().tolist()
     
     id2label = model.config.id2label

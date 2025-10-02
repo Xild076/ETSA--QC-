@@ -397,7 +397,7 @@ def get_distilbert_logit_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 
-# ==================== CONTEXT-AWARE SENTIMENT ANALYSIS ====================
+                                                                            
 
 def create_focused_context_window(text: str, aspect: str, modifiers: List[str], 
                                  window_size: int = 50) -> str:
@@ -408,13 +408,13 @@ def create_focused_context_window(text: str, aspect: str, modifiers: List[str],
     if not text or not aspect:
         return text
     
-    # Find aspect position in text
+                                  
     text_lower = text.lower()
     aspect_lower = aspect.lower()
     aspect_pos = text_lower.find(aspect_lower)
     
     if aspect_pos == -1:
-        # Aspect not found, try word-by-word matching
+                                                     
         aspect_words = aspect_lower.split()
         for i, word in enumerate(text_lower.split()):
             if any(aw in word for aw in aspect_words):
@@ -422,19 +422,19 @@ def create_focused_context_window(text: str, aspect: str, modifiers: List[str],
                 break
     
     if aspect_pos == -1:
-        return text  # Fallback to original text
+        return text                             
     
-    # Create window around aspect
+                                 
     start_pos = max(0, aspect_pos - window_size)
     end_pos = min(len(text), aspect_pos + len(aspect) + window_size)
     
-    # Expand to sentence boundaries
+                                   
     start_pos = _find_sentence_start(text, start_pos)
     end_pos = _find_sentence_end(text, end_pos)
     
     context_window = text[start_pos:end_pos].strip()
     
-    # Clean while preserving structure
+                                      
     focused_context = _clean_preserving_structure(context_window, aspect, modifiers)
     
     return focused_context
@@ -444,7 +444,7 @@ def _find_sentence_start(text: str, pos: int) -> int:
     sentence_markers = {'.', '!', '?', '\n'}
     while pos > 0:
         if text[pos] in sentence_markers:
-            # Skip the marker and any whitespace
+                                                
             pos += 1
             while pos < len(text) and text[pos].isspace():
                 pos += 1
@@ -470,13 +470,13 @@ def _clean_preserving_structure(text: str, aspect: str, modifiers: List[str]) ->
     if not text:
         return text
     
-    # Words to always keep (sentiment-relevant)
+                                               
     keep_words = {
-        # Aspect and its variations
+                                   
         aspect.lower(),
-        # Modifiers
+                   
         *[mod.lower() for mod in modifiers],
-        # Sentiment words
+                         
         'good', 'bad', 'great', 'terrible', 'amazing', 'awful', 'excellent', 'poor',
         'love', 'hate', 'like', 'dislike', 'enjoy', 'despise',
         'fast', 'slow', 'quick', 'sluggish', 'responsive', 'laggy',
@@ -484,61 +484,61 @@ def _clean_preserving_structure(text: str, aspect: str, modifiers: List[str]) ->
         'reliable', 'unreliable', 'stable', 'unstable', 'buggy',
         'expensive', 'cheap', 'affordable', 'overpriced', 'costly',
         'worth', 'worthless', 'valuable', 'useless', 'useful',
-        # Intensifiers
+                      
         'very', 'extremely', 'quite', 'really', 'super', 'incredibly', 
         'somewhat', 'rather', 'fairly', 'pretty', 'highly', 'totally',
-        # Negation
+                  
         'not', 'no', 'never', 'nothing', 'none', 'neither', 'nor',
         'dont', "don't", 'cant', "can't", 'wont', "won't", 'isnt', "isn't",
         'wasnt', "wasn't", 'arent', "aren't", 'werent', "weren't",
-        # Modals and auxiliaries
+                                
         'can', 'could', 'should', 'would', 'will', 'shall', 'may', 'might',
         'must', 'ought', 'need', 'dare', 'used',
-        # Comparatives
+                      
         'better', 'worse', 'best', 'worst', 'more', 'less', 'most', 'least',
         'than', 'as', 'like', 'unlike', 'compared', 'versus',
-        # Temporal markers
+                          
         'now', 'then', 'before', 'after', 'during', 'while', 'when',
         'initially', 'finally', 'eventually', 'suddenly', 'immediately',
-        # Conjunctions and logical connectors
+                                             
         'and', 'or', 'but', 'however', 'although', 'though', 'despite',
         'because', 'since', 'so', 'therefore', 'thus', 'hence',
         'if', 'unless', 'when', 'while', 'whereas', 'until'
     }
     
-    # Split into words while preserving punctuation
+                                                   
     tokens = re.findall(r'\w+|[^\w\s]', text)
     
     filtered_tokens = []
     for token in tokens:
         token_lower = token.lower()
         
-        # Always keep punctuation
+                                 
         if token in string.punctuation:
             filtered_tokens.append(token)
-        # Keep important words
+                              
         elif token_lower in keep_words:
             filtered_tokens.append(token)
-        # Keep words that are part of the aspect
+                                                
         elif aspect.lower() in token_lower or token_lower in aspect.lower():
             filtered_tokens.append(token)
-        # Keep words that appear in modifiers
+                                             
         elif any(token_lower in mod.lower() or mod.lower() in token_lower for mod in modifiers):
             filtered_tokens.append(token)
-        # Keep words with sentiment-indicating suffixes/prefixes
+                                                                
         elif any(token_lower.endswith(suffix) for suffix in ['ly', 'ing', 'ed', 'er', 'est', 'ful', 'less']):
             filtered_tokens.append(token)
-        # Skip common filler words (but keep important function words above)
+                                                                            
         elif token_lower in {'the', 'a', 'an', 'this', 'that', 'these', 'those', 
                            'i', 'you', 'he', 'she', 'it', 'we', 'they',
                            'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
                            'have', 'has', 'had', 'do', 'does', 'did'}:
-            # Keep only if followed by important words
+                                                      
             continue
         else:
             filtered_tokens.append(token)
     
-    # Reconstruct text with proper spacing
+                                          
     result = ""
     for i, token in enumerate(filtered_tokens):
         if i == 0:
@@ -559,18 +559,18 @@ def analyze_aspect_sentiment_focused(text: str, aspect: str, modifiers: List[str
     if not text or not aspect:
         return {"score": 0.0, "confidence": 0.0, "method": "focused_context", "error": "missing_input"}
     
-    # Create focused context
+                            
     focused_context = create_focused_context_window(text, aspect, modifiers)
     
-    # If context is too short, fall back to original
+                                                    
     if len(focused_context) < 10:
         focused_context = text
     
-    # Analyze sentiment on focused context
+                                          
     try:
         result = analysis_function(focused_context)
         
-        # Enhance result with context information
+                                                 
         if isinstance(result, dict):
             result["focused_context"] = focused_context
             result["original_length"] = len(text)
@@ -581,5 +581,5 @@ def analyze_aspect_sentiment_focused(text: str, aspect: str, modifiers: List[str
         return result
     except Exception as e:
         logger.warning(f"Focused sentiment analysis failed: {e}")
-        # Fallback to original text
+                                   
         return analysis_function(text)

@@ -1,5 +1,4 @@
 from collections import defaultdict
-import json
 import os
 import re
 from pprint import pformat
@@ -19,8 +18,8 @@ for p in (str(_base.parent), str(_src), str(_root)):
         sys.path.insert(0, p)
 
 from graph import RelationGraph
-from relation_e import RelationExtractor, GemmaRelationExtractor
-from modifier_e import ModifierExtractor, GemmaModifierExtractor, DummyModifierExtractor
+from relation_e import RelationExtractor, GemmaRelationExtractor, SpacyRelationExtractor
+from modifier_e import ModifierExtractor, GemmaModifierExtractor, DummyModifierExtractor, SpacyModifierExtractor
 from ner_coref_s import ATE, HybridAspectExtractor
 from clause_s import ClauseSplitter, BeneparClauseSplitter
 from sentiment_model import (
@@ -35,19 +34,19 @@ from cache_manager import PipelineCache
 
 
 class SentimentPipeline:
-    def __init__(self,
-                 clause_splitter:ClauseSplitter,
-                 aspect_extractor:ATE,
-                 modifier_extractor:ModifierExtractor,
-                 relation_extractor:RelationExtractor,
-                 sentiment_analysis:Any,
-                 action_sentiment_model:SentimentModel,
-                 association_sentiment_model:SentimentModel,
-                 belonging_sentiment_model:SentimentModel,
-                 aggregate_sentiment_model:SentimentModel,
-                 combiner: str = "contextual_v3",
-                 combiner_params: Optional[Dict[str, Any]] = None,
-                 use_cache: bool = True):
+    def __init__(
+        self,
+        clause_splitter: ClauseSplitter,
+        aspect_extractor: ATE,
+        modifier_extractor: ModifierExtractor,
+        relation_extractor: RelationExtractor,
+        sentiment_analysis: Any,
+        action_sentiment_model: SentimentModel,
+        association_sentiment_model: SentimentModel,
+        belonging_sentiment_model: SentimentModel,
+        aggregate_sentiment_model: SentimentModel,
+        use_cache: bool = True,
+    ):
         self.clause_splitter = clause_splitter
         self.aspect_extractor = aspect_extractor
         self.modifier_extractor = modifier_extractor
@@ -57,15 +56,17 @@ class SentimentPipeline:
         self.association_sentiment_model = association_sentiment_model
         self.belonging_sentiment_model = belonging_sentiment_model
         self.aggregate_sentiment_model = aggregate_sentiment_model
-        self.combiner = combiner
-        self.combiner_params = combiner_params or {}
         self.use_cache = use_cache
         self.cache = PipelineCache() if use_cache else None
+        self.cache_signature = {
+            "sentiment_strategy": "context_snippet_v1",
+            "modifier_prompt_version": "contextual_ordering_v1",
+        }
 
     def _run_full_processing(self, text: str) -> Dict[str, Any]:
         clauses = self.clause_splitter.split(text) or [text]
         raw_aspects = self.aspect_extractor.analyze(clauses) or {}
-        graph = RelationGraph(text, clauses, self.sentiment_analysis, self.combiner, self.combiner_params)
+        graph = RelationGraph(text, clauses, self.sentiment_analysis)
 
         aspects = {}
         if isinstance(raw_aspects, dict):
@@ -196,13 +197,14 @@ class SentimentPipeline:
 
     def process(self, text: str, debug: bool = False) -> Dict[str, Any]:
         if self.cache:
-            cached_intermediate = self.cache.get_intermediate_results(text)
+            cached_intermediate = self.cache.get_intermediate_results(text, self.cache_signature)
             if cached_intermediate:
                 intermediate_results = cached_intermediate
             else:
                 intermediate_results = self._run_full_processing(text)
                 self.cache.store_intermediate_results(
                     text,
+                    settings=self.cache_signature,
                     intermediate_results=intermediate_results,
                     include_graph=True,
                 )
@@ -213,7 +215,7 @@ class SentimentPipeline:
         if graph is None:
             raise RuntimeError("Cached intermediate results are missing the relation graph")
 
-        # Normalize entity record containers (sets survived serialization as lists).
+                                                                                    
         entity_records = {}
         for entity_id, record in intermediate_results['entity_records'].items():
             normalized = dict(record)
@@ -242,15 +244,21 @@ class SentimentPipeline:
                     node_data['modifier_context_sentiment'] = mention['modifier_context_sentiment']
                 if 'modifier_sentiment_components' in mention and mention['modifier_sentiment_components']:
                     node_data['modifier_sentiment_components'] = dict(mention['modifier_sentiment_components'])
+        graph.aggregate_sentiments.clear()
+        graph.run_compound_action_sentiment_calculations(self.action_sentiment_model.calculate)
+        graph.run_compound_association_sentiment_calculations(self.association_sentiment_model.calculate)
+        graph.run_compound_belonging_sentiment_calculations(self.belonging_sentiment_model.calculate)
 
-        # Ensure the cached graph reflects the requested combiner configuration before aggregation.
-        graph.refresh_with_combiner(
-            self.combiner,
-            self.combiner_params,
-            self.action_sentiment_model.calculate,
-            self.association_sentiment_model.calculate,
-            self.belonging_sentiment_model.calculate,
-        )
+        for _, _, edge_data in graph.graph.edges(data=True):
+            if edge_data.get("relation") == "action":
+                action_node = edge_data.get("action")
+                if action_node in graph.graph.nodes:
+                    edge_data["init_sentiment"] = float(
+                        graph.graph.nodes[action_node].get("init_sentiment", 0.0)
+                    )
+
+        for node_key in list(graph.graph.nodes):
+            graph.graph.nodes[node_key].pop("compound_sentiment", None)
 
         intermediate_results['graph'] = graph
         clauses = intermediate_results['clauses']
@@ -272,41 +280,7 @@ class SentimentPipeline:
             'entity_sentiments': aggregate_results, 'aggregate_results': aggregate_results,
             'relations': relation_outputs, 'debug_messages': debug_messages,
         }
-
-
-def load_manual_combiner_config() -> Optional[Tuple[str, Dict[str, Any]]]:
-    """Load manual combiner configuration from combiner_config.json in project root."""
-    # Try project root first
-    config_paths = [
-        Path(__file__).resolve().parents[2] / "combiner_config.json",  # Project root
-        Path("combiner_config.json"),  # Current directory
-        Path(__file__).resolve().parent / "combiner_config.json",  # Pipeline directory
-    ]
-    
-    for config_file in config_paths:
-        if config_file.exists():
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data.get('combiner_name'), data.get('combiner_params', {})
-            except (json.JSONDecodeError, IOError) as e:
-                logger.warning(f"Failed to load manual combiner config from {config_file}: {e}")
-                continue
-    return None
-
-def build_default_pipeline(combiner: Optional[str] = None, combiner_params: Optional[Dict[str, Any]] = None):
-    # If no specific combiner/params are requested, try to load manual configuration
-    if combiner is None and combiner_params is None:
-        manual_config = load_manual_combiner_config()
-        if manual_config:
-            logger.info("Loading manual combiner configuration from combiner_config.json")
-            combiner, combiner_params = manual_config
-    
-    # Fallback to default if no manual config is found
-    if combiner is None:
-        combiner = "adaptive_v6"  # Changed from contextual_v3
-    
-    # Get optimal device for GPU acceleration
+def build_default_pipeline(*, use_cache: bool = True) -> SentimentPipeline:
     try:
         import torch
         if torch.backends.mps.is_available():
@@ -320,12 +294,19 @@ def build_default_pipeline(combiner: Optional[str] = None, combiner_params: Opti
         
     clause_splitter = BeneparClauseSplitter()
     aspect_extractor = HybridAspectExtractor(device=device)
-    modifier_extractor = DummyModifierExtractor()
+    try:
+        modifier_extractor = GemmaModifierExtractor()
+    except Exception as exc:
+        logger.warning(f"Failed to initialize GemmaModifierExtractor: {exc}. Falling back to spaCy extractor.")
+        try:
+            modifier_extractor = SpacyModifierExtractor()
+        except Exception as spa_exc:
+            logger.warning(f"Failed to initialize SpacyModifierExtractor: {spa_exc}. Using dummy extractor.")
+            modifier_extractor = DummyModifierExtractor()
     relation_extractor = GemmaRelationExtractor()
     sentiment_analysis = MultiSentimentAnalysis(
         methods=['distilbert_logit', 'flair', 'pysentimiento', 'vader'],
-        weights=[0.55, 0.2, 0.15, 0.1],
-        use_adaptive_weighting=True
+        weights=[0.55, 0.2, 0.15, 0.1]
     )
     action_sentiment_model = ActionSentimentModel()
     association_sentiment_model = AssociationSentimentModel()
@@ -342,8 +323,7 @@ def build_default_pipeline(combiner: Optional[str] = None, combiner_params: Opti
         association_sentiment_model=association_sentiment_model,
         belonging_sentiment_model=belonging_sentiment_model,
         aggregate_sentiment_model=aggregate_sentiment_model,
-        combiner=combiner,
-        combiner_params=combiner_params or {} # Pass the loaded or specified params
+        use_cache=use_cache,
     )
 
 def interpret_pipeline_output(result: Dict[str, Any]) -> str:
@@ -369,7 +349,8 @@ def print_pipeline_output(result: Dict[str, Any]) -> None:
     print(interpret_pipeline_output(result))
 
 if __name__ == "__main__":
-    sample_text = "The food was amazing, but the service was trash."
-    pipeline = build_default_pipeline()
+    sample_text = """One cold evening, the kind Alistair secretly gave a box of unsold bread to a hungry family huddled in the alley. The next day, the clever Leonardo, trying to cut costs, deceptively used cheap, expired flour for his new item. Leonardo also bullied Alistair. That hurt the bakery's reputation when several customers fell ill."""
+    pipeline = build_default_pipeline(use_cache=False)
     result = pipeline.process(sample_text)
+    print(result)
     print_pipeline_output(result)

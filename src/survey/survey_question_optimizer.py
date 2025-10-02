@@ -1187,7 +1187,7 @@ def _category_dataframe(category: str, score_key: str) -> tuple[pd.DataFrame, st
         y_col = 's_user_child'
         def pred_row_fn_cand(r, f):
             return f(r['s_init_child'], r['s_init_parent']) if f else np.nan
-    else:  # aggregate
+    else:             
         y_col = 's_user'
         def pred_row_fn_cand(r, f):
             return f(r['s_inits']) if f else np.nan
