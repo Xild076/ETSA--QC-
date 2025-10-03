@@ -339,8 +339,8 @@ def _load_semeval_xml(path: Path) -> List[DatasetItem]:
 def get_dataset(dataset_name: str) -> List[DatasetItem]:
     import random
     path_map = {
-        "test_laptop_2014": config.SEMEVAL_2014_LAPTOP_TEST,
         "test_restaurant_2014": config.SEMEVAL_2014_RESTAURANT_TEST,
+        "test_laptop_2014": config.SEMEVAL_2014_LAPTOP_TEST,
     }
     path = path_map.get(dataset_name)
     if not path or not path.exists():

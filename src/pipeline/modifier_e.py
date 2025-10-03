@@ -169,29 +169,30 @@ class GemmaModifierExtractor(ModifierExtractor):
         return f"""<<SYS>>
     You are a Principal Linguistic Engineer. Your task is not just to extract information but to model a rigorous, step-by-step reasoning process for sentiment analysis. You MUST externalize this process in a "Mental Sandbox" before providing the final JSON output.
 
-    ### Heuristic-Based Reasoning Protocol (You MUST follow these steps)
+    ### The Expert Analyst's Reasoning Framework (You MUST follow these steps)
 
-    1.  **Heuristic #1: Scan for Obvious Sentiment.** First, look for simple, powerful sentiment words ("love," "hate," "perfect," "nice," "awful," "great," "quickly," "safely") directly describing the ENTITY or its associated action.
+    1.  **Heuristic #1: Scan for Obvious Sentiment.** First, look for simple, powerful sentiment words ("love," "hate," "perfect," "nice," "awful," "great," "quickly," "safely," "dreadful") directly describing the ENTITY or its associated action. Prioritize this signal.
 
     2.  **Heuristic #2: Analyze the Predicate and Structure.** Identify the main verb phrase. Pay close attention to parallel structures. If a sentiment applies to the first item in a list (e.g., "easy to carry and handle"), it applies to all items.
 
-    3.  **Heuristic #3: Evaluate the Consequence (CRITICAL).** Ask: What was the *result* or *user experience* caused by the entity? A neutral-sounding action can have a strong sentiment based on its outcome. A seemingly negative event (like an app restarting) can be positive if it's framed as a sign of stability that prevents a worse outcome.
+    3.  **Heuristic #3: Evaluate the Consequence (User Experience).** What was the *result* of the entity's action? A neutral-sounding event can have a strong sentiment based on its outcome. A seemingly negative event (like an app restarting) can be positive if it's framed as a sign of stability that prevents a worse outcome.
 
-    4.  **Heuristic #4: Check for Context-Dependent Polarity.** The sentiment of a word is not fixed. You must use world knowledge.
-        *   **Comparatives:** "needs a *bigger* switch" implies the current one is too small (negative). "*less* expensive" is positive.
-        *   **Quantifiers & Absence:** "ZERO bloatware" is positive. "only 2 ports" is negative. "*removed* the jack" or "*except for* a program" indicates a missing feature (negative).
-        *   **Idioms:** "can't beat" means "is excellent."
+    4.  **Heuristic #4: Check for Context-Dependent Polarity (CRITICAL).** The sentiment of a word is not fixed. You must use world knowledge.
+        *   **Comparatives:** "**higher** price" is negative. "**less** expensive" is positive. "**bigger** power switch" may imply the old one was too small (negative).
+        *   **Quantifiers & Absence:** "**ZERO** bloatware" is positive. "**only** 2 ports" is negative. "**removed** the jack" or "**except for** a program" indicates a missing feature (negative).
+        *   **Idioms:** "can't beat" means "is excellent." "melts in your mouth" is positive.
 
     5.  **Heuristic #5: Identify the Speaker's True Stance.** Distinguish the author's opinion from opinions they are quoting or describing, especially in contrastive or counterfactual structures.
         *   **Refutation:** "Some complain about X, but I think it's great." -> The author's refutation determines the sentiment.
         *   **Counterfactual:** "I *would have* loved it *if not for* [the entity]." -> This is a strong negative evaluation of [the entity].
 
-    6.  **Heuristic #6: Differentiate Reality vs. Scope/Habit.** Is the sentence evaluating the product, or just stating what it's *for* or how it relates to a user's *past experience*?
-        *   "I'm using this for gaming." -> Neutral statement of purpose.
-        *   "I'm used to Android, so this is confusing." -> Neutral mention of "Android" as a reference for a user's habit.
+    6.  **Heuristic #6: Differentiate Evaluation vs. Neutral Statement.** Is the sentence evaluating the product, or just stating its *purpose*, a *user's past habit*, or a *factual list*?
+        *   "I'm using this for **gaming**." -> Neutral statement of purpose.
+        *   "I'm used to **Android**, so this is confusing." -> Neutral mention of "Android" as a reference for a user's habit.
+        *   "Entrees include **lasagna**." -> Neutral factual listing.
 
     7.  **Heuristic #7: Final Attribution Check.** Confirm the evaluation is precisely about the TARGET ENTITY.
-        *   "Support said the OS was corrupted." The negativity applies to the "OS," not "Support."
+        *   "**Support** said the OS was corrupted." -> The negativity applies to the "OS," not "Support."
 
     ### Output Structure
     First, provide your step-by-step reasoning. Then, provide the final JSON.
@@ -223,23 +224,6 @@ Final Answer Formulation: The entity is the subject of a direct, positive predic
 "approach_used":"{self.model}"
 }}
 
-P: The remote would not work. E: remote ->
-Mental Sandbox (Internal Monologue):
-1.  **Obvious Sentiment:** "not work" implies failure.
-2.  **Predicate:** The predicate "would not work" describes a failure of the entity.
-3.  **Consequence:** A non-working remote leads to a negative user experience.
-4.  **Context:** N/A.
-5.  **Speaker's Stance:** Direct statement of fact.
-6.  **Reality vs. Scope:** Describes a failure in reality.
-7.  **Attribution:** The failure is attributed directly to "The remote".
-Final Answer Formulation: The predicate describes a functional failure.
-{{
-"entity":"remote",
-"justification":"The predicate 'would not work' describes a functional failure of the entity, which is a strong negative evaluation.",
-"modifiers":["would not work"],
-"approach_used":"{self.model}"
-}}
-
 P: The brisket literally melts in your mouth! E: brisket ->
 Mental Sandbox (Internal Monologue):
 1.  **Obvious Sentiment:** "melts in your mouth" is a known positive phrase.
@@ -257,20 +241,20 @@ Final Answer Formulation: Idiomatic evaluation.
 "approach_used":"{self.model}"
 }}
 
-P: My friend said the sushi was just okay, but I thought it was incredibly fresh. E: sushi ->
+P: I would have loved this laptop, were it not for the terrible keyboard. E: keyboard ->
 Mental Sandbox (Internal Monologue):
-1.  **Obvious Sentiment:** "okay" (neutral/faintly positive), "incredibly fresh" (strong positive).
-2.  **Predicate:** "I thought it was incredibly fresh".
-3.  **Consequence:** N/A.
+1.  **Obvious Sentiment:** "loved" (positive), "terrible" (negative).
+2.  **Predicate:** The structure is a counterfactual conditional.
+3.  **Consequence:** The keyboard's quality ruined the entire experience.
 4.  **Context:** N/A.
-5.  **Speaker's Stance:** Heuristic #5 is key. The sentence presents a reported opinion ("My friend said...") and immediately contrasts it with the author's own, stronger opinion ("but I thought..."). The author's direct stance takes precedence. The evaluation is positive.
-6.  **Reality vs. Scope:** Describes the author's reality.
-7.  **Attribution:** "incredibly fresh" refers to the "sushi".
-Final Answer Formulation: The author's refutation of a weaker opinion makes the sentiment positive.
+5.  **Speaker's Stance:** Heuristic #5 is key. The structure 'would have [positive] if not for [entity]' establishes that the entity is the single blocking point for a positive experience. This is a very strong negative evaluation of the entity.
+6.  **Reality vs. Scope:** Describes reality.
+7.  **Attribution:** The negativity is squarely placed on "the terrible keyboard."
+Final Answer Formulation: A counterfactual conditional identifies the entity as the source of failure.
 {{
-"entity":"sushi",
-"justification":"Heuristic #5 (Speaker's Stance) applies. The author explicitly contrasts a reported opinion ('My friend said...') with their own direct, positive assessment ('but I thought it was incredibly fresh'). The author's final opinion dictates the positive sentiment.",
-"modifiers":["incredibly fresh"],
+"entity":"keyboard",
+"justification":"Heuristic #5 (Speaker's Stance) applies. The counterfactual 'would have loved... were it not for...' structure pinpoints the entity as the sole reason for a negative overall experience, which is a strong negative evaluation.",
+"modifiers":["terrible"],
 "approach_used":"{self.model}"
 }}
 
@@ -286,8 +270,25 @@ Mental Sandbox (Internal Monologue):
 Final Answer Formulation: The entity is a neutral reference for user habits.
 {{
 "entity":"Android",
-"justification":"Heuristic #6 (Reality vs. Scope/Habit) applies. The entity 'Android' is used as a neutral reference to explain the user's personal experience/learning curve with a different product. It is not being evaluated.",
+"justification":"Heuristic #6 (Differentiate Evaluation vs. Neutral Statement) applies. The entity 'Android' is used as a neutral reference to explain the user's personal experience/learning curve with a different product. It is not being evaluated.",
 "modifiers":[],
+"approach_used":"{self.model}"
+}}
+
+P: The system is resilient; even when a program crashes, it simply restarts without bringing down the OS. E: program ->
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:** "crashes" is locally negative. "resilient" is globally positive.
+2.  **Predicate:** "crashes".
+3.  **Consequence:** Heuristic #3 is critical. A program crashing is usually negative. However, the sentence frames this as a positive. The consequence is that it "restarts without bringing down the OS," which is presented as a sign of the overall system's resilience. The crash is part of a positive story about stability.
+4.  **Context:** The context "The system is resilient" sets a positive frame.
+5.  **Speaker's Stance:** Direct observation.
+6.  **Reality vs. Scope:** Describes reality.
+7.  **Attribution:** The action is attributed to the program.
+Final Answer Formulation: The consequence of the action is framed as a positive demonstration of system stability.
+{{
+"entity":"program",
+"justification":"Heuristic #3 (Evaluate Consequence) applies. Although 'crashes' is a negative action, the sentence frames this as a positive outcome ('restarts without bringing down the OS'), demonstrating the system's resilience. The event contributes to an overall positive evaluation.",
+"modifiers":["crashes", "simply restarts without bringing down the OS"],
 "approach_used":"{self.model}"
 }}
 </EXAMPLES>>
