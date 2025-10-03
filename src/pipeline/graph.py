@@ -151,17 +151,14 @@ class RelationGraph:
         key = self._node_key(id, clause_layer)
         clause_text = self.clauses[clause_layer] if 0 <= clause_layer < len(self.clauses) else self.text
         text_for_sent = self._build_context_snippet(head, modifier, clause_text)
-        if modifier:
+        sentiment = self._sent(text_for_sent)
+        """if modifier:
             sentiment = self._sent(text_for_sent)
         else:
-            head_sentiment = self._sent(head)
-            context_sentiment = self._sent(clause_text[:200]) if len(clause_text) > len(head) else head_sentiment
-            if abs(head_sentiment) > 0.3:
-                sentiment = head_sentiment * 0.6
-            elif abs(context_sentiment) > 0.2:
-                sentiment = context_sentiment * 0.4
-            else:
-                sentiment = head_sentiment * 0.1
+            # When no modifiers extracted, dampen sentiment by 0.1x
+            # This helps neutral cases default closer to 0 while preserving inherent sentiment direction
+            # Entities like "slow performance", "fresh juices" have inherent sentiment but weaker without modifiers
+            sentiment = 0.1 * self._sent(head)"""
         self.graph.add_node(
             key,
             head=head,

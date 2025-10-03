@@ -167,159 +167,148 @@ class GemmaModifierExtractor(ModifierExtractor):
 
     def _prompt(self, passage: str, entity: str) -> str:
         return f"""<<SYS>>
-You are an expert linguist performing aspect-based sentiment analysis. Extract ONLY strongly evaluative predicates that express clear positive or negative sentiment about the ENTITY's INHERENT qualities, characteristics, or performance.
+    You are a Principal Linguistic Engineer. Your task is not just to extract information but to model a rigorous, step-by-step reasoning process for sentiment analysis. You MUST externalize this process in a "Mental Sandbox" before providing the final JSON output.
 
-## CRITICAL DISTINCTIONS
+    ### Heuristic-Based Reasoning Protocol (You MUST follow these steps)
 
-**EVALUATIVE (sentiment-bearing) vs NON-EVALUATIVE (factual/descriptive):**
+    1.  **Heuristic #1: Scan for Obvious Sentiment.** First, look for simple, powerful sentiment words ("love," "hate," "perfect," "nice," "awful," "great," "quickly," "safely") directly describing the ENTITY or its associated action.
 
-STRONGLY EVALUATIVE (extract these):
-  ✓ "is excellent" - clear positive evaluation of entity's quality
-  ✓ "works perfectly" - clear positive evaluation of entity's performance
-  ✓ "is unmatched in quality" - clear positive evaluation of entity's superiority
-  ✓ "is disappointing" - clear negative evaluation of entity's quality
-  ✓ "has terrible performance" - clear negative evaluation of entity's attribute
+    2.  **Heuristic #2: Analyze the Predicate and Structure.** Identify the main verb phrase. Pay close attention to parallel structures. If a sentiment applies to the first item in a list (e.g., "easy to carry and handle"), it applies to all items.
 
-WEAKLY EVALUATIVE or NEUTRAL (DO NOT extract):
-  ✗ "had something for everyone" - too neutral, no clear sentiment direction
-  ✗ "is scrumptious" - applies to food context but entity may not be food
-  ✗ "is nice" - too weak/vague
-  ✗ "is ok" - neutral/weak
-  
-NON-EVALUATIVE (DO NOT extract):
-  ✗ "is my main computer" - states possession/relationship
-  ✗ "is Windows 8" - identifies/equates
-  ✗ "is either A or B" - presents options
-  ✗ "is a design" - categorizes
-  ✗ "since this is X" - provides context
+    3.  **Heuristic #3: Evaluate the Consequence (CRITICAL).** Ask: What was the *result* or *user experience* caused by the entity? A neutral-sounding action can have a strong sentiment based on its outcome. A seemingly negative event (like an app restarting) can be positive if it's framed as a sign of stability that prevents a worse outcome.
 
-## MANDATORY EXTRACTION RULES
+    4.  **Heuristic #4: Check for Context-Dependent Polarity.** The sentiment of a word is not fixed. You must use world knowledge.
+        *   **Comparatives:** "needs a *bigger* switch" implies the current one is too small (negative). "*less* expensive" is positive.
+        *   **Quantifiers & Absence:** "ZERO bloatware" is positive. "only 2 ports" is negative. "*removed* the jack" or "*except for* a program" indicates a missing feature (negative).
+        *   **Idioms:** "can't beat" means "is excellent."
 
-**Rule 1: ENTITY MUST BE GRAMMATICAL SUBJECT WITH INHERENT QUALITY**
-ONLY extract if the ENTITY is the subject performing/possessing the quality.
-→ "Leonardo is clever" - YES (Leonardo possesses cleverness)
-→ "The screen is bright" - YES (screen possesses brightness)
-→ "Alistair was bullied" - NO (Alistair is object of action, not possessing quality)
-→ "The food was eaten" - NO (food is object, not possessing quality)
+    5.  **Heuristic #5: Identify the Speaker's True Stance.** Distinguish the author's opinion from opinions they are quoting or describing, especially in contrastive or counterfactual structures.
+        *   **Refutation:** "Some complain about X, but I think it's great." -> The author's refutation determines the sentiment.
+        *   **Counterfactual:** "I *would have* loved it *if not for* [the entity]." -> This is a strong negative evaluation of [the entity].
 
-**CRITICAL: DO NOT EXTRACT ACTIONS DONE TO THE ENTITY**
-If someone/something else acts upon the entity, that's a RELATION, not a modifier:
-  ✗ "was bullied" - action done TO entity (relation extraction's job)
-  ✗ "was cheated" - action done TO entity (relation extraction's job)
-  ✗ "was criticized" - action done TO entity (relation extraction's job)
-  ✗ "was praised" - action done TO entity (relation extraction's job)
-  ✗ "got stolen" - action done TO entity (relation extraction's job)
+    6.  **Heuristic #6: Differentiate Reality vs. Scope/Habit.** Is the sentence evaluating the product, or just stating what it's *for* or how it relates to a user's *past experience*?
+        *   "I'm using this for gaming." -> Neutral statement of purpose.
+        *   "I'm used to Android, so this is confusing." -> Neutral mention of "Android" as a reference for a user's habit.
 
-ONLY extract if entity is the AGENT (doer) or POSSESSOR of the quality:
-  ✓ "is clever" - entity possesses cleverness
-  ✓ "works well" - entity performs action
-  ✓ "has excellent design" - entity possesses quality
+    7.  **Heuristic #7: Final Attribution Check.** Confirm the evaluation is precisely about the TARGET ENTITY.
+        *   "Support said the OS was corrupted." The negativity applies to the "OS," not "Support."
 
-**Rule 2: STRONG SENTIMENT REQUIRED**
-Only extract modifiers that have CLEAR positive or negative sentiment.
-→ "excellent", "terrible", "perfect", "awful", "amazing", "horrible" = YES
-→ "something", "nice", "ok", "fine", "interesting" = NO (too weak/neutral)
-
-**Rule 3: COMPLETE PREPOSITIONAL PHRASES**
-If predicate has "in/for/with/about", include the ENTIRE prepositional phrase.
-WRONG: "is unmatched" (incomplete)
-RIGHT: "is unmatched in product quality" (complete)
-
-**Rule 4: AVOID IDENTIFYING CONSTRUCTIONS**
-Pattern: "is a/an/the [noun]"
-→ This IDENTIFIES what something is, doesn't EVALUATE its quality
-Examples to SKIP:
-  - "is a defective design" (identifies as design)
-  - "is the biggest complaint" (identifies role)
-  - "is my main computer" (identifies possession)
-
-**Rule 5: DISJUNCTIVE/LIST CONTEXTS**
-Pattern: "either A or B", "A, B, or C"
-→ Entities in lists are being presented as options, NOT evaluated
-→ Extract modifiers ONLY if there's explicit strong evaluation
-
-**Rule 6: PRONOUNS ARE NOT ASPECTS**
-If ENTITY is: "this", "that", "it", "either", "my", "the", "their", "everything"
-→ These are VAGUE references - return EMPTY modifiers unless there's VERY strong direct evaluation
-→ The aspect extractor likely made an error; don't compound it
-
-**Rule 7: POSSESSIVE/CONTEXTUAL PHRASES**
-Patterns to AVOID:
-  - "is my/your/their [X]"
-  - "since [entity] is [X]"
-  - "had [something]"
-  - "has [something]"
-→ These describe relationships or states, NOT the entity's inherent qualities
-
-**Rule 8: CONTEXT MISMATCH**
-If the modifier sentiment applies to a different context than the entity:
-  - "is scrumptious" only for food/drink, NOT for "everything", "service", "atmosphere"
-  - "is lush" only for physical spaces/plants, NOT for abstract concepts
-→ Skip modifiers that don't semantically match the entity type
-
-## OUTPUT REQUIREMENTS
-
-Return **one** valid JSON object (no markdown fences):
-{{
-    "entity": "{entity}",
-    "approach_used": "{self.model}",
-    "justification": "Brief explanation of what was found/excluded and why",
-    "ordered_modifiers": ["complete verbatim phrases in order"],
-    "modifiers": [
-        {{
-            "text": "complete verbatim predicate with all necessary phrases",
-            "order": 1,
-            "context_type": "primary|contrast|value|usage|temporal|condition|desire|comparison|other",
-            "contains_negation": false,
-            "evidence_clause": "the source clause",
-            "note": "why this is strongly evaluative of the ENTITY's inherent quality"
-        }}
-    ]
-}}
-
-## EXAMPLES WITH EXPLANATIONS
-
-Example 1:
-PASSAGE: "Apple is unmatched in product quality, aesthetics, and customer service."
-ENTITY: "product quality"
-CORRECT: [{{"text": "is unmatched", ...}}]
-REASONING: "is unmatched" is strongly positive and directly evaluates superiority
-
-Example 2:
-PASSAGE: "Leonardo also bullied Alistair."
-ENTITY: "Alistair"
-CORRECT: []
-REASONING: "bullied" is an action done TO Alistair, not a quality Alistair possesses. This is a relation, not a modifier.
-
-Example 3:
-PASSAGE: "The clever Leonardo used expired flour."
-ENTITY: "Leonardo"
-CORRECT: [{{"text": "is clever", ...}}]
-REASONING: "is clever" is a quality Leonardo possesses (inherent attribute)
-
-Example 4:
-PASSAGE: "their brunch menu had something for everyone"
-ENTITY: "their brunch menu"
-CORRECT: []
-REASONING: "had something for everyone" is neutral/descriptive, not evaluative
-
-Example 5:
-PASSAGE: "everything is scrumptious, from the excellent service to the extremely lush atmosphere"
-ENTITY: "everything"
-CORRECT: []
-REASONING: "everything" is too vague, and "is scrumptious" applies to food, not abstract concepts
-
-Example 6:
-```
-
+    ### Output Structure
+    First, provide your step-by-step reasoning. Then, provide the final JSON.
 <</SYS>>
 
-PASSAGE:
+<<PASSAGE>>
 {passage}
+</PASSAGE>>
 
-ENTITY:
+<<ENTITY>>
 {entity}
-"""
+</ENTITY>>
+
+<<EXAMPLES>>
+P: The pizza was great, and the portion size was generous. E: portion size ->
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:** "great", "generous".
+2.  **Predicate:** The entity "portion size" is the subject of the predicate "was generous".
+3.  **Consequence:** N/A.
+4.  **Context:** "generous" is a direct positive evaluation in this context.
+5.  **Speaker's Stance:** Direct opinion.
+6.  **Reality vs. Scope:** Describes reality.
+7.  **Attribution:** "was generous" directly modifies "portion size".
+Final Answer Formulation: The entity is the subject of a direct, positive predicate.
+{{
+"entity":"portion size",
+"justification":"The entity is directly evaluated by the positive predicate 'was generous'.",
+"modifiers":["was generous"],
+"approach_used":"{self.model}"
+}}
+
+P: The remote would not work. E: remote ->
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:** "not work" implies failure.
+2.  **Predicate:** The predicate "would not work" describes a failure of the entity.
+3.  **Consequence:** A non-working remote leads to a negative user experience.
+4.  **Context:** N/A.
+5.  **Speaker's Stance:** Direct statement of fact.
+6.  **Reality vs. Scope:** Describes a failure in reality.
+7.  **Attribution:** The failure is attributed directly to "The remote".
+Final Answer Formulation: The predicate describes a functional failure.
+{{
+"entity":"remote",
+"justification":"The predicate 'would not work' describes a functional failure of the entity, which is a strong negative evaluation.",
+"modifiers":["would not work"],
+"approach_used":"{self.model}"
+}}
+
+P: The brisket literally melts in your mouth! E: brisket ->
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:** "melts in your mouth" is a known positive phrase.
+2.  **Predicate:** "literally melts in your mouth".
+3.  **Consequence:** N/A.
+4.  **Context:** This is a common positive idiom for tender food.
+5.  **Speaker's Stance:** Direct opinion.
+6.  **Reality vs. Scope:** Describes reality.
+7.  **Attribution:** The idiom describes the "brisket".
+Final Answer Formulation: Idiomatic evaluation.
+{{
+"entity":"brisket",
+"justification":"Heuristic #4 (Context-Dependent Polarity) applies. The phrase 'melts in your mouth' is a well-known positive idiom for tender food.",
+"modifiers":["literally melts in your mouth"],
+"approach_used":"{self.model}"
+}}
+
+P: My friend said the sushi was just okay, but I thought it was incredibly fresh. E: sushi ->
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:** "okay" (neutral/faintly positive), "incredibly fresh" (strong positive).
+2.  **Predicate:** "I thought it was incredibly fresh".
+3.  **Consequence:** N/A.
+4.  **Context:** N/A.
+5.  **Speaker's Stance:** Heuristic #5 is key. The sentence presents a reported opinion ("My friend said...") and immediately contrasts it with the author's own, stronger opinion ("but I thought..."). The author's direct stance takes precedence. The evaluation is positive.
+6.  **Reality vs. Scope:** Describes the author's reality.
+7.  **Attribution:** "incredibly fresh" refers to the "sushi".
+Final Answer Formulation: The author's refutation of a weaker opinion makes the sentiment positive.
+{{
+"entity":"sushi",
+"justification":"Heuristic #5 (Speaker's Stance) applies. The author explicitly contrasts a reported opinion ('My friend said...') with their own direct, positive assessment ('but I thought it was incredibly fresh'). The author's final opinion dictates the positive sentiment.",
+"modifiers":["incredibly fresh"],
+"approach_used":"{self.model}"
+}}
+
+P: I'm used to Android, so the iPhone's settings are confusing at first. E: Android ->
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:** "confusing" is negative.
+2.  **Predicate:** N/A for Android.
+3.  **Consequence:** N/A for Android.
+4.  **Context:** N/A.
+5.  **Speaker's Stance:** N/A.
+6.  **Reality vs. Scope:** Heuristic #6 applies. The sentence uses "Android" as a neutral reference point to explain the user's personal learning curve with a different system. It is not evaluating Android.
+7.  **Attribution:** The negative sentiment "confusing" applies to the "iPhone's settings," not to "Android."
+Final Answer Formulation: The entity is a neutral reference for user habits.
+{{
+"entity":"Android",
+"justification":"Heuristic #6 (Reality vs. Scope/Habit) applies. The entity 'Android' is used as a neutral reference to explain the user's personal experience/learning curve with a different product. It is not being evaluated.",
+"modifiers":[],
+"approach_used":"{self.model}"
+}}
+</EXAMPLES>>
+
+<<RESPONSE>>
+Mental Sandbox (Internal Monologue):
+1.  **Obvious Sentiment:**
+2.  **Predicate:**
+3.  **Consequence:**
+4.  **Idioms & Context:**
+5.  **Speaker's Stance:**
+6.  **Reality vs. Scope:**
+7.  **Attribution:**
+Final Answer Formulation:
+{{
+"entity": "{entity}",
+"justification": "Explain how you identified the modifiers based on the heuristic analysis.",
+"modifiers": [],
+"approach_used":"{self.model}"
+}}
+    """
 
     def _call(self, prompt: str) -> str:
         if self.rate_limiter:
@@ -350,7 +339,11 @@ ENTITY:
             raise RuntimeError("Cache miss for GemmaModifierExtractor in cache-only mode")
         p = self._prompt(text, entity)
         last_err = None
-        for i in range(self.retries + 1):
+        max_rate_limit_retries = 5  # More retries for rate limiting
+        attempt = 0
+        max_attempts = max(self.retries + 1, max_rate_limit_retries + 1)
+        
+        while attempt < max_attempts:
             try:
                 raw = self._call(p)
                 data = _parse_json_payload(raw) or {}
@@ -506,9 +499,81 @@ ENTITY:
                 return out
             except Exception as e:
                 last_err = e
-                if i < self.retries:
-                    time.sleep(self.backoff * (i + 1))
-        return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": f"failure: {last_err}"}
+                error_str = str(e).lower()
+                
+                # Check if this is a rate limiting error
+                is_rate_limit = (
+                    "429" in str(e) or 
+                    "quota" in error_str or 
+                    "rate limit" in error_str or
+                    "resource exhausted" in error_str or
+                    "too many requests" in error_str
+                )
+                
+                if is_rate_limit:
+                    # Use exponential backoff for rate limiting with longer waits
+                    retry_attempt = attempt + 1
+                    if retry_attempt <= max_rate_limit_retries:
+                        # Exponential backoff: 2, 4, 8, 16, 32 seconds
+                        wait_time = min(2 ** retry_attempt, 60)  # Cap at 60 seconds
+                        logger.warning(
+                            f"⚠️  RATE LIMIT hit for entity '{entity[:50]}...' - "
+                            f"Retry {retry_attempt}/{max_rate_limit_retries} after {wait_time}s wait"
+                        )
+                        print(
+                            f"⚠️  RATE LIMIT: Waiting {wait_time}s before retry {retry_attempt}/{max_rate_limit_retries} "
+                            f"for entity '{entity[:50]}{'...' if len(entity) > 50 else ''}'"
+                        )
+                        time.sleep(wait_time)
+                        attempt += 1
+                        continue
+                    else:
+                        logger.error(
+                            f"❌ RATE LIMIT exceeded after {max_rate_limit_retries} retries for entity '{entity[:50]}...'"
+                        )
+                        print(
+                            f"❌ RATE LIMIT: Failed after {max_rate_limit_retries} retries "
+                            f"for entity '{entity[:50]}{'...' if len(entity) > 50 else ''}'"
+                        )
+                        # Cache the failure to avoid retrying the same entity repeatedly
+                        failure_result = {
+                            "entity": entity, 
+                            "modifiers": [], 
+                            "ordered_modifiers": [],
+                            "modifier_annotations": [],
+                            "approach_used": self.model, 
+                            "justification": f"RATE_LIMIT_EXCEEDED: {str(e)[:200]}"
+                        }
+                        self._cache[cache_key] = deepcopy(failure_result)
+                        if self.cache_file:
+                            save_cache_to_file(self.cache_file, self._cache)
+                        return failure_result
+                else:
+                    # Non-rate-limit error: use standard backoff
+                    if attempt < self.retries:
+                        wait_time = self.backoff * (attempt + 1)
+                        logger.warning(f"API error for entity '{entity[:50]}...': {str(e)[:100]} - Retrying in {wait_time}s")
+                        time.sleep(wait_time)
+                        attempt += 1
+                        continue
+                    else:
+                        logger.error(f"API error after {self.retries + 1} attempts for entity '{entity[:50]}...': {str(e)[:100]}")
+                        break
+                        
+        # Final fallback after all retries
+        failure_result = {
+            "entity": entity, 
+            "modifiers": [], 
+            "ordered_modifiers": [],
+            "modifier_annotations": [],
+            "approach_used": self.model, 
+            "justification": f"EXTRACTION_FAILED: {str(last_err)[:200]}"
+        }
+        # Cache failures to avoid repeated attempts
+        self._cache[cache_key] = deepcopy(failure_result)
+        if self.cache_file:
+            save_cache_to_file(self.cache_file, self._cache)
+        return failure_result
 
 class SpacyModifierExtractor(ModifierExtractor):
     def _extract_helper(self, text: str, entity: str) -> Dict[str, Any]:

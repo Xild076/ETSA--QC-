@@ -60,7 +60,7 @@ class SentimentPipeline:
         self.cache = PipelineCache() if use_cache else None
         self.cache_signature = {
             "sentiment_strategy": "context_snippet_v1",
-            "modifier_prompt_version": "contextual_ordering_v1",
+            "modifier_prompt_version": "contextual_ordering_v2",
         }
 
     def _run_full_processing(self, text: str) -> Dict[str, Any]:
@@ -257,8 +257,9 @@ class SentimentPipeline:
                         graph.graph.nodes[action_node].get("init_sentiment", 0.0)
                     )
 
-        for node_key in list(graph.graph.nodes):
-            graph.graph.nodes[node_key].pop("compound_sentiment", None)
+        # CRITICAL: DO NOT remove compound_sentiment before aggregation!
+        # Aggregation needs compound_sentiment values that include relation effects.
+        # Only remove them AFTER aggregation if needed for clean output.
 
         intermediate_results['graph'] = graph
         clauses = intermediate_results['clauses']
@@ -306,7 +307,7 @@ def build_default_pipeline(*, use_cache: bool = True) -> SentimentPipeline:
     relation_extractor = GemmaRelationExtractor()
     sentiment_analysis = MultiSentimentAnalysis(
         methods=['distilbert_logit', 'flair', 'pysentimiento', 'vader'],
-        weights=[0.55, 0.2, 0.15, 0.1]
+        weights=[0.3, 0.1, 0.5, 0.1]  # Pysentimiento-heavy: fixes "unmatched" misclassification
     )
     action_sentiment_model = ActionSentimentModel()
     association_sentiment_model = AssociationSentimentModel()
@@ -349,7 +350,7 @@ def print_pipeline_output(result: Dict[str, Any]) -> None:
     print(interpret_pipeline_output(result))
 
 if __name__ == "__main__":
-    sample_text = """One cold evening, the kind Alistair secretly gave a box of unsold bread to a hungry family huddled in the alley. The next day, the clever Leonardo, trying to cut costs, deceptively used cheap, expired flour for his new item. Leonardo also bullied Alistair. That hurt the bakery's reputation when several customers fell ill."""
+    sample_text = """One cold evening, the kind Alistair secretly helped a hungry family huddled in the alley. The next day, the evil Leonardo deceptively used expired ingredients for his new item. Leonardo also bullied Alistair. That hurt the bakery's reputation when several customers fell ill."""
     pipeline = build_default_pipeline(use_cache=False)
     result = pipeline.process(sample_text)
     print(result)

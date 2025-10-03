@@ -997,6 +997,95 @@ class HybridAspectExtractor(ATE):
             -mention.clause_id,
         )
 
+    def _merge_clusters(self, clusters: List[List[Mention]], dst_idx: int, src_idx: int, assignment_map: Dict[Mention, int]) -> None:
+        if dst_idx == src_idx or src_idx < 0 or src_idx >= len(clusters):
+            return
+        for mention in clusters[src_idx]:
+            if mention not in clusters[dst_idx]:
+                clusters[dst_idx].append(mention)
+                assignment_map[mention] = dst_idx
+        clusters[src_idx] = []
+
+    def _build_clause_candidates(self, mentions: List[Mention]) -> Dict[int, List[Mention]]:
+        clause_map: Dict[int, List[Mention]] = defaultdict(list)
+        for mention in mentions:
+            if mention.is_pronoun:
+                continue
+            clause_map[mention.clause_id].append(mention)
+        for clause_mentions in clause_map.values():
+            clause_mentions.sort(key=self._mention_priority, reverse=True)
+        return clause_map
+
+    def _generate_clause_fallback_mentions(
+        self,
+        doc: spacy.tokens.Doc,
+        clause_id: int,
+        clause_boundaries: List[Tuple[int, int]],
+    ) -> List[Mention]:
+        if clause_id < 0 or clause_id >= len(clause_boundaries):
+            return []
+        start_char, end_char = clause_boundaries[clause_id]
+        span = doc.char_span(start_char, end_char, alignment_mode="expand")
+        if span is None:
+            return []
+
+        seen_offsets = set()
+        fallback_mentions: List[Mention] = []
+        for token in span:
+            if token.pos_ not in {"NOUN", "PROPN"}:
+                continue
+            if token.is_stop:
+                continue
+            token_span = doc[token.i : token.i + 1]
+            offsets = (token_span.start_char, token_span.end_char)
+            if offsets in seen_offsets:
+                continue
+            seen_offsets.add(offsets)
+            fallback_mentions.append(Mention(token_span, origin="fallback", clause_boundaries=clause_boundaries))
+        fallback_mentions.sort(key=self._mention_priority, reverse=True)
+        return fallback_mentions
+
+    def _apply_pronoun_fallback(
+        self,
+        clusters: List[List[Mention]],
+        mentions: List[Mention],
+        clause_boundaries: List[Tuple[int, int]],
+        doc: spacy.tokens.Doc,
+    ) -> None:
+        assignment_map: Dict[Mention, int] = {}
+        for idx, cluster in enumerate(clusters):
+            for mention in cluster:
+                assignment_map[mention] = idx
+
+        clause_candidates = self._build_clause_candidates(mentions)
+
+        for idx, cluster in enumerate(clusters):
+            if not cluster or any(not mention.is_pronoun for mention in cluster):
+                continue
+
+            clause_id = min(mention.clause_id for mention in cluster)
+            candidates = clause_candidates.get(clause_id, [])
+            if not candidates:
+                if clause_candidates:
+                    nearest_clause = min(
+                        clause_candidates.keys(),
+                        key=lambda cid: (abs(cid - clause_id), cid),
+                    )
+                    candidates = clause_candidates.get(nearest_clause, [])
+            if not candidates:
+                candidates = self._generate_clause_fallback_mentions(doc, clause_id, clause_boundaries)
+            if not candidates:
+                continue
+
+            fallback = max(candidates, key=self._mention_priority)
+            existing_idx = assignment_map.get(fallback)
+            if existing_idx is not None and existing_idx != idx:
+                self._merge_clusters(clusters, idx, existing_idx, assignment_map)
+            else:
+                if fallback not in cluster:
+                    cluster.append(fallback)
+                    assignment_map[fallback] = idx
+
     def _select_canonical(self, cluster: List[Mention]) -> Mention:
         non_pronouns = [m for m in cluster if not m.is_pronoun]
         if not non_pronouns:
@@ -1144,6 +1233,8 @@ class HybridAspectExtractor(ATE):
             clusters[assigned_idx].append(mention)
             if not mention.is_pronoun:
                 lemma_index.setdefault(mention.head_lemma, set()).add(assigned_idx)
+
+        self._apply_pronoun_fallback(clusters, all_mentions, clause_boundaries, doc)
 
         normalized_clusters = []
         for cluster in clusters:

@@ -135,7 +135,11 @@ class GemmaRelationExtractor(RelationExtractor):
             "\n"
             "## Rules:\n"
             "1.  **Relation Types (mutually exclusive)**:\n"
-            "    -   `ACTION`: An actor entity performs an action affecting a target entity. The `text` MUST be a verbatim verb phrase from the passage.\n"
+            "    -   `ACTION`: An actor entity performs an action affecting a target entity. The `text` MUST be a verbatim verb phrase from the passage, including:\n"
+            "        - Manner adverbs (e.g., 'secretly gave', 'deceptively used')\n"
+            "        - Negation/modals (e.g., 'would not fix', 'never helped')\n"
+            "        - Sentiment-bearing objects when relevant (e.g., 'used expired flour' not just 'used')\n"
+            "        - Shared predicates applied to multiple listed entities (emit one ACTION per subject→object pair)\n"
             "    -   `ASSOCIATION`: Entities are linked by coordination (`and`, `with`, commas) without a directional predicate.\n"
             "    -   `BELONGING`: A child entity is an attribute/part of a parent entity (e.g., `'s`, `of`).\n"
             "2.  **Strict Entity Matching**: Use **only** the exact entity strings provided in the <<ENTITIES>> list. Do not invent, normalize, or alias entities.\n"
@@ -143,8 +147,12 @@ class GemmaRelationExtractor(RelationExtractor):
             "    -   `ACTION`: `subject`=actor, `object`=target.\n"
             "    -   `BELONGING`: `subject`=part/child, `object`=owner/whole.\n"
             "    -   `ASSOCIATION`: `subject`/`object` order is left-to-right as they appear in the passage.\n"
-            "4.  **No Relation**: If no valid relations exist between the provided entities, return an empty `relations` array.\n"
-            "5.  **Output Format**: Return a single, valid JSON object with no markdown fences.\n"
+            "4.  **Enumerations & Shared Predicates**: When a clause lists entities (comma/`and`) that share a predicate such as 'came with', 'were required', or 'was all that was needed', create:\n"
+            "    -   `ASSOCIATION` links between the coordinated entities, and\n"
+            "    -   `ACTION` relations from the controlling verb to each relevant entity.\n"
+            "5.  **Comparatives, Negations & Absence**: Capture verbs expressing contrast, failure, or lack (e.g., 'was higher than', 'would not fix', 'has no', 'lacks', 'there was no change', 'costs more than') as ACTION relations. Preserve the negation/value tokens and, when the verb encodes absence, include the critical object (e.g., 'has no HDMI port', 'lacks dedicated graphics').\n"
+            "6.  **No Relation**: If no valid relations exist between the provided entities, return an empty `relations` array.\n"
+            "7.  **Output Format**: Return a single, valid JSON object with no markdown fences.\n"
             "\n"
             "## Output Schema:\n"
             "{\n"
@@ -155,9 +163,13 @@ class GemmaRelationExtractor(RelationExtractor):
             "}\n"
             "<</SYS>>\n\n"
             "## Examples:\n"
+            'P: "The kind Alistair secretly gave a box to the family." E: ["Alistair", "box", "family"] -> {"justification":"ACTION with manner adverb included.","relations":[{"subject":"Alistair","object":"family","relation":{"type":"ACTION","text":"secretly gave"}},{"subject":"Alistair","object":"box","relation":{"type":"ACTION","text":"gave"}}]}\n'
+            'P: "Leonardo deceptively used cheap, expired flour." E: ["Leonardo", "expired flour"] -> {"justification":"ACTION with manner adverb.","relations":[{"subject":"Leonardo","object":"expired flour","relation":{"type":"ACTION","text":"deceptively used"}}]}\n'
             'P: "tech support would not fix the problem." E: ["tech support", "problem"] -> {"justification":"Action relation found.","relations":[{"subject":"tech support","object":"problem","relation":{"type":"ACTION","text":"would not fix"}}]}\n'
+            'P: "The laptop has no HDMI port." E: ["laptop", "HDMI port"] -> {"justification":"Negated possession captured as action.","relations":[{"subject":"laptop","object":"HDMI port","relation":{"type":"ACTION","text":"has no HDMI port"}}]}\n'
             'P: "Food and wine arrived." E: ["food","wine"] -> {"justification":"Coordination implies association.","relations":[{"subject":"food","object":"wine","relation":{"type":"ASSOCIATION","text":"and"}}]}\n'
             'P: "The laptop\'s battery is great." E: ["laptop","battery"] -> {"justification":"Possessive marks part-whole.","relations":[{"subject":"battery","object":"laptop","relation":{"type":"BELONGING","text":"\'s"}}]}\n'
+            'P: "WiFi capability, disk drive and multiple USB ports were all that was required." E: ["WiFi capability","disk drive","multiple USB ports"] -> {"justification":"Shared predicate handled.","relations":[{"subject":"WiFi capability","object":"disk drive","relation":{"type":"ASSOCIATION","text":","}},{"subject":"disk drive","object":"multiple USB ports","relation":{"type":"ASSOCIATION","text":"and"}},{"subject":"WiFi capability","object":"disk drive","relation":{"type":"ACTION","text":"were all that was required"}},{"subject":"WiFi capability","object":"multiple USB ports","relation":{"type":"ACTION","text":"were all that was required"}},{"subject":"disk drive","object":"multiple USB ports","relation":{"type":"ACTION","text":"were all that was required"}}]}\n'
             'P: "The computer is fast." E: ["computer"] -> {"justification":"Only one entity; no pairwise relation possible.","relations":[]}\n'
             "\n"
             "## Task:\n"

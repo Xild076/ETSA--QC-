@@ -1,0 +1,325 @@
+Removed 1 seeds with >50% zero answers
+Using device: mps
+================================================================================
+MODIFIER EXTRACTION & SENTIMENT TEST SUITE
+================================================================================
+
+Initializing GemmaModifierExtractor...
+Initializing SentimentAnalyzerSystem...
+
+Running 73 test cases...
+Rate limit: 4.5s between calls (~13 RPM)
+Estimated time: 5.5 minutes
+
+[1/73] Testing: fresh_juices (entity_text_modifier)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: positive (expected: positive)
+       Missing: fresh
+
+[2/73] Testing: burnt_flavor (entity_text_modifier)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: negative (expected: negative)
+       Missing: burnt
+
+[3/73] Testing: quiet_hard_drive (entity_text_modifier)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: negative (expected: positive)
+       Missing: never makes any noise
+
+[4/73] Testing: slow_performance (entity_text_modifier)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[5/73] Testing: cool_features (entity_text_modifier)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[6/73] Testing: other_features (entity_text_modifier)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[7/73] Testing: cross_clause_pleased (cross_clause)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[8/73] Testing: cross_clause_disappointed (cross_clause)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: negative (expected: negative)
+       Missing: I was disappointed
+
+[9/73] Testing: cross_clause_love (cross_clause)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[10/73] Testing: weak_sentiment_usually_good (weak_sentiment)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[11/73] Testing: weak_sentiment_kind_of_nice (weak_sentiment)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: kind of nice, vibrant
+
+[12/73] Testing: prep_complement_with_staff (prepositional_complement)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: positive (expected: positive)
+       Missing: made checkout effortless
+
+[13/73] Testing: coordinated_clientele (coordinated_entities)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: positive (expected: negative)
+
+[14/73] Testing: consequence_left_waiting (consequence_clause)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[15/73] Testing: consequence_made_effortless (consequence_clause)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[16/73] Testing: negation_no_graphics (negation)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: negative)
+       Missing: no dedicated graphics card
+
+[17/73] Testing: negation_never_boots (negation)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[18/73] Testing: value_worth_penny (value_language)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: positive (expected: positive)
+       Missing: lasts as advertised
+
+[19/73] Testing: comparison_beats_windows (comparison)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[20/73] Testing: comparison_better_than (comparison)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[21/73] Testing: edge_safari_browser (edge_case)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[22/73] Testing: edge_practicality (edge_case)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[23/73] Testing: edge_capabilities (entity_text_modifier)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[24/73] Testing: verbal_not_helpful (verbal_negation)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[25/73] Testing: verbal_was_crappy (verbal_predicate)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[26/73] Testing: verbal_dropping_support (verbal_predicate)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: negative (expected: negative)
+       Missing: Unfortunately
+
+[27/73] Testing: copula_looks_nice (copula)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: looks nice
+
+[28/73] Testing: copula_seems_good (copula)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[29/73] Testing: copula_appears_broken (copula)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[30/73] Testing: sarcasm_like_this (sarcasm)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: positive (expected: negative)
+
+[31/73] Testing: sarcasm_call_this (sarcasm)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: positive (expected: negative)
+
+[32/73] Testing: idiom_gave_lip (idiom_negative)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[33/73] Testing: idiom_pain_in_neck (idiom_negative)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[34/73] Testing: idiom_melts_in_mouth (idiom_positive)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[35/73] Testing: idiom_piece_of_cake (idiom_positive)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[36/73] Testing: double_neg_not_hard (double_negation)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[37/73] Testing: double_neg_not_bad (double_negation)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[38/73] Testing: absence_no_graphics (absence)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[39/73] Testing: absence_no_support (absence)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[40/73] Testing: price_should_be_included (price_context)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: positive (expected: negative)
+
+[41/73] Testing: price_too_expensive (price_context)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[42/73] Testing: context_half_chicken (context_dependent)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[43/73] Testing: context_late_lunch (context_dependent)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: with friends
+
+[44/73] Testing: adjective_was_sweet (basic_adjective)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[45/73] Testing: adjective_looks_nice (basic_adjective)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: looks nice and welcoming
+
+[46/73] Testing: adjective_is_beautiful (basic_adjective)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[47/73] Testing: arrives_nice_hot (verbal_state)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: arrives nice and hot
+
+[48/73] Testing: arrives_fresh (verbal_state)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[49/73] Testing: imperative_must_try (imperative)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[50/73] Testing: imperative_try_the (imperative)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[51/73] Testing: imperative_must_try_rabbit (imperative)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: must try
+
+[52/73] Testing: superlative_does_best (superlative)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[53/73] Testing: superlative_does_best_ribs (superlative)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: positive)
+       Missing: does best
+
+[54/73] Testing: comparative_better_price (comparative)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[55/73] Testing: comparative_3x_high (comparative)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[56/73] Testing: slang_dug (slang)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[57/73] Testing: slang_really_dug (slang)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[58/73] Testing: idiom_hot_spot (idiom_positive)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[59/73] Testing: indirect_major_issues (indirect_negative)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: negative (expected: negative)
+       Missing: MAJOR issues with
+
+[60/73] Testing: indirect_problems_with (indirect_negative)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: negative (expected: negative)
+       Missing: Serious problems with
+
+[61/73] Testing: purchase_why_bought (purchase_justification)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[62/73] Testing: purchase_reason_chose (purchase_justification)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: neutral (expected: positive)
+
+[63/73] Testing: coordinated_servers (coordinated_subjects)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[64/73] Testing: coordinated_trackpad (coordinated_subjects)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: positive (expected: positive)
+
+[65/73] Testing: quantifier_only_2_ports (quantifier)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[66/73] Testing: quantifier_only_2_usb (quantifier)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: negative (expected: negative)
+       Missing: Only 2
+
+[67/73] Testing: meta_ridiculous_screen (meta_opinion)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: negative (expected: positive)
+
+[68/73] Testing: sarcasm_pretentious_lunch (sarcasm)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: positive (expected: negative)
+       Missing: pretentious and inappropriate...to claim
+
+[69/73] Testing: sarcasm_service_like_this (sarcasm)
+  ✗ FAIL | Modifiers: 100.0% recall | Sentiment: positive (expected: negative)
+
+[70/73] Testing: negation_not_crowded (negation_positive)
+  ✗ FAIL | Modifiers: 50.0% recall | Sentiment: positive (expected: positive)
+       Missing: not-crowded
+
+[71/73] Testing: adjective_slow_performance (basic_adjective)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+[72/73] Testing: neutral_fan_behavior (non_evaluative)
+  ✗ FAIL | Modifiers: 0.0% recall | Sentiment: neutral (expected: neutral)
+
+[73/73] Testing: physical_thick_battery (physical_description)
+  ✓ PASS | Modifiers: 100.0% recall | Sentiment: negative (expected: negative)
+
+================================================================================
+OVERALL RESULTS
+================================================================================
+
+Modifier Extraction (excluding 0 API errors):
+  Precision: 87.7%
+  Recall:    78.1%
+  F1 Score:  80.6%
+  Pass Rate: 71.2%
+
+Sentiment Calculation:
+  Polarity Accuracy: 65.8%
+
+Results by Category:
+  absence                   Recall: 100.0%  Pass: 100.0%
+  basic_adjective           Recall: 75.0%  Pass: 75.0%
+  comparative               Recall: 100.0%  Pass: 100.0%
+  comparison                Recall: 100.0%  Pass: 100.0%
+  consequence_clause        Recall: 100.0%  Pass: 100.0%
+  context_dependent         Recall: 50.0%  Pass: 50.0%
+  coordinated_entities      Recall: 100.0%  Pass: 100.0%
+  coordinated_subjects      Recall: 100.0%  Pass: 100.0%
+  copula                    Recall: 66.7%  Pass: 66.7%
+  cross_clause              Recall: 66.7%  Pass: 66.7%
+  double_negation           Recall: 100.0%  Pass: 100.0%
+  edge_case                 Recall: 100.0%  Pass: 100.0%
+  entity_text_modifier      Recall: 78.6%  Pass: 57.1%
+  idiom_negative            Recall: 100.0%  Pass: 100.0%
+  idiom_positive            Recall: 100.0%  Pass: 100.0%
+  imperative                Recall: 66.7%  Pass: 66.7%
+  indirect_negative         Recall: 50.0%  Pass: 0.0%
+  meta_opinion              Recall: 100.0%  Pass: 100.0%
+  negation                  Recall: 50.0%  Pass: 50.0%
+  negation_positive         Recall: 50.0%  Pass: 0.0%
+  non_evaluative            Recall: 0.0%  Pass: 0.0%
+  physical_description      Recall: 100.0%  Pass: 100.0%
+  prepositional_complement  Recall: 50.0%  Pass: 0.0%
+  price_context             Recall: 100.0%  Pass: 100.0%
+  purchase_justification    Recall: 100.0%  Pass: 100.0%
+  quantifier                Recall: 75.0%  Pass: 50.0%
+  sarcasm                   Recall: 75.0%  Pass: 75.0%
+  slang                     Recall: 100.0%  Pass: 100.0%
+  superlative               Recall: 50.0%  Pass: 50.0%
+  value_language            Recall: 50.0%  Pass: 0.0%
+  verbal_negation           Recall: 100.0%  Pass: 100.0%
+  verbal_predicate          Recall: 75.0%  Pass: 50.0%
+  verbal_state              Recall: 50.0%  Pass: 50.0%
+  weak_sentiment            Recall: 50.0%  Pass: 50.0%
+
+Failed Cases (21):
+  - fresh_juices: missing ['fresh']
+  - burnt_flavor: missing ['burnt']
+  - quiet_hard_drive: missing ['never makes any noise']
+  - cross_clause_disappointed: missing ['I was disappointed']
+  - weak_sentiment_kind_of_nice: missing ['kind of nice', 'vibrant']
+  - prep_complement_with_staff: missing ['made checkout effortless']
+  - negation_no_graphics: missing ['no dedicated graphics card']
+  - value_worth_penny: missing ['lasts as advertised']
+  - verbal_dropping_support: missing ['Unfortunately']
+  - copula_looks_nice: missing ['looks nice']
+  - context_late_lunch: missing ['with friends']
+  - adjective_looks_nice: missing ['looks nice and welcoming']
+  - arrives_nice_hot: missing ['arrives nice and hot']
+  - imperative_must_try_rabbit: missing ['must try']
+  - superlative_does_best_ribs: missing ['does best']
+  - indirect_major_issues: missing ['MAJOR issues with']
+  - indirect_problems_with: missing ['Serious problems with']
+  - quantifier_only_2_usb: missing ['Only 2']
+  - sarcasm_pretentious_lunch: missing ['pretentious and inappropriate...to claim']
+  - negation_not_crowded: missing ['not-crowded']
+  - neutral_fan_behavior: missing []
+
+================================================================================
