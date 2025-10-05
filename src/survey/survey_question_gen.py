@@ -1,30 +1,57 @@
-import random, nltk
+"""Generate synthetic survey questions and calibration items for data collection."""
+
+from __future__ import annotations
+
 import itertools
+import json
+import os
+import random
+import ssl
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence
+
+import nltk
 from afinn import Afinn
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import json
-import ssl
-import os
-from pathlib import Path
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
-nltk.download("punkt", quiet=True)
-afn, sia = Afinn(), SentimentIntensityAnalyzer()
+                                                
+_nltk_initialized = False
+_afn: Afinn | None = None
+_sia: SentimentIntensityAnalyzer | None = None
+
+def _ensure_nltk_ready():
+    """Ensure NLTK resources are downloaded only when needed."""
+    global _nltk_initialized, _afn, _sia
+    if not _nltk_initialized:
+        try:
+                                                         
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+                                        
+            nltk.download("punkt", quiet=True)
+        _afn = Afinn()
+        _sia = SentimentIntensityAnalyzer()
+        _nltk_initialized = True
 
 _rand = random.Random()
 
-def normalized_afinn_score(text):
+def normalized_afinn_score(text: str) -> float:
+    """Return the average non-zero Afinn score scaled to [-1, 1]."""
+    _ensure_nltk_ready()
     tokens = nltk.word_tokenize(text)
-    word_scores = [afn.score(word) for word in tokens]
+    word_scores = [_afn.score(word) for word in tokens]
     relevant_scores = [s for s in word_scores if s != 0]
     if relevant_scores:
         return sum(relevant_scores) / len(relevant_scores) / 5
     return 0
 
-def get_sentiment(text):
+def get_sentiment(text: str) -> float:
+    """Blend Afinn and VADER compound sentiment for stabilised polarity."""
+    _ensure_nltk_ready()
     afn_score = normalized_afinn_score(text)
-    polarity_score = sia.polarity_scores(text)['compound']
+    polarity_score = _sia.polarity_scores(text)['compound']
     return (afn_score + polarity_score) / 2
 
 names = [
@@ -94,7 +121,8 @@ if lexicon_file is None:
 
 loaded_lexicons = json.load(open(lexicon_file, "r"))
 
-def extract_word_list(lexicon, key):
+def extract_word_list(lexicon: Dict[str, Dict[str, List[Dict[str, str]]]], key: str) -> Dict[str, List[str]]:
+    """Return cleaned lists of lexicon entries for a particular category."""
     lexicon_key = lexicon.get(key, {})
     return {
         valence: [entry["text"] for entry in entries if isinstance(entry, dict) and "text" in entry]
@@ -111,11 +139,6 @@ neg_desc = extract_word_list(loaded_lexicons, "neg_desc")
 
 neutral_actions_together = ['ate', 'talked', 'worked', 'walked']
 
-# Very (1 - 0.7)
-# ___ (0.7 - 0.5)
-# Somewhat (0.5 - 0.3)
-# Slightly (0.3 - 0.1)
-# Neutral (0.1 - -0.1)
 
 parent_child = {
     "phone": ["battery", "screen", "camera"],
@@ -142,25 +165,22 @@ desc = {
 }
 
 """
-##### Question 1:
 **Purpose:** To check x-x-y relationships.
 **Text or Structure:**
 "{+ actor} {+ action} {- victim}"
-##### Question 2:
 **Purpose:** To check y-x-x relationships
 **Text or Structure:**
 "{+ actor} {- action} {- victim}"
-##### Question 3:
 **Purpose:** To check x-x-x relationships
 **Text or Structure:**
 "{- actor} {- action} {- victim}"
-##### Question 4:
 **Purpose:** To check negativity biases, compared to x-y-x.
 **Text or Structure:**
 "{+ actor} {- action} {+ victim}"
 """
 
-def _get_unique_words(word_pools, used_words_in_survey):
+def _get_unique_words(word_pools: Sequence[Sequence[str]], used_words_in_survey: set[str]) -> List[str]:
+    """Pick words without duplication, falling back gracefully when pools exhaust."""
     selected_words = []
     local_used_words = set()
 
@@ -177,7 +197,8 @@ def _get_unique_words(word_pools, used_words_in_survey):
     
     return selected_words
 
-def generate_compound_action_sentences(used_names, used_words_in_survey):
+def generate_compound_action_sentences(used_names: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Create actor/action/victim permutations capturing polarity interactions."""
     x, y = _rand.sample(["positive", "negative"], 2)
     patterns = [[x, x, y], [y, x, x], [x, x, x], [x, y, x]]
     out = []
@@ -221,17 +242,16 @@ def generate_compound_action_sentences(used_names, used_words_in_survey):
     return out
 
 """
-##### Question 1:
 **Purpose:** To check intra-sentence opposite direction association
 **Text or Structure:**
 "{+ entity} and {- entity} {+ action} together."
-##### Question 2:
 **Purpose:** To check inter-sentence association and negativity bias. (Has some relation to aggregate sentiments, maybe there is an overlap). When doing calculations, maybe do aggregate sentiment first to get a formula for that, then cross-apply with this one to check for no temporal biases.
 **Text or Structure:**
 "{- entity} did {- action}. {+ entity} did it with them."
 """
 
-def generate_compound_association_sentences(used_names, used_words_in_survey):
+def generate_compound_association_sentences(used_names: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Generate association sentences exploring polarity combinations."""
     x, y = _rand.sample(["positive", "negative"], 2)
     out = []
 
@@ -358,17 +378,16 @@ def generate_compound_association_sentences(used_names, used_words_in_survey):
     return out
 
 """
-##### Question 1:
 **Purpose:** To check intra-sentence association
 **Text or Structure:**
 "{+ parent entity}'s {- child entity} was {- description}."
-##### Question 2:
 **Purpose:** To check inter-sentence association and negativity bias. (Has some relation to aggregate sentiments, maybe there is an overlap). When doing calculations, maybe do aggregate sentiment first to get a formula for that, then cross-apply with this one to check for no temporal biases.
 **Text or Structure:**
 "{- parent entity} was {- descriptor}. {+ child entity} was {+ description}."
 """
 
-def generate_compound_belonging_sentences(used_objects, used_words_in_survey):
+def generate_compound_belonging_sentences(used_objects: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Produce parent/child belonging sentences balancing valence."""
     x, y = _rand.sample(["positive", "negative"], 2)
     out = []
 
@@ -492,14 +511,12 @@ def generate_compound_belonging_sentences(used_objects, used_words_in_survey):
     return out
 
 """
-##### Packet 1:
 *3 questions*
 **Purpose:** To check shorter aggregate sentiment shifts.
 **Text or Structure:**
 1. "xxx was good."
 2. "xxx was bad."
 3. "xxx was good."
-##### Packet 2:
 *5 questions*
 **Purpose:** To check longer aggregate sentiment shifts and possible negative biases.
 **Text or Structure:**
@@ -510,7 +527,8 @@ def generate_compound_belonging_sentences(used_objects, used_words_in_survey):
 5. "xxx was bad."
 """
 
-def generate_aggregate_sentiment_sentences(used_objects, used_words_in_survey):
+def generate_aggregate_sentiment_sentences(used_objects: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Craft aggregate sentiment prompts to probe temporal and comparative bias."""
     out = []
 
     available_objects = [obj for obj in objs if obj not in used_objects]
@@ -783,7 +801,8 @@ def calibration_gen(used_objects, used_words_in_survey):
         }
     }
 
-def survey_gen(seed=None):
+def survey_gen(seed: int | None = None) -> Dict[str, object]:
+    """Build a full survey packet, optionally seeding the random generator."""
     if seed is not None: 
         _rand.seed(seed)
     else: 
@@ -810,4 +829,3 @@ def survey_gen(seed=None):
         "packets": packets
     }
 
-# json.dump(survey_gen(), open("survey_data.json", "w"), indent=4, ensure_ascii=False)

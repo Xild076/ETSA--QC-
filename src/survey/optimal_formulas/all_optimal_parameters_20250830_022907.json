@@ -1,0 +1,743 @@
+{
+    "version": 2,
+    "saved_at": "2025-08-30T02:29:07.512512+00:00",
+    "entries": [
+        {
+            "category": "actor",
+            "score_key": "user_sentiment_score",
+            "model": "actor_formula_v2",
+            "split": "action_target",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 4.010240267859583,
+            "test_mse": 2.692319440373482,
+            "avg_mse": 3.3512798541165325,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 3.9803926750267715,
+                "mae": 1.666669488745178,
+                "r2": 0.41765095355244497,
+                "spearman": 0.7645144160747961
+            },
+            "test_metrics": {
+                "mse": 2.692319440373482,
+                "mae": 1.3077038241619237,
+                "r2": 0.4464696041081283,
+                "spearman": 0.7496783139268639
+            },
+            "all_metrics": {
+                "mse": 3.718752799237822,
+                "mae": 1.5937545881267046,
+                "r2": 0.42248297760462106,
+                "spearman": 0.7670325485699868
+            },
+            "params_by_key": {
+                "pos_pos_params": [
+                    37.98464526119806,
+                    1.0864891558577794,
+                    7.3769148654366825
+                ],
+                "pos_neg_params": [
+                    33.39827980447033,
+                    5.169619547225184,
+                    1.6637996640501977
+                ],
+                "neg_pos_params": [
+                    28.907025104012483,
+                    22.429038920029406,
+                    2.5689894291549855
+                ],
+                "neg_neg_params": [
+                    34.81565656344427,
+                    46.18403398997103,
+                    -13.42889601180575
+                ]
+            }
+        },
+        {
+            "category": "target",
+            "score_key": "user_sentiment_score",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.7440386755793801,
+            "test_mse": 0.7440386755793801,
+            "avg_mse": 0.7440386755793801,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 2.6102259253672395,
+                "mae": 1.077771831485753,
+                "r2": 0.5787816334607152,
+                "spearman": 0.728468767292704
+            },
+            "test_metrics": {
+                "mse": 0.7440386755793801,
+                "mae": 0.6771376818500179,
+                "r2": 0.9060220207975223,
+                "spearman": 0.9096186566698001
+            },
+            "all_metrics": {
+                "mse": 2.2311566402540803,
+                "mae": 0.996393019840994,
+                "r2": 0.6595582775115216,
+                "spearman": 0.7857010147097182
+            },
+            "params_by_key": {
+                "params": [
+                    4.10866090188401,
+                    -0.10159774141709263,
+                    -0.05652160480323342
+                ]
+            }
+        },
+        {
+            "category": "association",
+            "score_key": "user_sentiment_score",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "none",
+            "fitted_mse": 2.567234579945864,
+            "test_mse": 2.567234579945864,
+            "avg_mse": 2.567234579945864,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 1.7161004050020399,
+                "mae": 0.9825919581681167,
+                "r2": 0.7285467335766084,
+                "spearman": 0.8416517276555435
+            },
+            "test_metrics": {
+                "mse": 2.567234579945864,
+                "mae": 1.1834797117407843,
+                "r2": 0.5201789436405009,
+                "spearman": 0.7752616327623782
+            },
+            "all_metrics": {
+                "mse": 1.8863272399908046,
+                "mae": 1.0227695088826505,
+                "r2": 0.6937780454560383,
+                "spearman": 0.8242714818047908
+            },
+            "params_by_key": {
+                "params": [
+                    3.568287161995741,
+                    -0.036297352937384786,
+                    0.02306110500317537
+                ]
+            }
+        },
+        {
+            "category": "parent",
+            "score_key": "user_sentiment_score",
+            "model": "null_linear",
+            "split": "parent_child",
+            "remove_outliers": "none",
+            "fitted_mse": 2.30694432711272,
+            "test_mse": 1.6478612395359062,
+            "avg_mse": 1.977402783324313,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 2.1541025128554514,
+                "mae": 1.132984000387429,
+                "r2": 0.5860800357611533,
+                "spearman": 0.745121539863753
+            },
+            "test_metrics": {
+                "mse": 1.6478612395359062,
+                "mae": 0.9459530479168847,
+                "r2": 0.5373944360771293,
+                "spearman": 0.8273783003727698
+            },
+            "all_metrics": {
+                "mse": 2.051272254212419,
+                "mae": 1.0949933381668497,
+                "r2": 0.5788887753982523,
+                "spearman": 0.7486155566613583
+            },
+            "params_by_key": {
+                "pos_neg_params": [
+                    0.650842872076047,
+                    3.433367564469139,
+                    2.5818792042557863
+                ],
+                "neg_neg_params": [
+                    3.322062135255331,
+                    -1.0373333715917292,
+                    -0.4150882129568602
+                ],
+                "pos_pos_params": [
+                    4.037709128636956,
+                    0.6270844012600217,
+                    -0.3489141907403566
+                ],
+                "neg_pos_params": [
+                    -1.5176588399924522,
+                    1.6753334888668003,
+                    -2.9974119629106046
+                ]
+            }
+        },
+        {
+            "category": "child",
+            "score_key": "user_sentiment_score",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.7053006495733543,
+            "test_mse": 0.7053006495733543,
+            "avg_mse": 0.7053006495733543,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 2.7955455803251126,
+                "mae": 1.1539719344750854,
+                "r2": 0.46503722377680856,
+                "spearman": 0.6921163471063535
+            },
+            "test_metrics": {
+                "mse": 0.7053006495733543,
+                "mae": 0.6916191660903315,
+                "r2": 0.8210273126458005,
+                "spearman": 0.9342881234819364
+            },
+            "all_metrics": {
+                "mse": 2.3709645787661615,
+                "mae": 1.0600565283969323,
+                "r2": 0.5244836255875143,
+                "spearman": 0.7332371268172854
+            },
+            "params_by_key": {
+                "params": [
+                    2.799534900707033,
+                    0.678823798506935,
+                    0.226641991865714
+                ]
+            }
+        },
+        {
+            "category": "aggregate",
+            "score_key": "user_sentiment_score",
+            "model": "aggregate_error_logistic_mse",
+            "split": "none",
+            "remove_outliers": "none",
+            "fitted_mse": 2.7644762386412673,
+            "test_mse": 4.058201974845339,
+            "avg_mse": 3.411339106743303,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 2.7644762386412696,
+                "mae": 1.3758146698315887,
+                "r2": 0.34803044926906423,
+                "spearman": 0.7228775945047409
+            },
+            "test_metrics": {
+                "mse": 4.058201974845339,
+                "mae": 1.7514061337743012,
+                "r2": 0.3297015498318261,
+                "spearman": 0.827947746839728
+            },
+            "all_metrics": {
+                "mse": 3.0243764981465517,
+                "mae": 1.4512683121415086,
+                "r2": 0.34350074768549965,
+                "spearman": 0.7452823510253664
+            },
+            "params_by_key": {
+                "params": [
+                    20.0,
+                    2.052766488703597,
+                    1.0000511530196408,
+                    20.0,
+                    4.664192898272863,
+                    5.0,
+                    7.39017560569356,
+                    0.01
+                ]
+            }
+        },
+        {
+            "category": "actor",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "actor_formula_v1",
+            "split": "action_target",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.12305067768691011,
+            "test_mse": 0.13677235766578738,
+            "avg_mse": 0.12991151767634873,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.12550615954341196,
+                "mae": 0.2616030230308155,
+                "r2": 0.6220061417567935,
+                "spearman": 0.813948233425329
+            },
+            "test_metrics": {
+                "mse": 0.13677235766578738,
+                "mae": 0.3008978962028744,
+                "r2": 0.4918133780613124,
+                "spearman": 0.7867957924694432
+            },
+            "all_metrics": {
+                "mse": 0.12779460603701945,
+                "mae": 0.26958479414389,
+                "r2": 0.6045718524154964,
+                "spearman": 0.7752258414428318
+            },
+            "params_by_key": {
+                "pos_pos_params": [
+                    1.301027498523071,
+                    3.971638756702585,
+                    0.34762103007973344
+                ],
+                "pos_neg_params": [
+                    1.052835716956416,
+                    -8.226439397664768,
+                    0.20867054416439929
+                ],
+                "neg_pos_params": [
+                    0.9905062455701449,
+                    -49.999999992870364,
+                    -0.07036378626530478
+                ],
+                "neg_neg_params": [
+                    0.8016386450082508,
+                    0.4462494772651639,
+                    0.014891063557604304
+                ]
+            }
+        },
+        {
+            "category": "target",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "target_formula_v1",
+            "split": "none",
+            "remove_outliers": "none",
+            "fitted_mse": 0.12052320494773404,
+            "test_mse": 0.12052320494773404,
+            "avg_mse": 0.12052320494773404,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.09863595132382547,
+                "mae": 0.25530518136256797,
+                "r2": 0.6862483217497388,
+                "spearman": 0.7997826685731279
+            },
+            "test_metrics": {
+                "mse": 0.12052320494773404,
+                "mae": 0.2663811196115204,
+                "r2": 0.7183296285488262,
+                "spearman": 0.7410496438883571
+            },
+            "all_metrics": {
+                "mse": 0.1030817997161819,
+                "mae": 0.2575549813193865,
+                "r2": 0.695105296386948,
+                "spearman": 0.8111098393576909
+            },
+            "params_by_key": {
+                "params": [
+                    0.9332092325235862,
+                    0.6977579603646138,
+                    0.07058914320004624
+                ]
+            }
+        },
+        {
+            "category": "association",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "null_linear",
+            "split": "other",
+            "remove_outliers": "none",
+            "fitted_mse": 0.12421239865656801,
+            "test_mse": 0.16308327110625098,
+            "avg_mse": 0.1436478348814095,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.1251686379002021,
+                "mae": 0.27488164279893107,
+                "r2": 0.6269327112602947,
+                "spearman": 0.7855674397651194
+            },
+            "test_metrics": {
+                "mse": 0.16308327110625098,
+                "mae": 0.3023503913859362,
+                "r2": 0.40973051859585485,
+                "spearman": 0.6298155207031189
+            },
+            "all_metrics": {
+                "mse": 0.13275156454141188,
+                "mae": 0.2803753925163321,
+                "r2": 0.5904945859683224,
+                "spearman": 0.757049223245391
+            },
+            "params_by_key": {
+                "pos_params": [
+                    0.7852097003406016,
+                    -0.21539669642542564,
+                    0.0843930726953683
+                ],
+                "neg_params": [
+                    0.730098082386878,
+                    0.1984757083404884,
+                    0.07859645418866797
+                ]
+            }
+        },
+        {
+            "category": "parent",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "belong_formula_v2",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.07938132094344355,
+            "test_mse": 0.07938132094344355,
+            "avg_mse": 0.07938132094344355,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.18741484785885948,
+                "mae": 0.32895162507306513,
+                "r2": 0.3279685439021217,
+                "spearman": 0.6147995076751575
+            },
+            "test_metrics": {
+                "mse": 0.07938132094344355,
+                "mae": 0.23346030365362688,
+                "r2": 0.5012674509827316,
+                "spearman": 0.6868131868131868
+            },
+            "all_metrics": {
+                "mse": 0.1654705377041656,
+                "mae": 0.30955495040974174,
+                "r2": 0.35394495299496054,
+                "spearman": 0.6238404289708043
+            },
+            "params_by_key": {
+                "params": [
+                    0.5470439363561515,
+                    0.20055025026269527,
+                    0.06341906808379752
+                ]
+            }
+        },
+        {
+            "category": "child",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "belong_formula_v1",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.044085243515910616,
+            "test_mse": 0.044085243515910616,
+            "avg_mse": 0.044085243515910616,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.13724537646635304,
+                "mae": 0.28529110894679627,
+                "r2": 0.41189920275006464,
+                "spearman": 0.6371295504025728
+            },
+            "test_metrics": {
+                "mse": 0.044085243515910616,
+                "mae": 0.16945026306917504,
+                "r2": 0.7193877107959046,
+                "spearman": 0.8736263736263737
+            },
+            "all_metrics": {
+                "mse": 0.11832222446079442,
+                "mae": 0.2617609371279045,
+                "r2": 0.4584721438179623,
+                "spearman": 0.6868142155608183
+            },
+            "params_by_key": {
+                "params": [
+                    0.5444094745634996,
+                    0.38045868211575073,
+                    0.05151751444695208
+                ]
+            }
+        },
+        {
+            "category": "aggregate",
+            "score_key": "user_normalized_sentiment_scores",
+            "model": "aggregate_error_softl1",
+            "split": "none",
+            "remove_outliers": "none",
+            "fitted_mse": 0.0921608626453291,
+            "test_mse": 0.10593142139316668,
+            "avg_mse": 0.09904614201924788,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.09821297223368934,
+                "mae": 0.24882537487231038,
+                "r2": 0.5083388991701205,
+                "spearman": 0.722350396068985
+            },
+            "test_metrics": {
+                "mse": 0.10593142139316668,
+                "mae": 0.28545271489682,
+                "r2": 0.6376706436230211,
+                "spearman": 0.8265296399759803
+            },
+            "all_metrics": {
+                "mse": 0.09976355353804862,
+                "mae": 0.256183545859377,
+                "r2": 0.544388373658945,
+                "spearman": 0.7448930525755918
+            },
+            "params_by_key": {
+                "params": [
+                    1.1520922099478157,
+                    -0.4706215706427234
+                ]
+            }
+        },
+        {
+            "category": "actor",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_avg",
+            "split": "driver",
+            "remove_outliers": "none",
+            "fitted_mse": 0.20216729600694444,
+            "test_mse": 0.12823557692307694,
+            "avg_mse": 0.16520143646501068,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.20222162990196077,
+                "mae": 0.3504411764705882,
+                "r2": 0.42914676806238394,
+                "spearman": 0.6820944233063536
+            },
+            "test_metrics": {
+                "mse": 0.12823557692307694,
+                "mae": 0.29538461538461536,
+                "r2": 0.48929392011311423,
+                "spearman": 0.7269934389921563
+            },
+            "all_metrics": {
+                "mse": 0.18719321289062502,
+                "mae": 0.3392578125,
+                "r2": 0.43885464618447145,
+                "spearman": 0.6858347410474404
+            },
+            "params_by_key": {
+                "pos_driver_params": [],
+                "neg_driver_params": []
+            }
+        },
+        {
+            "category": "target",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "target_formula_v2",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.033239065969638465,
+            "test_mse": 0.033239065969638465,
+            "avg_mse": 0.033239065969638465,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.1269924598155685,
+                "mae": 0.2516223151066572,
+                "r2": 0.5998602171096892,
+                "spearman": 0.7518183014584463
+            },
+            "test_metrics": {
+                "mse": 0.033239065969638465,
+                "mae": 0.15530697730997775,
+                "r2": 0.9194117760724639,
+                "spearman": 0.8929284060887029
+            },
+            "all_metrics": {
+                "mse": 0.10794880169061397,
+                "mae": 0.23205826211670671,
+                "r2": 0.6796859643109883,
+                "spearman": 0.8046751082162773
+            },
+            "params_by_key": {
+                "params": [
+                    0.9877914533151493,
+                    0.011811529573971915,
+                    0.005183571168239197
+                ]
+            }
+        },
+        {
+            "category": "association",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "none",
+            "fitted_mse": 0.1257566750683743,
+            "test_mse": 0.1257566750683743,
+            "avg_mse": 0.1257566750683743,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.08806626967138521,
+                "mae": 0.22127707525983,
+                "r2": 0.7288222276305882,
+                "spearman": 0.8416517276555435
+            },
+            "test_metrics": {
+                "mse": 0.1257566750683743,
+                "mae": 0.25954570756911477,
+                "r2": 0.5379039219370102,
+                "spearman": 0.7752616327623782
+            },
+            "all_metrics": {
+                "mse": 0.09560435075078304,
+                "mae": 0.22893080172168695,
+                "r2": 0.6974352833687647,
+                "spearman": 0.8242714818047908
+            },
+            "params_by_key": {
+                "params": [
+                    0.8088064375918543,
+                    -0.011022322656632479,
+                    0.005256011676806695
+                ]
+            }
+        },
+        {
+            "category": "parent",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "belong_formula_v1",
+            "split": "parent_child",
+            "remove_outliers": "none",
+            "fitted_mse": 0.12263936327580355,
+            "test_mse": 0.07899291069934586,
+            "avg_mse": 0.1008161369875747,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.11469886278513297,
+                "mae": 0.26741842494661044,
+                "r2": 0.576729341178121,
+                "spearman": 0.7501532086924471
+            },
+            "test_metrics": {
+                "mse": 0.07899291069934586,
+                "mae": 0.20602998022034363,
+                "r2": 0.5743047860908976,
+                "spearman": 0.8106635872339261
+            },
+            "all_metrics": {
+                "mse": 0.10744609126770747,
+                "mae": 0.2549488971115875,
+                "r2": 0.5763786226913341,
+                "spearman": 0.754446400460538
+            },
+            "params_by_key": {
+                "pos_neg_params": [
+                    0.1147958412205307,
+                    1.0203436342280479,
+                    0.7039788500834063
+                ],
+                "neg_neg_params": [
+                    0.8639938930389905,
+                    -1.641051577456875,
+                    -0.058105162765687494
+                ],
+                "pos_pos_params": [
+                    0.9966842813636687,
+                    49.99999999930904,
+                    -0.08579974392608637
+                ],
+                "neg_pos_params": [
+                    -0.29263557512212585,
+                    0.4348371311341849,
+                    -0.7786997467052813
+                ]
+            }
+        },
+        {
+            "category": "child",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "null_linear",
+            "split": "none",
+            "remove_outliers": "lsquares",
+            "fitted_mse": 0.039845722434015234,
+            "test_mse": 0.039845722434015234,
+            "avg_mse": 0.039845722434015234,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.13897424121064103,
+                "mae": 0.26598592862364895,
+                "r2": 0.48099415425089764,
+                "spearman": 0.6919331445527735
+            },
+            "test_metrics": {
+                "mse": 0.039845722434015234,
+                "mae": 0.16628805368433455,
+                "r2": 0.8024662044192263,
+                "spearman": 0.9230654433199911
+            },
+            "all_metrics": {
+                "mse": 0.11883876083413891,
+                "mae": 0.24573479777660073,
+                "r2": 0.53478407426366,
+                "spearman": 0.7327277575037618
+            },
+            "params_by_key": {
+                "params": [
+                    0.6024691238412668,
+                    0.1678356777732305,
+                    0.05804337653402819
+                ]
+            }
+        },
+        {
+            "category": "aggregate",
+            "score_key": "user_sentiment_score_mapped",
+            "model": "aggregate_error_logistic_softl1",
+            "split": "none",
+            "remove_outliers": "none",
+            "fitted_mse": 0.07799598812205172,
+            "test_mse": 0.09140130021697045,
+            "avg_mse": 0.08469864416951109,
+            "n_seeds": 16,
+            "selected_by": "pareto_topsis",
+            "train_metrics": {
+                "mse": 0.08313456606459012,
+                "mae": 0.2203885859661025,
+                "r2": 0.6151910878769271,
+                "spearman": 0.7963221012802603
+            },
+            "test_metrics": {
+                "mse": 0.09140130021697045,
+                "mae": 0.2505046815062756,
+                "r2": 0.7065896769427404,
+                "spearman": 0.8505677465304361
+            },
+            "all_metrics": {
+                "mse": 0.08479529390770223,
+                "mae": 0.22643869444515513,
+                "r2": 0.6396865282981847,
+                "spearman": 0.8063900316974801
+            },
+            "params_by_key": {
+                "params": [
+                    4.244768867908478,
+                    0.1813726891610398,
+                    3.6344940061156716,
+                    0.1667353073484691,
+                    -19.832527162087963,
+                    1.0362051925506623,
+                    7.824607530220695,
+                    1.0183057234367963
+                ]
+            }
+        }
+    ]
+}
