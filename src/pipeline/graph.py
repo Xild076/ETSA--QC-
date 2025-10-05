@@ -171,7 +171,7 @@ class RelationGraph:
         if modifier:
             sentiment = self._sent(text_for_sent)
         else:
-            sentiment = 0.1 * self._sent(text_for_sent)
+            sentiment = 0.1 * self._sent(text_for_sent) # Neutralizes sentiment for bare heads, optional but recommended for benchmarking
         self.graph.add_node(
             key,
             head=head,
