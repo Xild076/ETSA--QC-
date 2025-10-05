@@ -1,10 +1,21 @@
-import json
-import hashlib
-import os
-from typing import Dict, Any, Optional
-from pathlib import Path
+"""File-backed cache for expensive intermediate pipeline computations."""
 
-def _make_json_serializable(obj):
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import pickle
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+CachePayload = Dict[str, Any]
+
+
+def _make_json_serializable(obj: Any) -> Any:
+    """Convert non-JSON-native containers into serialisable structures."""
     if isinstance(obj, set):
         return list(obj)
     elif isinstance(obj, dict):
@@ -15,7 +26,10 @@ def _make_json_serializable(obj):
         return obj
 
 class PipelineCache:
+    """Persist intermediate pipeline artefacts keyed by text & settings."""
+
     def __init__(self, cache_dir: str = "cache"):
+        """Create a cache rooted at ``cache_dir``."""
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
         self.intermediate_cache_file = self.cache_dir / "intermediate_pipeline_cache.json"
@@ -23,6 +37,7 @@ class PipelineCache:
         self._pickle_dir.mkdir(exist_ok=True)
 
     def _get_cache_key(self, text: str, settings: Optional[Dict[str, Any]] = None) -> str:
+        """Derive a stable hash key using the input text and settings."""
         key_data = {
             "text": text,
             "settings": settings or {},
@@ -34,14 +49,16 @@ class PipelineCache:
         self,
         text: str,
         settings: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[CachePayload]:
+        """Retrieve cached intermediate results for ``text`` when available."""
         if not self.intermediate_cache_file.exists():
             return None
 
         try:
-            with open(self.intermediate_cache_file, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
-        except (json.JSONDecodeError, IOError):
+            with self.intermediate_cache_file.open('r', encoding='utf-8') as handle:
+                cache_data = json.load(handle)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read cache file %s: %s", self.intermediate_cache_file, exc)
             return None
 
         cache_key = self._get_cache_key(text, settings)
@@ -55,12 +72,12 @@ class PipelineCache:
         if pickle_ref:
             pickle_path = self._pickle_dir / pickle_ref
             try:
-                import pickle
-                with open(pickle_path, 'rb') as pf:
+                with pickle_path.open('rb') as pf:
                     graph = pickle.load(pf)
                 entry['_graph'] = graph
                 entry['graph'] = graph
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to load cached graph %s: %s", pickle_path, exc)
                 entry.pop('_graph_pickle', None)
 
         return entry
@@ -69,18 +86,19 @@ class PipelineCache:
         self,
         text: str,
         settings: Optional[Dict[str, Any]] = None,
-        intermediate_results: Dict[str, Any] = None,
+        intermediate_results: Optional[CachePayload] = None,
         include_graph: bool = False,
     ) -> None:
+        """Persist ``intermediate_results`` for the given ``text`` and ``settings``."""
         intermediate_results = intermediate_results or {}
         cache_key = self._get_cache_key(text, settings)
 
         cache_data = {}
         if self.intermediate_cache_file.exists():
             try:
-                with open(self.intermediate_cache_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-            except (json.JSONDecodeError, IOError):
+                with self.intermediate_cache_file.open('r', encoding='utf-8') as handle:
+                    cache_data = json.load(handle)
+            except (json.JSONDecodeError, OSError):
                 cache_data = {}
 
         entry = dict(intermediate_results)
@@ -88,27 +106,35 @@ class PipelineCache:
         entry = _make_json_serializable(entry)
         if include_graph and 'graph' in entry:
             try:
-                import pickle
                 pickle_name = f"graph_{cache_key}.pkl"
                 pickle_path = self._pickle_dir / pickle_name
-                with open(pickle_path, 'wb') as pf:
+                with pickle_path.open('wb') as pf:
                     pickle.dump(entry['graph'], pf)
                 entry.pop('graph', None)
                 entry['_graph_pickle'] = pickle_name
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to persist graph pickle %s: %s", pickle_path, exc)
                 entry.pop('graph', None)
 
         cache_data[cache_key] = entry
 
         try:
-            with open(self.intermediate_cache_file, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, indent=2, ensure_ascii=False)
-        except IOError:
+            with self.intermediate_cache_file.open('w', encoding='utf-8') as handle:
+                json.dump(cache_data, handle, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            logger.warning("Failed to write cache file %s: %s", self.intermediate_cache_file, exc)
             return
 
     def clear_cache(self) -> None:
-        if self.intermediate_cache_file.exists():
-            try:
-                os.remove(self.intermediate_cache_file)
-            except OSError:
-                pass
+        """Remove cached intermediate artefacts and associated pickles."""
+        try:
+            self.intermediate_cache_file.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to delete cache file %s: %s", self.intermediate_cache_file, exc)
+
+        if self._pickle_dir.exists():
+            for pickle_file in self._pickle_dir.glob("*.pkl"):
+                try:
+                    pickle_file.unlink()
+                except OSError as exc:
+                    logger.warning("Failed to delete pickle %s: %s", pickle_file, exc)

@@ -1,36 +1,36 @@
-from typing import Literal, Callable
-import logging
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
-import pandas as pd
-import ssl
+"""Tools for calibrating and analysing survey sentiment models."""
+
 import ast
-import numpy as np
-from scipy.optimize import curve_fit, minimize, least_squares
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-from scipy.stats import spearmanr, ttest_rel, wilcoxon, t as t_dist
-import re
-from rich import print
-from rich.table import Table
-from rich.console import Console
-from rich.panel import Panel
-import matplotlib.pyplot as plt
-import math
-from sklearn.linear_model import LinearRegression
 import inspect
-import warnings
-from scipy.optimize import OptimizeWarning
-from matplotlib.widgets import Slider
-import matplotlib.gridspec as gridspec
 import json
+import logging
+import math
 import os
+import re
+import ssl
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, Literal
+
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.widgets import Slider
+from rich import print
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from scipy.optimize import OptimizeWarning, curve_fit, least_squares, minimize
+from scipy.stats import spearmanr, t as t_dist, ttest_rel, wilcoxon
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import KFold
 
-current_dir = Path(__file__).parent
-sys.path.insert(0, str(current_dir))
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=OptimizeWarning)
 VERBOSE = True
@@ -43,6 +43,7 @@ def _vprint(msg: str):
 ssl._create_default_https_context = ssl._create_unverified_context
 
 def remove_zero_dominant_seeds(df: pd.DataFrame, threshold: float = 0.5) -> tuple[pd.DataFrame, list]:
+    """Filter out seeds that submit mostly zero-valued responses."""
     scores = pd.to_numeric(df.get('user_sentiment_score'), errors='coerce')
     seeds = df.get('seed')
     tmp = pd.DataFrame({'seed': seeds, 'score': scores}).dropna(subset=['seed'])
@@ -56,7 +57,7 @@ def remove_zero_dominant_seeds(df: pd.DataFrame, threshold: float = 0.5) -> tupl
         df = df[~df['seed'].isin(bad_seeds)].copy()
     return df, bad_seeds
 
-url = 'https://docs.google.com/spreadsheets/d/1xAvDLhU0w-p2hAZ49QYM7-XBMQCek0zVYJWpiN1Mvn0/export?format=csv&gid=0'
+url = 'data/survey_responses.csv'
 try:
     df = pd.read_csv(url)
     df = df[df['attention_check_passed'] == True]
@@ -85,11 +86,13 @@ intensity_map_integer = {
 sentiment_sign_map = {'positive': 1, 'negative': -1}
 
 def associate_sentiment_integer(integer):
+    """Map Likert-style integer responses to a signed sentiment score."""
     if not isinstance(integer, int):
         integer = int(integer)
     return intensity_map_integer.get(abs(integer), 0) * ((integer > 0) - (integer < 0))
 
 def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'none']='none'):
+    """Fit a parametric curve to the provided data with optional robust loss."""
     x0 = [(l + u) / 2 for l, u in zip(bounds[0], bounds[1])]
     params = None
     if remove_outliers_method == "lsquares":
@@ -138,6 +141,7 @@ def fit(formula, X, y, bounds, remove_outliers_method:Literal['lsquares', 'none'
     }
 
 def add_score_interpretations(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Augment survey data with interpretable sentiment scores per respondent."""
     intensity_map = {'very': 0.85, 'strong': 0.6, 'moderate': 0.4, 'slight': 0.2}
     polarity_map = {'positive': 1, 'negative': -1}
 
@@ -222,6 +226,7 @@ except:
     print("Error adding score interpretations")
 
 def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
+    """Create the action sentiment modelling dataframe for the given score."""
     action_df = df[df['item_type'] == 'compound_action'].copy()
 
     cols_to_ignore = ['submission_timestamp_utc']
@@ -263,6 +268,7 @@ def create_action_df(score_key: Literal['user_sentiment_score', 'user_normalized
     return action_df
 
 def create_association_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
+    """Create the association sentiment modelling dataframe for the given score."""
     association_df = df[df['item_type'] == 'compound_association'].copy()
 
     cols_to_ignore = ['submission_timestamp_utc']
@@ -311,6 +317,7 @@ def create_association_df(score_key: Literal['user_sentiment_score', 'user_norma
     return association_df
 
 def create_belonging_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
+    """Create the belonging sentiment modelling dataframe for the given score."""
     belonging_df = df[df['item_type'] == 'compound_belonging'].copy()
 
     cols_to_ignore = ['submission_timestamp_utc']
@@ -352,6 +359,7 @@ def create_belonging_df(score_key: Literal['user_sentiment_score', 'user_normali
     return belonging_df
 
 def create_aggregate_df(score_key: Literal['user_sentiment_score', 'user_normalized_sentiment_scores', 'user_sentiment_score_mapped'] = 'user_sentiment_score_mapped') -> pd.DataFrame:
+    """Create the aggregate sentiment modelling dataframe for the given score."""
     aggregate_df = df[df['item_type'].str.contains('aggregate')].copy()
 
     cols_to_ignore = ['submission_timestamp_utc']
@@ -387,6 +395,7 @@ def determine_actor_parameters(action_model_df: pd.DataFrame,
                                 remove_outlier_method: Literal['lsquares', 'none'] = 'none',
                                 splits: Literal['none', 'driver', 'action_target'] = 'none',
                                 print_process=False) -> pd.DataFrame:
+    """Fit actor parameters across multiple sentiment driver splits."""
     action_model_df = action_model_df.copy()
     action_model_df.loc[:, 'driver'] = action_model_df['s_init_action'] * action_model_df['s_init_target']
 

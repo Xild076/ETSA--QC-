@@ -1,6 +1,9 @@
-from typing import Callable, List, Dict, Tuple, Optional, Any
+"""Graph utilities for tracking entities, relations, and sentiment propagation."""
+
 import logging
 import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
 import networkx as nx
 
 logger = logging.getLogger(__name__)
@@ -23,10 +26,20 @@ RELATION_TYPES: Dict[str, Dict[str, str]] = {
 
 
 class RelationGraph:
-    def __init__(self, text: str = "", clauses: List[str] = [], sentiment_analyzer_system=None):
+    """Mutable, clause-aware graph of entities and their sentiment-bearing relations."""
+
+    def __init__(self, text: str = "", clauses: Optional[List[str]] = None, sentiment_analyzer_system=None):
+        """Create an empty relation graph for a given text sample.
+
+        Args:
+            text: Full text being analysed.
+            clauses: Optional pre-computed clause list aligned with ``text``.
+            sentiment_analyzer_system: Sentiment analysis strategy used for
+                generating default scores when adding nodes or edges.
+        """
         self.graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self.text: str = text
-        self.clauses: List[str] = clauses
+        self.clauses: List[str] = clauses or []
         self.sentiment_analyzer_system = sentiment_analyzer_system
         self.entity_ids: set[int] = set()
         self.aggregate_sentiments: Dict[int, float] = {}
@@ -130,6 +143,7 @@ class RelationGraph:
         raise ValueError("Unable to extract sentiment score")
 
     def compute_text_sentiment(self, text: Optional[str] = None) -> float:
+        """Return a sentiment score for ``text`` using the configured analyser."""
         target = text if text is not None else self.text
         if not target:
             return 0.0
@@ -139,12 +153,14 @@ class RelationGraph:
             return 0.0
 
     def get_new_unique_entity_id(self) -> int:
+        """Allocate a new entity identifier that is unique within the graph."""
         new_id = 1
         while new_id in self.entity_ids:
             new_id += 1
         return new_id
 
     def add_entity_node(self, id: int, head: str, modifier: List[str], entity_role: str, clause_layer: int) -> None:
+        """Insert a node representing an entity mention at a given clause layer."""
         logger.info("Adding entity node...")
         self._validate_role(entity_role)
         self.entity_ids.add(id)
@@ -152,13 +168,10 @@ class RelationGraph:
         clause_text = self.clauses[clause_layer] if 0 <= clause_layer < len(self.clauses) else self.text
         text_for_sent = self._build_context_snippet(head, modifier, clause_text)
         sentiment = self._sent(text_for_sent)
-        """if modifier:
+        if modifier:
             sentiment = self._sent(text_for_sent)
         else:
-            # When no modifiers extracted, dampen sentiment by 0.1x
-            # This helps neutral cases default closer to 0 while preserving inherent sentiment direction
-            # Entities like "slow performance", "fresh juices" have inherent sentiment but weaker without modifiers
-            sentiment = 0.1 * self._sent(head)"""
+            sentiment = 0.1 * self._sent(text_for_sent)
         self.graph.add_node(
             key,
             head=head,
@@ -170,6 +183,7 @@ class RelationGraph:
         )
     
     def get_entities_at_layer(self, clause_layer: int) -> List[Dict]:
+        """Return serialisable node information for a specific clause layer."""
         entities = []
         for (entity_id, layer), data in self.graph.nodes(data=True):
             if layer == clause_layer:
@@ -186,6 +200,7 @@ class RelationGraph:
         return entities
     
     def get_all_entity_mentions(self, entity_id: int) -> List[Dict]:
+        """Collect all mention heads for an entity across clauses."""
         if entity_id not in self.entity_ids:
             raise ValueError(f"Entity ID {entity_id} not found in the graph.")
         mentions = []
@@ -195,6 +210,7 @@ class RelationGraph:
         return mentions
 
     def add_entity_modifier(self, entity_id: int, modifier: List[str], clause_layer: int) -> None:
+        """Append modifier tokens to an entity mention and refresh sentiment."""
         logger.info("Adding entity modifiers...")
         self._assert_node_exists(entity_id, clause_layer)
         key = self._node_key(entity_id, clause_layer)
@@ -206,6 +222,7 @@ class RelationGraph:
         self.graph.nodes[key]["init_sentiment"] = self._sent(text_for_sent)
 
     def set_entity_role(self, entity_id: int, entity_role: str, clause_layer: int) -> None:
+        """Update the semantic role for an entity mention within a clause."""
         logger.info("Setting entity role...")
         self._validate_role(entity_role)
         self._assert_node_exists(entity_id, clause_layer)
@@ -213,6 +230,7 @@ class RelationGraph:
         self.graph.nodes[key]["entity_role"] = entity_role
 
     def add_temporal_edge(self, entity_id: int) -> None:
+        """Connect consecutive mentions of ``entity_id`` to capture chronology."""
         logger.info("Adding temporal edge...")
         if entity_id not in self.entity_ids:
             raise ValueError(f"Entity ID {entity_id} not found in the graph.")
@@ -231,6 +249,7 @@ class RelationGraph:
         modifier: Optional[List[str]] = None,
         action_id: Optional[int] = None,
     ) -> None:
+        """Create an action relation between two entities within a clause."""
         logger.info(f"Adding action edge actor={actor_id} target={target_id} at layer {clause_layer}...")
         if actor_id not in self.entity_ids or target_id not in self.entity_ids:
             raise ValueError(f"Actor ID {actor_id} or Target ID {target_id} not found in the graph.")
@@ -274,6 +293,7 @@ class RelationGraph:
         self.graph.add_edge(actor, target, **edge_payload)
 
     def add_belonging_edge(self, parent_id: int, child_id: int, clause_layer: int) -> None:
+        """Add a part-of relation between ``parent_id`` and ``child_id``."""
         logger.info(f"Adding belonging edge between {parent_id} and {child_id}...")
         if parent_id not in self.entity_ids or child_id not in self.entity_ids:
             raise ValueError(f"Parent ID {parent_id} or Child ID {child_id} not found in the graph.")
@@ -284,6 +304,7 @@ class RelationGraph:
         self.graph.add_edge(parent, child, relation="belonging", parent=parent, child=child)
 
     def add_association_edge(self, entity1_id: int, entity2_id: int, clause_layer: int) -> None:
+        """Flag that two entities co-occur without a directional relationship."""
         logger.info(f"Adding association edge between {entity1_id} and {entity2_id}...")
         if entity1_id not in self.entity_ids or entity2_id not in self.entity_ids:
             raise ValueError(f"Entity1 ID {entity1_id} or Entity2 ID {entity2_id} not found in the graph.")
@@ -294,6 +315,7 @@ class RelationGraph:
         self.graph.add_edge(e1, e2, relation="association", entity1=e1, entity2=e2)
 
     def run_compound_action_sentiment_calculations(self, function: Optional[Callable] = None) -> None:
+        """Propagate action sentiment using a custom calculator."""
         logger.info("Running compound action sentiment calculations...")
         if function is None:
             raise ValueError("No function provided for compound sentiment calculation")
@@ -309,6 +331,7 @@ class RelationGraph:
                 self.graph.nodes[target]["compound_sentiment"] = float(t_s)
 
     def run_compound_belonging_sentiment_calculations(self, function: Optional[Callable] = None) -> None:
+        """Propagate belonging sentiment using a custom calculator."""
         logger.info("Running compound belonging sentiment calculations...")
         if function is None:
             raise ValueError("No function provided for compound sentiment calculation")
@@ -323,6 +346,7 @@ class RelationGraph:
                 self.graph.nodes[child]["compound_sentiment"] = float(c_s)
 
     def run_compound_association_sentiment_calculations(self, function: Optional[Callable] = None) -> None:
+        """Propagate association sentiment using a custom calculator."""
         logger.info("Running compound association sentiment calculations...")
         if function is None:
             raise ValueError("No function provided for compound sentiment calculation")
@@ -337,6 +361,7 @@ class RelationGraph:
                 self.graph.nodes[e2]["compound_sentiment"] = float(r2)
 
     def run_aggregate_sentiment_calculations(self, entity_id: int, function: Optional[Callable] = None) -> float:
+        """Compute a single sentiment score per entity from clause-level values."""
         logger.info(f"Running aggregate sentiment calculations for entity {entity_id}...")
         if function is None:
             raise ValueError("No function provided for aggregate sentiment calculation")
@@ -354,6 +379,8 @@ class RelationGraph:
 
 
 class GraphVisualizer:
+    """Helper for rendering :class:`RelationGraph` instances."""
+
     def __init__(self, relation_graph: RelationGraph):
         self.relation_graph = relation_graph
         self.graph: nx.MultiDiGraph = relation_graph.graph
@@ -377,6 +404,7 @@ class GraphVisualizer:
         return colors
 
     def draw_graph(self, save_path: Optional[str] = None) -> None:
+        """Render the graph in 3D using Plotly, optionally writing to ``save_path``."""
         logger.info("Drawing graph...")
         if not self.graph.nodes:
             logger.info("Graph is empty. Nothing to draw.")

@@ -1,24 +1,31 @@
-import os
-import re
+"""Hybrid aspect extraction and coreference helpers for the sentiment pipeline."""
+
+import ast
 import json
-import time
+import logging
+import os
 import pickle
 import random
-import logging
+import re
+import time
 import warnings
-import ast
-import spacy
-import torch
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, fields
-from string import punctuation
 from functools import lru_cache
-from typing import Dict, List, Any, Tuple, Set
+from pathlib import Path
+from string import punctuation
+from typing import Any, Dict, List, Set, Tuple
 
-import config
-from utility import normalize_text
+import spacy
+import torch
+
+try:
+    from . import config
+    from ..utility import normalize_text
+except ImportError:
+    import config
+    from utility import normalize_text
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"

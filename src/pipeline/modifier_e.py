@@ -1,36 +1,34 @@
+"""Modifier extraction strategies for enriching entity sentiment context."""
+
 import json
-import re
-import time
-from typing import Dict, Any, List, Optional, Tuple
-from functools import lru_cache
-from copy import deepcopy
 import logging
 import os
+import re
+import time
+from copy import deepcopy
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Tuple
 
-import config
-from cache_utils import load_cache_from_file, save_cache_to_file
+try:  # pragma: no cover - support package and script execution
+    from . import config
+    from .cache_utils import load_cache_from_file, save_cache_to_file
+except ImportError:  # pragma: no cover - fallback when executed directly
+    import config
+    from cache_utils import load_cache_from_file, save_cache_to_file
 
 try:
-    from utility import get_env as _root_get_env, ensure_env_loaded as _root_ensure_env_loaded
-except Exception:  # pragma: no cover - defensive fallback for test environments
+    from src.utility import get_env as _root_get_env, ensure_env_loaded as _root_ensure_env_loaded
+except ImportError:
     try:
-        from src.utility import get_env as _root_get_env, ensure_env_loaded as _root_ensure_env_loaded  # type: ignore
-    except Exception:
+        from ..utility import get_env as _root_get_env, ensure_env_loaded as _root_ensure_env_loaded
+    except ImportError:
         try:
-            from pipeline.utility import get_env as _root_get_env  # type: ignore
-        except Exception:
-            def _root_get_env(key: str, default: Optional[str] = None) -> Optional[str]:  # type: ignore
-                import os
+            from utility import get_env as _root_get_env, ensure_env_loaded as _root_ensure_env_loaded
+        except ImportError:
+            def _root_get_env(key: str, default: Optional[str] = None) -> Optional[str]:
                 return os.environ.get(key, default)
 
-        def _root_ensure_env_loaded() -> None:
-            return None
-else:
-    if not callable(_root_ensure_env_loaded):
-        try:
-            from src.utility import ensure_env_loaded as _root_ensure_env_loaded  # type: ignore
-        except Exception:
-            def _root_ensure_env_loaded() -> None:  # pragma: no cover - fallback when ensure_env_loaded missing
+            def _root_ensure_env_loaded() -> None:
                 return None
 
 get_env = _root_get_env
@@ -53,6 +51,8 @@ if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.WARNING)
 
 class _RateLimiter:
+    """Simple sliding-window rate limiter for outbound API calls."""
+
     def __init__(self, max_calls: int = 20, period_seconds: int = 60):
         self.max_calls = max_calls
         self.period_seconds = period_seconds
@@ -72,6 +72,7 @@ _GLOBAL_MODIFIER_LIMITER: Optional[_RateLimiter] = None
 
 
 def _ensure_modifier_rate_limiter(max_calls: int = 20, period_seconds: int = 60) -> _RateLimiter:
+    """Return a shared rate limiter tuned for modifier extraction traffic."""
     global _GLOBAL_MODIFIER_LIMITER
     if (
         _GLOBAL_MODIFIER_LIMITER is None
@@ -82,15 +83,23 @@ def _ensure_modifier_rate_limiter(max_calls: int = 20, period_seconds: int = 60)
     return _GLOBAL_MODIFIER_LIMITER
 
 class ModifierExtractor:
+    """Abstract base class for extracting descriptive modifiers."""
+
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
+        """Return modifier metadata for ``entity`` within ``text``."""
         raise NotImplementedError
 
+
 class DummyModifierExtractor(ModifierExtractor):
+    """No-op extractor used for tests and ablations."""
+
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
+        """Return an empty modifier payload preserving the API contract."""
         return {"entity": entity, "modifiers": [], "approach_used": "dummy", "justification": "empty"}
 
 @lru_cache(maxsize=1)
 def _get_spacy_nlp():
+    """Lazily load a spaCy English pipeline if available."""
     if not spacy:
         return None
     for name in ("en_core_web_sm", "en_core_web_md", "en_core_web_lg"):
@@ -104,6 +113,7 @@ def _get_spacy_nlp():
         return None
 
 def _parse_json_payload(txt: str) -> Optional[Dict[str, Any]]:
+    """Extract and decode JSON data embedded in an LLM response."""
     if not txt:
         return None
     m = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", txt)
@@ -123,6 +133,8 @@ def _parse_json_payload(txt: str) -> Optional[Dict[str, Any]]:
             return None
 
 class GemmaModifierExtractor(ModifierExtractor):
+    """Gemini-powered modifier extractor with caching and rate limiting."""
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -137,6 +149,7 @@ class GemmaModifierExtractor(ModifierExtractor):
         cache_file: Optional[str] = None,
         cache_only: bool = False,
     ):
+        """Gemini-powered modifier extractor with caching and rate limiting."""
         self.model = model
         self.temperature = temperature
         self.top_p = top_p
@@ -174,15 +187,14 @@ class GemmaModifierExtractor(ModifierExtractor):
     1.  **Heuristic #1: Scan for Obvious Sentiment.** First, look for simple, powerful sentiment words ("love," "hate," "perfect," "nice," "awful," "great," "quickly," "safely," "dreadful") directly describing the ENTITY or its associated action. Prioritize this signal.
 
     2.  **Heuristic #2: Analyze the Predicate and Structure.** Identify the main verb phrase. Pay close attention to parallel structures. If a sentiment applies to the first item in a list (e.g., "easy to carry and handle"), it applies to all items.
-
     3.  **Heuristic #3: Evaluate the Consequence (User Experience).** What was the *result* of the entity's action? A neutral-sounding event can have a strong sentiment based on its outcome. A seemingly negative event (like an app restarting) can be positive if it's framed as a sign of stability that prevents a worse outcome.
 
     4.  **Heuristic #4: Check for Context-Dependent Polarity (CRITICAL).** The sentiment of a word is not fixed. You must use world knowledge.
-        *   **Comparatives:** "**higher** price" is negative. "**less** expensive" is positive. "**bigger** power switch" may imply the old one was too small (negative).
+        *   **Comparatives:** "needs a *bigger* switch" implies the current one is too small (negative). "*less* expensive" is positive.
         *   **Quantifiers & Absence:** "**ZERO** bloatware" is positive. "**only** 2 ports" is negative. "**removed** the jack" or "**except for** a program" indicates a missing feature (negative).
         *   **Idioms:** "can't beat" means "is excellent." "melts in your mouth" is positive.
 
-    5.  **Heuristic #5: Identify the Speaker's True Stance.** Distinguish the author's opinion from opinions they are quoting or describing, especially in contrastive or counterfactual structures.
+    5.  **Heuristic #5: Identify the Speaker's True Stance.** Distinguish the author's opinion from opinions they are quoting, describing, or hypothesizing about, especially in contrastive or counterfactual structures.
         *   **Refutation:** "Some complain about X, but I think it's great." -> The author's refutation determines the sentiment.
         *   **Counterfactual:** "I *would have* loved it *if not for* [the entity]." -> This is a strong negative evaluation of [the entity].
 
@@ -193,6 +205,11 @@ class GemmaModifierExtractor(ModifierExtractor):
 
     7.  **Heuristic #7: Final Attribution Check.** Confirm the evaluation is precisely about the TARGET ENTITY.
         *   "**Support** said the OS was corrupted." -> The negativity applies to the "OS," not "Support."
+
+    8.  **Heuristic #8: Barriers.** You MUST NOT collect verbs that connect two distinct entities together. Prioritize this above ALL OTHER heuristics.
+        *   If an entity is acting upon or being acted upon by another entity in ANY WAY, that is NOT a modifier.
+        *   "The people fought their foes." -> "fought" is not a modifier for "people" or "foes" because it connects two entities.
+        *   "The person was injured by the deer." -> "was injured" is not a modifier for "person" or "deer" because it connects two entities."
 
     ### Output Structure
     First, provide your step-by-step reasoning. Then, provide the final JSON.
@@ -216,6 +233,7 @@ Mental Sandbox (Internal Monologue):
 5.  **Speaker's Stance:** Direct opinion.
 6.  **Reality vs. Scope:** Describes reality.
 7.  **Attribution:** "was generous" directly modifies "portion size".
+8.  **Barriers:** "was generous" is not an action performed between two entities; therefore, it is fine to extract
 Final Answer Formulation: The entity is the subject of a direct, positive predicate.
 {{
 "entity":"portion size",
@@ -233,6 +251,7 @@ Mental Sandbox (Internal Monologue):
 5.  **Speaker's Stance:** Direct opinion.
 6.  **Reality vs. Scope:** Describes reality.
 7.  **Attribution:** The idiom describes the "brisket".
+8.  **Barriers:** "melts in your mouth" is not an action performed between two entities; therefore, it is fine to extract
 Final Answer Formulation: Idiomatic evaluation.
 {{
 "entity":"brisket",
@@ -250,6 +269,7 @@ Mental Sandbox (Internal Monologue):
 5.  **Speaker's Stance:** Heuristic #5 is key. The structure 'would have [positive] if not for [entity]' establishes that the entity is the single blocking point for a positive experience. This is a very strong negative evaluation of the entity.
 6.  **Reality vs. Scope:** Describes reality.
 7.  **Attribution:** The negativity is squarely placed on "the terrible keyboard."
+8.  **Barriers:** "terrible" is not an action performed between two entities; therefore, it is fine to extract
 Final Answer Formulation: A counterfactual conditional identifies the entity as the source of failure.
 {{
 "entity":"keyboard",
@@ -267,6 +287,7 @@ Mental Sandbox (Internal Monologue):
 5.  **Speaker's Stance:** N/A.
 6.  **Reality vs. Scope:** Heuristic #6 applies. The sentence uses "Android" as a neutral reference point to explain the user's personal learning curve with a different system. It is not evaluating Android.
 7.  **Attribution:** The negative sentiment "confusing" applies to the "iPhone's settings," not to "Android."
+8.  **Barriers:** N/A
 Final Answer Formulation: The entity is a neutral reference for user habits.
 {{
 "entity":"Android",
@@ -284,11 +305,12 @@ Mental Sandbox (Internal Monologue):
 5.  **Speaker's Stance:** Direct observation.
 6.  **Reality vs. Scope:** Describes reality.
 7.  **Attribution:** The action is attributed to the program.
+8.  **Barriers:** "crashes" is not an action performed between two entities; therefore, it is fine to extract; however, "without bringing down the OS" is an action performed between two entities, therefore only "simply restarts" may be extracted
 Final Answer Formulation: The consequence of the action is framed as a positive demonstration of system stability.
 {{
 "entity":"program",
 "justification":"Heuristic #3 (Evaluate Consequence) applies. Although 'crashes' is a negative action, the sentence frames this as a positive outcome ('restarts without bringing down the OS'), demonstrating the system's resilience. The event contributes to an overall positive evaluation.",
-"modifiers":["crashes", "simply restarts without bringing down the OS"],
+"modifiers":["crashes", "simply restarts"],
 "approach_used":"{self.model}"
 }}
 </EXAMPLES>>
@@ -302,6 +324,7 @@ Mental Sandbox (Internal Monologue):
 5.  **Speaker's Stance:**
 6.  **Reality vs. Scope:**
 7.  **Attribution:**
+8.  **Barriers:** (Prioritize)
 Final Answer Formulation:
 {{
 "entity": "{entity}",
@@ -330,6 +353,7 @@ Final Answer Formulation:
         return resp.text
 
     def extract(self, text: str, entity: str) -> Dict[str, Any]:
+        """Return modifiers for ``entity`` within ``text``, consulting the cache when possible."""
         if not text or not entity:
             return {"entity": entity, "modifiers": [], "approach_used": self.model, "justification": "empty input"}
         cache_key = (text.strip(), entity.strip())

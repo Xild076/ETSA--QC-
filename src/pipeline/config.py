@@ -1,3 +1,5 @@
+"""Centralised filesystem configuration for the sentiment pipeline."""
+
 from pathlib import Path
 
                     

@@ -1,35 +1,44 @@
-import os
-import ssl
-from functools import lru_cache
-from typing import Literal, List, Dict, Any, Optional
-from rich.console import Console
+"""Expose unified sentiment scorers backed by third-party NLP models."""
+
+from __future__ import annotations
+
+import hashlib
+import logging
 import math
-import torch
+import os
 import re
-from textblob import TextBlob
+import ssl
+import string
+from functools import lru_cache
+from typing import Any, Dict, List, Literal, Optional
+
+import numpy as np
+import torch
 from flair.data import Sentence
 from flair.models import TextClassifier
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from pysentimiento import create_analyzer
-import numpy as np
+from rich.console import Console
+from textblob import TextBlob
 from transformers import pipeline
-import hashlib
-import string
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-import logging
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
 
-def get_optimal_device():
-    """Get the optimal device for computation (MPS > CUDA > CPU)"""
+def get_optimal_device() -> str:
+    """Return the preferred Torch device prioritising MPS, then CUDA."""
     if torch.backends.mps.is_available():
         return "mps"
-    elif torch.cuda.is_available():
+    if torch.cuda.is_available():
         return "cuda"
-    else:
-        return "cpu"
+    return "cpu"
+
 
 _DEVICE = get_optimal_device()
-print(f"Using device: {_DEVICE}")
+logger.info("Using device: %s", _DEVICE)
 
+# Environment tweaks to keep transformer inference predictable on shared hosts.
 _ENV_DEFAULTS = {
     "KMP_DUPLICATE_LIB_OK": "TRUE",
     "OMP_NUM_THREADS": "2" if _DEVICE == "cpu" else "1",
@@ -40,10 +49,6 @@ _ENV_DEFAULTS = {
 for key, value in _ENV_DEFAULTS.items():
     if value is not None:
         os.environ.setdefault(key, value)
-
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO)
 
 ssl._create_default_https_context = ssl._create_unverified_context
 console = Console(width=120)
@@ -71,6 +76,7 @@ _HF_PIPELINES: Dict[str, Any] = {}
 
 
 def _get_hf_pipeline(model_name: str) -> Any:
+    """Return a cached Hugging Face pipeline configured for sentiment analysis."""
     existing = _HF_PIPELINES.get(model_name)
     if existing is None or not getattr(existing, "return_all_scores", False):
         try:
@@ -95,6 +101,7 @@ def _get_hf_pipeline(model_name: str) -> Any:
 
 
 def _get_vader_analyzer() -> SentimentIntensityAnalyzer:
+    """Memoise the VADER analyzer singleton."""
     global _VADER_ANALYZER
     if _VADER_ANALYZER is None:
         _VADER_ANALYZER = SentimentIntensityAnalyzer()
@@ -102,6 +109,7 @@ def _get_vader_analyzer() -> SentimentIntensityAnalyzer:
 
 
 def _get_pysentimiento_analyzer():
+    """Return a cached PySentimiento analyzer instance."""
     global _PYSENTIMIENTO_ANALYZER
     if _PYSENTIMIENTO_ANALYZER is None:
         _PYSENTIMIENTO_ANALYZER = create_analyzer(task="sentiment", lang="en")
@@ -113,6 +121,7 @@ _DEFAULT_NEG_THRESHOLD = -0.1
 
 
 def _normalize_score(score: Any) -> float:
+    """Clamp an arbitrary score into the [-1, 1] interval."""
     try:
         value = float(score)
     except (TypeError, ValueError):
@@ -123,6 +132,7 @@ def _normalize_score(score: Any) -> float:
 
 
 def _score_to_label(score: float, pos_threshold: float = _DEFAULT_POS_THRESHOLD, neg_threshold: float = _DEFAULT_NEG_THRESHOLD) -> str:
+    """Translate a numeric score into a coarse sentiment label."""
     if score >= pos_threshold:
         return "positive"
     if score <= neg_threshold:
@@ -138,6 +148,7 @@ def _build_sentiment_result(
     pos_threshold: float = _DEFAULT_POS_THRESHOLD,
     neg_threshold: float = _DEFAULT_NEG_THRESHOLD,
 ) -> Dict[str, Any]:
+    """Compose a uniform payload capturing score, label, confidence, and raw data."""
     normalized = _normalize_score(score)
     if confidence is None or not isinstance(confidence, (float, int)) or math.isnan(confidence):
         conf_val = abs(normalized)
@@ -151,7 +162,8 @@ def _build_sentiment_result(
         "raw": raw,
     }
 
-def _convert_confidence_to_valence(confidence_score: float, prediction_label: str, method:Literal['linear_transform', 'log_odds', 'tanh_scaling']) -> float:
+def _convert_confidence_to_valence(confidence_score: float, prediction_label: str, method: Literal['linear_transform', 'log_odds', 'tanh_scaling']) -> float:
+    """Map prediction confidence to valence using the requested transform."""
     if prediction_label.upper() in ['NEGATIVE', 'NEG']:
         confidence_score = -confidence_score
     
@@ -174,6 +186,7 @@ def _convert_confidence_to_valence(confidence_score: float, prediction_label: st
         return confidence_score * 2 - 1 if confidence_score >= 0 else confidence_score * 2 + 1
 
 def _label_valence_from_rating(label: str, max_rating: int = 5) -> float:
+    """Convert a rating label (e.g. '5 stars') to the [-1, 1] interval."""
     digits = re.findall(r"\d+", label)
     if not digits:
         return 0.0
@@ -184,6 +197,7 @@ def _label_valence_from_rating(label: str, max_rating: int = 5) -> float:
 
 
 def _label_valence_basic(label: str) -> float:
+    """Interpret common sentiment label strings as valence."""
     lowered = label.lower()
     if any(token in lowered for token in ("positive", "pos", "bullish")):
         return 1.0
@@ -194,7 +208,9 @@ def _label_valence_basic(label: str) -> float:
     return 0.0
 
 
-def _get_hf_pipeline_score(result: List[Dict[str, Any]], is_confidence_only: bool, model_name:str) -> tuple[float, float]:
+def _get_hf_pipeline_score(result: List[Dict[str, Any]], is_confidence_only: bool, model_name: str) -> tuple[float, float]:
+    """Summarise Hugging Face predictions into valence and confidence."""
+    _ = is_confidence_only  # Maintained for backward compatibility.
     if not result:
         return 0.0, 0.0
     records = result[0] if isinstance(result[0], list) else result
@@ -222,6 +238,7 @@ def _get_hf_pipeline_score(result: List[Dict[str, Any]], is_confidence_only: boo
     return valence, confidence
 
 def _get_hf_logit_score(text: str, model, tokenizer) -> float:
+    """Derive a valence estimate from logits of a sequence classifier."""
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(model.device)
     with torch.no_grad():
         logits = model(**inputs).logits
@@ -244,6 +261,7 @@ def _get_hf_logit_score(text: str, model, tokenizer) -> float:
     return valence
 
 def get_vader_sentiment(text: str) -> Dict[str, Any]:
+    """Return sentiment metrics from the VADER lexicon-based model."""
     logger.debug("Analyzing sentiment using VADER")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"}, pos_threshold=0.05, neg_threshold=-0.05)
@@ -258,6 +276,7 @@ def get_vader_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)}, pos_threshold=0.05, neg_threshold=-0.05)
 
 def get_textblob_sentiment(text: str) -> Dict[str, Any]:
+    """Compute polarity using TextBlob's rule-based analyser."""
     logger.debug("Analyzing sentiment using TextBlob")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"}, pos_threshold=0.05, neg_threshold=-0.05)
@@ -274,6 +293,7 @@ def get_textblob_sentiment(text: str) -> Dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _get_flair_classifier() -> TextClassifier:
+    """Load and cache the Flair sentiment classifier."""
     try:
         classifier = TextClassifier.load('sentiment')
         if _DEVICE in ["cuda", "mps"] and hasattr(classifier, 'to'):
@@ -286,6 +306,7 @@ def _get_flair_classifier() -> TextClassifier:
 
 
 def get_flair_sentiment(text: str) -> Dict[str, Any]:
+    """Estimate sentiment probability using the Flair transformer model."""
     logger.debug("Analyzing sentiment using Flair")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -304,6 +325,7 @@ def get_flair_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 def get_pysentimiento_sentiment(text: str) -> Dict[str, Any]:
+    """Return sentiment analysis results from PySentimiento's RoBERTa model."""
     logger.debug("Analyzing sentiment using PySentimiento")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -322,6 +344,7 @@ def get_pysentimiento_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 def get_swn_sentiment(text: str) -> Dict[str, Any]:
+    """Score sentiment using averaged SentiWordNet synset statistics."""
     logger.debug("Analyzing sentiment using SentiWordNet")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -345,6 +368,7 @@ def get_swn_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 def get_nlptown_sentiment(text: str) -> Dict[str, Any]:
+    """Use the NLP Town multilingual BERT model for sentiment scoring."""
     logger.debug("Analyzing sentiment using NLP Town")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -358,6 +382,7 @@ def get_nlptown_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 def get_finiteautomata_sentiment(text: str) -> Dict[str, Any]:
+    """Score sentiment using the BERTweet FiniteAutomata checkpoint."""
     logger.debug("Analyzing sentiment using Finite Automata")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -371,6 +396,7 @@ def get_finiteautomata_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 def get_ProsusAI_sentiment(text: str) -> Dict[str, Any]:
+    """Use ProsusAI FinBERT for finance-oriented sentiment scoring."""
     logger.debug("Analyzing sentiment using ProsusAI")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -384,6 +410,7 @@ def get_ProsusAI_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 def get_distilbert_logit_sentiment(text: str) -> Dict[str, Any]:
+    """Compute sentiment using logit differentials from DistilBERT."""
     logger.debug("Analyzing sentiment using DistilBERT logits")
     if not text or not text.strip():
         return _build_sentiment_result(0.0, confidence=0.0, raw={"reason": "empty"})
@@ -397,54 +424,40 @@ def get_distilbert_logit_sentiment(text: str) -> Dict[str, Any]:
         return _build_sentiment_result(0.0, confidence=0.0, raw={"error": str(exc)})
 
 
-                                                                            
-
-def create_focused_context_window(text: str, aspect: str, modifiers: List[str], 
-                                 window_size: int = 50) -> str:
-    """
-    Create a focused context window around an aspect while preserving sentence structure.
-    Removes unnecessary words but keeps punctuation for proper idea separation.
-    """
+def create_focused_context_window(text: str, aspect: str, modifiers: List[str], window_size: int = 50) -> str:
+    """Return a trimmed window around the aspect while preserving structure."""
     if not text or not aspect:
         return text
-    
-                                  
+
     text_lower = text.lower()
     aspect_lower = aspect.lower()
     aspect_pos = text_lower.find(aspect_lower)
-    
+
     if aspect_pos == -1:
-                                                     
         aspect_words = aspect_lower.split()
-        for i, word in enumerate(text_lower.split()):
-            if any(aw in word for aw in aspect_words):
-                aspect_pos = text_lower.find(word)
+        for token in text_lower.split():
+            if any(word in token for word in aspect_words):
+                aspect_pos = text_lower.find(token)
                 break
-    
+
     if aspect_pos == -1:
-        return text                             
-    
-                                 
+        return text
+
     start_pos = max(0, aspect_pos - window_size)
     end_pos = min(len(text), aspect_pos + len(aspect) + window_size)
-    
-                                   
+
     start_pos = _find_sentence_start(text, start_pos)
     end_pos = _find_sentence_end(text, end_pos)
-    
+
     context_window = text[start_pos:end_pos].strip()
-    
-                                      
-    focused_context = _clean_preserving_structure(context_window, aspect, modifiers)
-    
-    return focused_context
+    return _clean_preserving_structure(context_window, aspect, modifiers)
+
 
 def _find_sentence_start(text: str, pos: int) -> int:
-    """Find the start of the sentence containing the given position."""
+    """Return the index of the first character in the surrounding sentence."""
     sentence_markers = {'.', '!', '?', '\n'}
     while pos > 0:
         if text[pos] in sentence_markers:
-                                                
             pos += 1
             while pos < len(text) and text[pos].isspace():
                 pos += 1
@@ -452,8 +465,9 @@ def _find_sentence_start(text: str, pos: int) -> int:
         pos -= 1
     return pos
 
+
 def _find_sentence_end(text: str, pos: int) -> int:
-    """Find the end of the sentence containing the given position."""
+    """Return the index just after the sentence containing ``pos``."""
     sentence_markers = {'.', '!', '?', '\n'}
     while pos < len(text):
         if text[pos] in sentence_markers:
@@ -462,21 +476,15 @@ def _find_sentence_end(text: str, pos: int) -> int:
         pos += 1
     return pos
 
+
 def _clean_preserving_structure(text: str, aspect: str, modifiers: List[str]) -> str:
-    """
-    Remove unnecessary words while preserving sentence structure and punctuation.
-    Keeps words that are relevant to the aspect or provide context for sentiment.
-    """
+    """Remove filler words while keeping punctuation and sentiment cues."""
     if not text:
         return text
-    
-                                               
+
     keep_words = {
-                                   
         aspect.lower(),
-                   
         *[mod.lower() for mod in modifiers],
-                         
         'good', 'bad', 'great', 'terrible', 'amazing', 'awful', 'excellent', 'poor',
         'love', 'hate', 'like', 'dislike', 'enjoy', 'despise',
         'fast', 'slow', 'quick', 'sluggish', 'responsive', 'laggy',
@@ -484,102 +492,82 @@ def _clean_preserving_structure(text: str, aspect: str, modifiers: List[str]) ->
         'reliable', 'unreliable', 'stable', 'unstable', 'buggy',
         'expensive', 'cheap', 'affordable', 'overpriced', 'costly',
         'worth', 'worthless', 'valuable', 'useless', 'useful',
-                      
-        'very', 'extremely', 'quite', 'really', 'super', 'incredibly', 
+        'very', 'extremely', 'quite', 'really', 'super', 'incredibly',
         'somewhat', 'rather', 'fairly', 'pretty', 'highly', 'totally',
-                  
         'not', 'no', 'never', 'nothing', 'none', 'neither', 'nor',
         'dont', "don't", 'cant', "can't", 'wont', "won't", 'isnt', "isn't",
         'wasnt', "wasn't", 'arent', "aren't", 'werent', "weren't",
-                                
         'can', 'could', 'should', 'would', 'will', 'shall', 'may', 'might',
         'must', 'ought', 'need', 'dare', 'used',
-                      
         'better', 'worse', 'best', 'worst', 'more', 'less', 'most', 'least',
         'than', 'as', 'like', 'unlike', 'compared', 'versus',
-                          
         'now', 'then', 'before', 'after', 'during', 'while', 'when',
         'initially', 'finally', 'eventually', 'suddenly', 'immediately',
-                                             
         'and', 'or', 'but', 'however', 'although', 'though', 'despite',
         'because', 'since', 'so', 'therefore', 'thus', 'hence',
-        'if', 'unless', 'when', 'while', 'whereas', 'until'
+        'if', 'unless', 'when', 'while', 'whereas', 'until',
     }
-    
-                                                   
+
     tokens = re.findall(r'\w+|[^\w\s]', text)
-    
-    filtered_tokens = []
+    filtered_tokens: List[str] = []
+    aspect_lower = aspect.lower()
+
     for token in tokens:
         token_lower = token.lower()
-        
-                                 
+
         if token in string.punctuation:
             filtered_tokens.append(token)
-                              
         elif token_lower in keep_words:
             filtered_tokens.append(token)
-                                                
-        elif aspect.lower() in token_lower or token_lower in aspect.lower():
+        elif aspect_lower in token_lower or token_lower in aspect_lower:
             filtered_tokens.append(token)
-                                             
         elif any(token_lower in mod.lower() or mod.lower() in token_lower for mod in modifiers):
             filtered_tokens.append(token)
-                                                                
         elif any(token_lower.endswith(suffix) for suffix in ['ly', 'ing', 'ed', 'er', 'est', 'ful', 'less']):
             filtered_tokens.append(token)
-                                                                            
-        elif token_lower in {'the', 'a', 'an', 'this', 'that', 'these', 'those', 
-                           'i', 'you', 'he', 'she', 'it', 'we', 'they',
-                           'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-                           'have', 'has', 'had', 'do', 'does', 'did'}:
-                                                      
+        elif token_lower in {
+            'the', 'a', 'an', 'this', 'that', 'these', 'those',
+            'i', 'you', 'he', 'she', 'it', 'we', 'they',
+            'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did',
+        }:
             continue
         else:
             filtered_tokens.append(token)
-    
-                                          
-    result = ""
-    for i, token in enumerate(filtered_tokens):
-        if i == 0:
-            result += token
-        elif token in string.punctuation:
-            result += token
-        else:
-            result += " " + token
-    
-    return result.strip()
 
-def analyze_aspect_sentiment_focused(text: str, aspect: str, modifiers: List[str], 
-                                   analysis_function) -> Dict[str, Any]:
-    """
-    Analyze sentiment for a specific aspect using focused context windows.
-    Maps extracted information back to sentence structure while removing noise.
-    """
+    result = []
+    for token in filtered_tokens:
+        if not result:
+            result.append(token)
+        elif token in string.punctuation:
+            result[-1] = f"{result[-1]}{token}" if result else token
+        else:
+            result.append(token)
+
+    return " ".join(result).strip()
+
+
+def analyze_aspect_sentiment_focused(text: str, aspect: str, modifiers: List[str], analysis_function) -> Dict[str, Any]:
+    """Analyse sentiment on an aspect using the trimmed context window."""
     if not text or not aspect:
         return {"score": 0.0, "confidence": 0.0, "method": "focused_context", "error": "missing_input"}
-    
-                            
+
     focused_context = create_focused_context_window(text, aspect, modifiers)
-    
-                                                    
+
     if len(focused_context) < 10:
         focused_context = text
-    
-                                          
+
     try:
         result = analysis_function(focused_context)
-        
-                                                 
+
         if isinstance(result, dict):
             result["focused_context"] = focused_context
             result["original_length"] = len(text)
             result["focused_length"] = len(focused_context)
             result["context_reduction"] = 1.0 - (len(focused_context) / len(text)) if len(text) > 0 else 0.0
             result["method"] = "focused_context"
-        
+
         return result
-    except Exception as e:
-        logger.warning(f"Focused sentiment analysis failed: {e}")
-                                   
+    except Exception as exc:
+        logger.warning("Focused sentiment analysis failed: %s", exc)
         return analysis_function(text)

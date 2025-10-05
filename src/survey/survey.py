@@ -1,20 +1,31 @@
-import random
-import numpy as np
-import streamlit as st
-import pandas as pd
-import json
-import gspread
-from google.oauth2.service_account import Credentials
+"""Streamlit application that collects calibrated sentiment survey responses."""
+
+from __future__ import annotations
+
 import datetime
+import json
+import os
+import random
+import re
+import sys
 from collections.abc import Mapping
 
-import re, os, sys
-if __package__ is None or __package__ == "":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-from src.survey.survey_question_gen import survey_gen
-from src.survey.survey_question_gen import calibration_gen
+import gspread
+import numpy as np
+import pandas as pd
+import streamlit as st
+from google.oauth2.service_account import Credentials
 
-def display_calibration_questions():
+try:
+    from .survey_question_gen import calibration_gen, survey_gen
+except ImportError:
+    try:
+        from src.survey.survey_question_gen import calibration_gen, survey_gen
+    except ImportError:
+        from survey_question_gen import calibration_gen, survey_gen
+
+def display_calibration_questions() -> None:
+    """Render the practice calibration questions prior to the survey."""
     st.markdown("""
     <div class="academic-paper">
     <h3>Practice Questions</h3>
@@ -51,7 +62,8 @@ def display_calibration_questions():
         st.rerun()
     st.stop()
 
-def display_calibration_confirmation():
+def display_calibration_confirmation() -> None:
+    """Confirm calibration answers and persist them into the response buffer."""
     pos_score = st.session_state.get('calibration_pos_score', None)
     neg_score = st.session_state.get('calibration_neg_score', None)
     pos_text = st.session_state.get('calibration_questions', {}).get('positive', {}).get('word') or st.session_state.get('calibration_questions', {}).get('positive', {}).get('text', '')
@@ -127,7 +139,8 @@ def display_calibration_confirmation():
         st.rerun()
     st.stop()
 
-def slider_view():
+def slider_view() -> None:
+    """Display the numeric sentiment scale beneath the active slider widget."""
     st.markdown("""
         <style>
         .slider-scale {
@@ -272,7 +285,8 @@ GOOGLE_CREDENTIALS_SECRET_KEY = "google_service_account_credentials"
 ENTITY_COLORS = ["#2C3E50", "#8B4513", "#556B2F", "#8B0000", "#483D8B", "#696969"]
 HIGHLIGHT_BACKGROUND_COLOR = "#F5F5F5"
 
-def initialize_session_state():
+def initialize_session_state() -> None:
+    """Seed Streamlit session state with defaults and survey styling."""
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Source+Serif+Pro:ital,wght@0,400;0,600;1,400&display=swap');
@@ -367,7 +381,8 @@ def initialize_session_state():
     if 'exported_once' not in st.session_state: st.session_state.exported_once = False
     if 'last_exported_count' not in st.session_state: st.session_state.last_exported_count = 0
 
-def display_attention_check():
+def display_attention_check() -> bool:
+    """Serve the attention-check question and record whether it was passed."""
     st.markdown("""
     <div class=\"academic-paper\">
     <h3 style='font-family: \"Source Serif Pro\", serif;'>Attention Check</h3>
@@ -385,7 +400,8 @@ def display_attention_check():
         st.rerun()
     return False
 
-def display_consent_form():
+def display_consent_form() -> None:
+    """Present the research consent details and capture participant agreement."""
     st.title("Research Survey Consent Form")
     st.markdown("""
 <div class="academic-paper">
@@ -479,16 +495,19 @@ Please check the following boxes to consent to this survey.
         st.session_state.packet_sentiment_history = []
         st.rerun()
 
+# Human-readable labels for the sentiment slider scale.
 sentiment_scale = {-4: "Extremely Negative", -3: "Strongly Negative", -2: "Moderately Negative", -1: "Slightly Negative", 0: "Neutral", 1: "Slightly Positive", 2: "Moderately Positive", 3: "Strongly Positive", 4: "Extremely Positive"}
 
-def get_scorable_entities(item):
+def get_scorable_entities(item: Mapping[str, object]) -> list[str]:
+    """Return the entities that should be rated for the given survey item."""
     if item.get('type') in ['compound_action', 'compound_association', 'compound_belonging']:
         return item.get('entities', [])
     elif item.get('type') in ['aggregate_short', 'aggregate_medium', 'aggregate_long']:
         return [item.get('entity', '')]
     return []
 
-def get_entities_to_highlight(main_entity, text):
+def get_entities_to_highlight(main_entity: str, text: str) -> list[str]:
+    """Collect pronoun references that should be highlighted alongside the entity."""
     entities_to_highlight = [main_entity]
     pronouns = ['it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves']
     for pronoun in pronouns:
@@ -496,7 +515,8 @@ def get_entities_to_highlight(main_entity, text):
             entities_to_highlight.append(pronoun)
     return entities_to_highlight
 
-def highlight_entities_in_sentence(original_text, entities):
+def highlight_entities_in_sentence(original_text: str, entities: list[str]) -> tuple[str, dict[str, str]]:
+    """Wrap any entity mentions in HTML spans for colourful highlighting."""
     entity_color_map = {}
     highlight_details = []
     sorted_entities = sorted(list(set(entities)), key=len, reverse=True)
@@ -530,7 +550,8 @@ def highlight_entities_in_sentence(original_text, entities):
         highlighted_sentence_parts.append(original_text[current_pos:])
     return "".join(highlighted_sentence_parts), entity_color_map
 
-def display_packet_question(sentence_item, actual_sentence_index):
+def display_packet_question(sentence_item: Mapping[str, object], actual_sentence_index: int) -> bool:
+    """Render progressive packet-style questions and return ``True`` when finished."""
     item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
     sentences = sentence_item.get('sentences', [])
     entity = sentence_item.get('entity', '')
@@ -589,7 +610,8 @@ def display_packet_question(sentence_item, actual_sentence_index):
                 return True
     return False
 
-def display_regular_question(sentence_item, actual_sentence_index):
+def display_regular_question(sentence_item: Mapping[str, object], actual_sentence_index: int) -> None:
+    """Show a standard single-sentence sentiment question."""
     item_id = f"{sentence_item.get('type', 'unknown')}_{actual_sentence_index}"
     sentences = sentence_item.get('sentences', [])
     combined_text = " ".join(sentences)
@@ -630,7 +652,8 @@ def display_regular_question(sentence_item, actual_sentence_index):
         return True
     return False
 
-def display_question():
+def display_question() -> None:
+    """Advance to the next question and delegate to the appropriate layout."""
     current_q_idx = st.session_state.current_question_index
     all_data = st.session_state.sentences_data + st.session_state.packet_data
     total_questions = len(st.session_state.shuffled_indices) if st.session_state.shuffled_indices else 0
@@ -686,7 +709,8 @@ def display_question():
         autosave_export_if_needed()
         st.rerun()
 
-def export_to_google_sheets(data_df):
+def export_to_google_sheets(data_df: pd.DataFrame) -> None:
+    """Push the latest responses to the configured Google Sheet."""
     creds_obj = st.secrets.get(GOOGLE_CREDENTIALS_SECRET_KEY)
     if not creds_obj:
         st.error(f"Secret '{GOOGLE_CREDENTIALS_SECRET_KEY}' not found for Google Sheets export.")
@@ -736,7 +760,8 @@ def export_to_google_sheets(data_df):
     except Exception as e:
         st.error(f"An error occurred during Google Sheets export: {e}")
 
-def autosave_export_if_needed():
+def autosave_export_if_needed() -> None:
+    """Automate periodic response exports to avoid data loss."""
     if not st.session_state.attention_check_shown:
         return
     if GOOGLE_SHEET_ID == "YOUR_SPREADSHEET_ID_HERE" or not GOOGLE_SHEET_ID:
@@ -763,7 +788,8 @@ def autosave_export_if_needed():
     except Exception:
         pass
 
-def display_demographic_section():
+def display_demographic_section() -> None:
+    """Collect optional demographic metadata for the participant."""
     st.markdown("""
     <div class="academic-paper demographic-banner">
     <h3>Optional Demographic Questions</h3>
@@ -802,7 +828,8 @@ def display_demographic_section():
         st.session_state['demographic_complete'] = True
         st.rerun()
 
-def display_finish_screen():
+def display_finish_screen() -> None:
+    """Thank the participant and provide a summary once the survey is complete."""
     st.title("Survey Completed!")
     st.success("Thank you for your participation! Your responses are greatly appreciated.")
     st.markdown("""
@@ -859,7 +886,8 @@ You can take a look at the project page here: [Project Page](https://github.com/
     st.markdown("---")
     return
 
-def main():
+def main() -> None:
+    """Entry point for running the Streamlit survey application."""
     st.set_page_config(page_title="Sentence Sentiment Survey", layout="centered", initial_sidebar_state="collapsed")
     initialize_session_state()
     if not st.session_state.consent_given:

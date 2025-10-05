@@ -1,3 +1,5 @@
+"""Benchmark utilities for evaluating the sentiment pipeline."""
+
 from __future__ import annotations
 
 import csv
@@ -16,16 +18,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TYPE_CHECKING, Tuple
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
+from networkx.readwrite import json_graph
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
     classification_report,
     confusion_matrix,
 )
-from networkx.readwrite import json_graph
 from tqdm import tqdm
 _LOW_INFORMATION_TOKENS = {
     "i", "me", "my", "mine", "you", "your", "yours", "we", "our", "ours", "they",
@@ -33,9 +36,14 @@ _LOW_INFORMATION_TOKENS = {
     "this", "that", "these", "those"
 }
 
-from pipeline import SentimentPipeline, build_default_pipeline
-import config
-from utility import normalize_text as normalize_text_for_comparison, STOPWORDS
+try:
+    from .pipeline import SentimentPipeline, build_default_pipeline
+    from . import config
+    from .utility import normalize_text as normalize_text_for_comparison, STOPWORDS
+except ImportError:
+    from pipeline import SentimentPipeline, build_default_pipeline
+    import config
+    from utility import normalize_text as normalize_text_for_comparison, STOPWORDS
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +91,7 @@ class GoldAspect:
 
 
 def _safe_filename(*segments: str) -> str:
+    """Generate a filesystem-safe filename from arbitrary segments."""
     names: List[str] = []
     for segment in segments:
         cleaned = re.sub(r"[^0-9a-zA-Z_-]+", "_", segment or "").strip("_")
@@ -92,6 +101,7 @@ def _safe_filename(*segments: str) -> str:
 
 
 def _graph_snapshot(graph: Optional["RelationGraph"]) -> Dict[str, Any]:
+    """Convert a graph object into a JSON-serialisable snapshot."""
     if graph is None:
         return {}
     try:
@@ -105,6 +115,7 @@ def _graph_snapshot(graph: Optional["RelationGraph"]) -> Dict[str, Any]:
 
 
 def _persist_graph_snapshot(snapshot: Dict[str, Any], directory: Path, sequence: int, sentence_id: str, issue_type: str) -> Optional[Path]:
+    """Persist a previously captured graph snapshot to disk."""
     if not snapshot:
         return None
     filename = f"{sequence:05d}_{_safe_filename(sentence_id, issue_type)}.json"
@@ -115,6 +126,7 @@ def _persist_graph_snapshot(snapshot: Dict[str, Any], directory: Path, sequence:
 
 
 def _module_hypothesis(issue_type: str) -> List[str]:
+    """Return likely pipeline components responsible for an issue type."""
     mapping = {
         "missing_aspect": ["aspect_extractor", "relation_extractor"],
         "spurious_aspect": ["relation_extractor", "modifier_extractor"],
@@ -289,6 +301,7 @@ def _match_aspects(
     golds: List[GoldAspect],
     min_score: float = 0.5,
 ) -> Tuple[List[Tuple[GoldAspect, PredictedAspect, float]], List[GoldAspect], List[PredictedAspect]]:
+    """Greedy match between predicted and gold aspects using similarity scores."""
     if not predicted or not golds:
         return [], list(golds), list(predicted)
 
@@ -315,6 +328,7 @@ def _match_aspects(
 
 
 def _load_semeval_xml(path: Path) -> List[DatasetItem]:
+    """Parse a SemEval XML file into dataset items."""
     tree = ET.parse(path)
     root = tree.getroot()
     dataset: List[DatasetItem] = []
@@ -337,6 +351,7 @@ def _load_semeval_xml(path: Path) -> List[DatasetItem]:
     return dataset
 
 def get_dataset(dataset_name: str) -> List[DatasetItem]:
+    """Load and shuffle the requested benchmark dataset."""
     import random
     path_map = {
         "test_restaurant_2014": config.SEMEVAL_2014_RESTAURANT_TEST,
@@ -351,6 +366,7 @@ def get_dataset(dataset_name: str) -> List[DatasetItem]:
 
 
 def _prepare_gold(aspects: Iterable[AspectAnnotation]) -> List[GoldAspect]:
+    """Normalise gold annotations for downstream similarity comparisons."""
     prepared: List[GoldAspect] = []
     for asp in aspects:
         tokens = _tokens(asp.term)
@@ -373,6 +389,7 @@ def _prepare_predicted(
     fallback_text: Optional[str] = None,
     graph: Optional["RelationGraph"] = None,
 ) -> List[PredictedAspect]:
+    """Transform aggregate graph results into comparable predicted aspects."""
     predicted: List[PredictedAspect] = []
     for entity_id, data in aggregate_results.items():
         canonical = data.get("label", f"entity_{entity_id}")
@@ -432,15 +449,18 @@ def _prepare_predicted(
 
 
 def _normalize_gold_polarity(polarity: str) -> str:
+    """Normalize gold polarity labels to a known set."""
     value = (polarity or "").lower().strip()
     return value if value in {"positive", "negative", "neutral", "conflict"} else "neutral"
 
 
 def _classification_labels(gold_labels: List[str], pred_labels: List[str]) -> List[str]:
+    """Combine gold and predicted labels into a sorted list for reporting."""
     return sorted(set(gold_labels) | set(pred_labels)) or ["neutral"]
 
 
 def _serialize_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert sklearn reports to JSON-serialisable dictionaries."""
     serializable = {}
     for label, metrics in report.items():
         if isinstance(metrics, dict):
@@ -451,6 +471,7 @@ def _serialize_report(report: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _plot_confusion_matrix(cm: List[List[int]], labels: List[str], path: Path) -> None:
+    """Create and persist a confusion matrix plot."""
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt="d", xticklabels=labels, yticklabels=labels, cmap="Blues")
     plt.ylabel("Gold")
@@ -469,7 +490,10 @@ def run_benchmark(
     neg_thresh: float = -0.1,
     progress_callback: Optional[Callable[[int, int], None]] = None,
     shuffle_seed: Optional[int] = None,
+    ablate_modifiers: bool = False,
+    ablate_relations: bool = False,
 ) -> Dict[str, Any]:
+    """Execute the full benchmark pipeline and return aggregated metrics."""
     
     items = get_dataset(dataset_name)
 
@@ -506,7 +530,14 @@ def run_benchmark(
     logger.addHandler(file_handler)
     logger.setLevel(logging.INFO)
 
-    pipeline = build_default_pipeline()
+    # Build pipeline with optional ablation modes
+    if ablate_modifiers or ablate_relations:
+        logger.info("Building pipeline with ablation mode: modifiers=%s, relations=%s", ablate_modifiers, ablate_relations)
+    
+    pipeline = build_default_pipeline(
+        ablate_modifiers=ablate_modifiers,
+        ablate_relations=ablate_relations
+    )
 
     gold_labels, pred_labels, error_details, error_rows, match_rows, sentence_records = [], [], [], [], [], []
     error_summary = Counter()

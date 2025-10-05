@@ -1,18 +1,25 @@
-import random, nltk
+"""Generate synthetic survey questions and calibration items for data collection."""
+
+from __future__ import annotations
+
 import itertools
+import json
+import os
+import random
+import ssl
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence
+
+import nltk
 from afinn import Afinn
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import json
-import ssl
-import os
-from pathlib import Path
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
                                                 
 _nltk_initialized = False
-_afn = None
-_sia = None
+_afn: Afinn | None = None
+_sia: SentimentIntensityAnalyzer | None = None
 
 def _ensure_nltk_ready():
     """Ensure NLTK resources are downloaded only when needed."""
@@ -30,7 +37,8 @@ def _ensure_nltk_ready():
 
 _rand = random.Random()
 
-def normalized_afinn_score(text):
+def normalized_afinn_score(text: str) -> float:
+    """Return the average non-zero Afinn score scaled to [-1, 1]."""
     _ensure_nltk_ready()
     tokens = nltk.word_tokenize(text)
     word_scores = [_afn.score(word) for word in tokens]
@@ -39,7 +47,8 @@ def normalized_afinn_score(text):
         return sum(relevant_scores) / len(relevant_scores) / 5
     return 0
 
-def get_sentiment(text):
+def get_sentiment(text: str) -> float:
+    """Blend Afinn and VADER compound sentiment for stabilised polarity."""
     _ensure_nltk_ready()
     afn_score = normalized_afinn_score(text)
     polarity_score = _sia.polarity_scores(text)['compound']
@@ -112,7 +121,8 @@ if lexicon_file is None:
 
 loaded_lexicons = json.load(open(lexicon_file, "r"))
 
-def extract_word_list(lexicon, key):
+def extract_word_list(lexicon: Dict[str, Dict[str, List[Dict[str, str]]]], key: str) -> Dict[str, List[str]]:
+    """Return cleaned lists of lexicon entries for a particular category."""
     lexicon_key = lexicon.get(key, {})
     return {
         valence: [entry["text"] for entry in entries if isinstance(entry, dict) and "text" in entry]
@@ -169,7 +179,8 @@ desc = {
 "{+ actor} {- action} {+ victim}"
 """
 
-def _get_unique_words(word_pools, used_words_in_survey):
+def _get_unique_words(word_pools: Sequence[Sequence[str]], used_words_in_survey: set[str]) -> List[str]:
+    """Pick words without duplication, falling back gracefully when pools exhaust."""
     selected_words = []
     local_used_words = set()
 
@@ -186,7 +197,8 @@ def _get_unique_words(word_pools, used_words_in_survey):
     
     return selected_words
 
-def generate_compound_action_sentences(used_names, used_words_in_survey):
+def generate_compound_action_sentences(used_names: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Create actor/action/victim permutations capturing polarity interactions."""
     x, y = _rand.sample(["positive", "negative"], 2)
     patterns = [[x, x, y], [y, x, x], [x, x, x], [x, y, x]]
     out = []
@@ -238,7 +250,8 @@ def generate_compound_action_sentences(used_names, used_words_in_survey):
 "{- entity} did {- action}. {+ entity} did it with them."
 """
 
-def generate_compound_association_sentences(used_names, used_words_in_survey):
+def generate_compound_association_sentences(used_names: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Generate association sentences exploring polarity combinations."""
     x, y = _rand.sample(["positive", "negative"], 2)
     out = []
 
@@ -373,7 +386,8 @@ def generate_compound_association_sentences(used_names, used_words_in_survey):
 "{- parent entity} was {- descriptor}. {+ child entity} was {+ description}."
 """
 
-def generate_compound_belonging_sentences(used_objects, used_words_in_survey):
+def generate_compound_belonging_sentences(used_objects: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Produce parent/child belonging sentences balancing valence."""
     x, y = _rand.sample(["positive", "negative"], 2)
     out = []
 
@@ -513,7 +527,8 @@ def generate_compound_belonging_sentences(used_objects, used_words_in_survey):
 5. "xxx was bad."
 """
 
-def generate_aggregate_sentiment_sentences(used_objects, used_words_in_survey):
+def generate_aggregate_sentiment_sentences(used_objects: set[str], used_words_in_survey: set[str]) -> List[Dict[str, object]]:
+    """Craft aggregate sentiment prompts to probe temporal and comparative bias."""
     out = []
 
     available_objects = [obj for obj in objs if obj not in used_objects]
@@ -764,7 +779,8 @@ def generate_aggregate_sentiment_sentences(used_objects, used_words_in_survey):
 
     return out
 
-def calibration_gen(used_objects, used_words_in_survey):
+def calibration_gen(used_objects: set[str], used_words_in_survey: set[str]) -> Dict[str, object]:
+    """Return a pair of calibration questions spanning positive and negative valence."""
     pos_pool = {k: nouns['positive'][k] + verbs['positive'][k] + desc['positive'][k] for k in nouns['positive']}
     neg_pool = {k: nouns['negative'][k] + verbs['negative'][k] + desc['negative'][k] for k in nouns['negative']}
     intensity_pos = _rand.choice(list(pos_pool.keys()))
@@ -786,7 +802,8 @@ def calibration_gen(used_objects, used_words_in_survey):
         }
     }
 
-def survey_gen(seed=None):
+def survey_gen(seed: int | None = None) -> Dict[str, object]:
+    """Build a full survey packet, optionally seeding the random generator."""
     if seed is not None: 
         _rand.seed(seed)
     else: 

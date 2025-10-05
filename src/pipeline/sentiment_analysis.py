@@ -1,62 +1,92 @@
-import sys
-from pathlib import Path
+"""Wrappers for the various sentiment analysis back-ends used by the pipeline."""
+
+from __future__ import annotations
+
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-_project_root = Path(__file__).resolve().parents[2]
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
+try:  # pragma: no cover - support package and script execution
+    from ..sentiment.sentiment import (
+        get_ProsusAI_sentiment,
+        get_distilbert_logit_sentiment,
+        get_finiteautomata_sentiment,
+        get_flair_sentiment,
+        get_nlptown_sentiment,
+        get_pysentimiento_sentiment,
+        get_swn_sentiment,
+        get_textblob_sentiment,
+        get_vader_sentiment,
+    )
+except ImportError:  # pragma: no cover - fallback when package context unavailable
+    from sentiment.sentiment import (  # type: ignore
+        get_ProsusAI_sentiment,
+        get_distilbert_logit_sentiment,
+        get_finiteautomata_sentiment,
+        get_flair_sentiment,
+        get_nlptown_sentiment,
+        get_pysentimiento_sentiment,
+        get_swn_sentiment,
+        get_textblob_sentiment,
+        get_vader_sentiment,
+    )
 
-try:
-    from src.sentiment.sentiment import (
-        get_vader_sentiment,
-        get_textblob_sentiment,
-        get_flair_sentiment,
-        get_pysentimiento_sentiment,
-        get_swn_sentiment,
-        get_nlptown_sentiment,
-        get_finiteautomata_sentiment,
-        get_ProsusAI_sentiment,
-        get_distilbert_logit_sentiment,
-    )
-except Exception:
-    from sentiment.sentiment import (
-        get_vader_sentiment,
-        get_textblob_sentiment,
-        get_flair_sentiment,
-        get_pysentimiento_sentiment,
-        get_swn_sentiment,
-        get_nlptown_sentiment,
-        get_finiteautomata_sentiment,
-        get_ProsusAI_sentiment,
-        get_distilbert_logit_sentiment,
-    )
+SentimentPayload = Dict[str, Any]
+
+__all__ = [
+    "SentimentAnalysis",
+    "DummySentimentAnalysis",
+    "VADERSentimentAnalysis",
+    "TextBlobSentimentAnalysis",
+    "FlairSentimentAnalysis",
+    "PysentimientoSentimentAnalysis",
+    "MultiSentimentAnalysis",
+]
+
 
 class SentimentAnalysis:
-    def analyze(self, text: str) -> dict:
+    """Base interface for sentiment back-ends used in the pipeline."""
+
+    def analyze(self, text: str) -> SentimentPayload:
+        """Return a structured sentiment payload for ``text``."""
         raise NotImplementedError
-    
+
+
 class DummySentimentAnalysis(SentimentAnalysis):
-    def analyze(self, text: str) -> dict:
-        return 0.0
+    """No-op sentiment analyzer that always returns a neutral score."""
+
+    def analyze(self, text: str) -> SentimentPayload:
+        return {"aggregate": 0.0, "raw": {}}
+
 
 class VADERSentimentAnalysis(SentimentAnalysis):
-    def analyze(self, text: str) -> dict:
+    """Adapter around the VADER sentiment implementation."""
+
+    def analyze(self, text: str) -> SentimentPayload:
         return get_vader_sentiment(text)
 
+
 class TextBlobSentimentAnalysis(SentimentAnalysis):
-    def analyze(self, text: str) -> dict:
+    """Adapter around TextBlob sentiment output."""
+
+    def analyze(self, text: str) -> SentimentPayload:
         return get_textblob_sentiment(text)
 
+
 class FlairSentimentAnalysis(SentimentAnalysis):
-    def analyze(self, text: str) -> dict:
+    """Adapter around the Flair sentiment classifier."""
+
+    def analyze(self, text: str) -> SentimentPayload:
         return get_flair_sentiment(text)
 
+
 class PysentimientoSentimentAnalysis(SentimentAnalysis):
-    def analyze(self, text: str) -> dict:
+    """Adapter around the pysentimiento sentiment pipeline."""
+
+    def analyze(self, text: str) -> SentimentPayload:
         return get_pysentimiento_sentiment(text)
 
 
 class MultiSentimentAnalysis(SentimentAnalysis):
+    """Blend multiple sentiment back-ends using weighted aggregation."""
     def __init__(
         self,
         methods: List[Literal[
@@ -72,6 +102,7 @@ class MultiSentimentAnalysis(SentimentAnalysis):
         ]],
         weights: Optional[List[float]] = None,
     ) -> None:
+        """Configure which sentiment engines to run and how to weight them."""
         self.methods = list(methods)
         resolved_weights = weights or [1.0] * len(methods)
         if len(resolved_weights) != len(self.methods):
@@ -88,12 +119,13 @@ class MultiSentimentAnalysis(SentimentAnalysis):
             'prosusai': get_ProsusAI_sentiment,
             'distilbert_logit': get_distilbert_logit_sentiment,
         }
-        self._sentiment_cache: Dict[Tuple[str, Tuple[str, ...], Tuple[float, ...]], Dict[str, Any]] = {}
+        self._sentiment_cache: Dict[Tuple[str, Tuple[str, ...], Tuple[float, ...]], SentimentPayload] = {}
         self._cache_max_size = 2000
     
-    def analyze(self, text: str) -> dict:
+    def analyze(self, text: str) -> SentimentPayload:
+        """Return a weighted aggregate sentiment across configured methods."""
         if not text or not text.strip():
-            return {"aggregate": 0.0, "per_method": {}}
+            return {"aggregate": 0.0, "per_method_scores": {}, "raw": {}}
             
         cache_key = self._cache_key(text)
         if cache_key in self._sentiment_cache:
@@ -104,9 +136,9 @@ class MultiSentimentAnalysis(SentimentAnalysis):
         total_weight = 0.0
         per_method_scores: Dict[str, float] = {}
 
-        for i, method in enumerate(self.methods):
+        for index, method in enumerate(self.methods):
             func = self.method_funcs.get(method)
-            weight = self.weights[i]
+            weight = self.weights[index]
             if func is None:
                 results[method] = {"skipped": "missing_function"}
                 continue
@@ -137,9 +169,14 @@ class MultiSentimentAnalysis(SentimentAnalysis):
         if total_weight > 0:
             aggregate = weighted_sum / total_weight
             aggregate = max(min(aggregate, 1.0), -1.0)
-            final_result = {"aggregate": aggregate, "per_method_scores": per_method_scores, "raw": results}
         else:
-            final_result = {"aggregate": 0.0, "per_method": results}
+            aggregate = 0.0
+
+        final_result: SentimentPayload = {
+            "aggregate": aggregate,
+            "per_method_scores": per_method_scores,
+            "raw": results,
+        }
 
         if len(self._sentiment_cache) >= self._cache_max_size:
             oldest_key = next(iter(self._sentiment_cache))
@@ -149,10 +186,12 @@ class MultiSentimentAnalysis(SentimentAnalysis):
         return final_result
 
     def _cache_key(self, text: str) -> Tuple[str, Tuple[str, ...], Tuple[float, ...]]:
+        """Create a stable cache key for the given text and configuration."""
         normalized = text.strip()
         return normalized, tuple(self.methods), tuple(self.weights)
 
     def _score_from_result(self, res: Any) -> float:
+        """Extract a numeric sentiment score from arbitrary model output."""
         if isinstance(res, (int, float)):
             return float(res)
         if isinstance(res, dict):
