@@ -448,17 +448,19 @@ Please note that the survey is being hosted by Streamlit, a company not affiliat
 
 **Sharing Data Collected in this Research:**
 
-Data from this study may be shared with the research community at large in the form of a paper, presentation, or dataset to advance science and health. We will remove or code any personal information that could identify you before files are shared with other researchers to ensure that, by current scientific standards and known methods, no one will be able to identify you from the information we share. Despite these measures, we cannot guarantee anonymity of your personal data.
+Data from this study may be shared with the research community at large in the form of a paper, presentation, or dataset to advance science and health. We will remove or code any personal information that could identify you before files are shared with other researchers to ensure that, by current scientific standards and known methods, no one will be able to identify you from the information we share. Despite these measures, we cannot guarantee the anonymity of your personal data.
 
 **Taking part is voluntary:**
 
-Participant involvement is completely voluntary. If at any moment the participant may feel uncomfortable with this survey, the participant may withdraw by closing the brower window. If the participant withdraws, any data collected up to that point will not be used.
+Participant involvement is completely voluntary. If at any moment the participant may feel uncomfortable with this survey, the participant may withdraw by closing the brower window.
 
 **If you have questions:**
 
 The main researcher conducting this study is Harry Yin, a student currently associated with the MAGICS Lab at USFCA. If you have questions, you may contact Harry Yin at harry.d.yin.gpc@gmail.com. You may also contact the MAGICS Lab at USFCA or the Faculty Advisor, Associate Professor David Guy Brizan, at dgbrizan@usfca.edu.
 
-        </div>
+**IRB Approval:**
+
+This survey did not fall under any of the four categories described in USFCA's [IRB requirement page](https://myusf.usfca.edu/irbphs/what-needs-approval). 
         """, unsafe_allow_html=True)
     st.markdown("""
 <div class="academic-paper">

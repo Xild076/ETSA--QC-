@@ -779,8 +779,7 @@ def generate_aggregate_sentiment_sentences(used_objects: set[str], used_words_in
 
     return out
 
-def calibration_gen(used_objects: set[str], used_words_in_survey: set[str]) -> Dict[str, object]:
-    """Return a pair of calibration questions spanning positive and negative valence."""
+def calibration_gen(used_objects, used_words_in_survey):
     pos_pool = {k: nouns['positive'][k] + verbs['positive'][k] + desc['positive'][k] for k in nouns['positive']}
     neg_pool = {k: nouns['negative'][k] + verbs['negative'][k] + desc['negative'][k] for k in nouns['negative']}
     intensity_pos = _rand.choice(list(pos_pool.keys()))

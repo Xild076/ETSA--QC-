@@ -289,13 +289,6 @@
                 "standard_deviation": 0.4436912518824507,
                 "perplexity": 235.9174346923828,
                 "word_count": 2
-            },
-            {
-                "text": "ducked",
-                "combined_score": -0.44472611716224086,
-                "standard_deviation": 0.444905427103323,
-                "perplexity": 396.3514404296875,
-                "word_count": 1
             }
         ]
     },
@@ -507,13 +500,6 @@
                 "combined_score": -0.7888827287019777,
                 "standard_deviation": 0.35930751670948025,
                 "perplexity": 56.10853576660156,
-                "word_count": 1
-            },
-            {
-                "text": "unhealthy",
-                "combined_score": -0.7954811397120294,
-                "standard_deviation": 0.3744254338194809,
-                "perplexity": 53173.79296875,
                 "word_count": 1
             },
             {
@@ -808,13 +794,6 @@
                 "standard_deviation": 0.36430963639767355,
                 "perplexity": 1034.9290771484375,
                 "word_count": 5
-            },
-            {
-                "text": "the negative person",
-                "combined_score": -0.6937420180778893,
-                "standard_deviation": 0.37217331774156726,
-                "perplexity": 7682.7841796875,
-                "word_count": 3
             }
         ],
         "moderate": [
