@@ -18,3 +18,5 @@ pytest.ini
 /OLD
 /output
 /cache
+requirements.in
+pytest.ini
